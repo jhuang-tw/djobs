@@ -603,6 +603,14 @@ class PostgresJobRepository:
             row = cur.fetchone()
             return row["cnt"] if row else 0
 
+    def list_by_status(self, status: str, limit: int = 100) -> list[Job]:
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM jobs WHERE status = %s ORDER BY updated_at DESC LIMIT %s",
+                (status, limit),
+            )
+            return [_row_to_job(row) for row in cur.fetchall()]
+
     # ------------------------------------------------------------------
     # Events
     # ------------------------------------------------------------------

@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/jhuang-tw/djobs/actions/workflows/ci.yml/badge.svg)](https://github.com/jhuang-tw/djobs/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 
 ---
 
@@ -70,7 +70,51 @@ pool.run_loop(stop_event)
 
 ### As an MCP Server (for AI Agents)
 
+Install with the MCP extra:
+
+```bash
+pip install "djobs[mcp]"
+```
+
 Add to `.vscode/mcp.json`:
+
+<!-- Windows (venv) -->
+```json
+{
+  "servers": {
+    "djobs": {
+      "type": "stdio",
+      "command": "${workspaceFolder}/.venv/Scripts/python",
+      "args": ["-m", "djobs.mcp_server"],
+      "autoApprove": [
+        "health", "resume_session", "check_task", "list_tasks", "audit_log"
+      ]
+    }
+  }
+}
+```
+
+<details>
+<summary>macOS / Linux (venv)</summary>
+
+```json
+{
+  "servers": {
+    "djobs": {
+      "type": "stdio",
+      "command": "${workspaceFolder}/.venv/bin/python",
+      "args": ["-m", "djobs.mcp_server"],
+      "autoApprove": [
+        "health", "resume_session", "check_task", "list_tasks", "audit_log"
+      ]
+    }
+  }
+}
+```
+</details>
+
+<details>
+<summary>System Python (any OS)</summary>
 
 ```json
 {
@@ -80,13 +124,18 @@ Add to `.vscode/mcp.json`:
       "command": "python",
       "args": ["-m", "djobs.mcp_server"],
       "autoApprove": [
-        "health", "resume_session", "check_task", "complete_task",
-        "fail_task", "list_tasks", "enqueue_task", "audit_log"
+        "health", "resume_session", "check_task", "list_tasks", "audit_log"
       ]
     }
   }
 }
 ```
+</details>
+
+> **Security note:** The default `autoApprove` list above only includes **read-only** tools.
+> If you want your agent to enqueue/complete/fail tasks without confirmation prompts, add
+> `"enqueue_task"`, `"complete_task"`, and `"fail_task"` to the array — but understand that
+> this allows the agent to mutate queue state without asking.
 
 Then any AI agent can call these MCP tools:
 
@@ -116,6 +165,56 @@ djobs is not the first project to expose a task queue to an AI agent over MCP. I
 | Temporal / Inngest / DBOS | Server / SaaS | Durable workflow / execution engines | Much more powerful and much heavier; no MCP integration; not aimed at single-developer laptop use. |
 
 In one sentence: **djobs is what you reach for when you want a small, Celery-shaped Python job queue, driven mostly by an AI agent through MCP, on a single developer machine, with SQLite.**
+
+---
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DJOBS_DB_PATH` | `djobs.db` | SQLite database file path |
+| `DJOBS_LOG_LEVEL` | `INFO` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
+| `DJOBS_LOG_FORMAT` | `json` | Log output format (`json` or `text`) |
+| `DJOBS_WORKER_ID` | `worker-1` | Identifier for this worker instance |
+
+These are read by `Config.from_env()` and used by the daemon / worker pool. The MCP server and CLI default to `djobs_mcp.db` via their own `--db` argument.
+
+### correlation_id convention
+
+`resume_session` and `list_tasks` filter by `correlation_id`. The recommended convention:
+
+- **VS Code agent**: use the workspace folder path (e.g. `c:\src\my\project` or `/home/user/project`)
+- **CI / automation**: use the run ID or pipeline name
+- **Multi-repo**: use `{workspace_path}:{repo_name}` to avoid collision
+
+The value is opaque — djobs does not interpret it. Pick any stable string that groups related tasks.
+
+### SQLite concurrency notes
+
+SQLite uses file-level locking. On Windows, only one process can write at a time (journal mode is WAL by default, which helps with read concurrency). For single-developer laptop use this is fine. If you need multi-process writes, use the PostgreSQL backend (`pip install "djobs[pg]"`).
+
+### Dead-lettered tasks
+
+After a job exhausts all `max_attempts`, it moves to `dead_lettered` status. These tasks stay in the database for audit purposes but are not retried automatically. To inspect and handle them:
+
+```python
+from djobs import SQLiteJobRepository, QueueService
+
+repo = SQLiteJobRepository.from_path("djobs_mcp.db")
+queue = QueueService(repo)
+
+# Find dead-lettered tasks
+dead = queue.list_by_status("dead_lettered")
+for job in dead:
+    print(f"{job.id} | {job.type} | {job.last_error}")
+    # Resubmit as a fresh job if needed:
+    # queue.submit(job.type, job.payload, max_attempts=job.max_attempts,
+    #              correlation_id=job.correlation_id)
+```
+
+See also: [examples/dead_letter_example.py](examples/dead_letter_example.py)
 
 ---
 
@@ -222,7 +321,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 - [x] MCP server with 8 tools
 - [x] Embedded daemon (auto-start with MCP)
 - [x] Type isolation (daemon vs. AI agent tasks)
-- [ ] `pip install djobs` on PyPI
+- [x] Published on PyPI (`pip install djobs`)
+- [x] `djobs install-mcp` — auto-generate mcp.json snippet
+- [x] `djobs audit` — CLI access to the audit trail
+- [x] Python 3.11+ support
 - [ ] Async worker support
 - [ ] Priority queues
 - [ ] Web dashboard for audit trail

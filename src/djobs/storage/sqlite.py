@@ -495,6 +495,15 @@ class SQLiteJobRepository:
             ).fetchone()
             return row["cnt"] if row else 0
 
+    def list_by_status(self, status: str, limit: int = 100) -> list[Job]:
+        """Return jobs matching the given status string."""
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT id FROM jobs WHERE status = ? ORDER BY updated_at DESC LIMIT ?",
+                (status, limit),
+            ).fetchall()
+        return [self.require_job(row["id"]) for row in rows]
+
     # ------------------------------------------------------------------
     # Internal helpers (called within lock)
     # ------------------------------------------------------------------

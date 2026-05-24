@@ -31,7 +31,7 @@ ruff format src/ tests/   # auto-format
 
 ## Code Style
 
-- Python 3.13+, type hints everywhere.
+- Python 3.11+, type hints everywhere.
 - `ruff` for linting and formatting (config in `pyproject.toml`).
 - `src` layout — all package code lives under `src/djobs/`.
 - Tests mirror the source tree: `tests/unit/`, `tests/integration/`.

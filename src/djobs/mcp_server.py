@@ -210,6 +210,10 @@ def fail_task(task_id: str, error: str) -> str:
     Call this when the AI agent encounters an unrecoverable error while
     processing a task.
 
+    **Security note:** The ``error`` string is stored in the database and
+    visible via ``audit_log``.  Do not include secrets, credentials, or
+    personally identifiable information in the error message.
+
     Args:
         task_id: The UUID of the task to mark as failed.
         error: Description of what went wrong.

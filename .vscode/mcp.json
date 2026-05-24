@@ -1,0 +1,22 @@
+{
+  "servers": {
+    "djobs": {
+      "type": "stdio",
+      "command": "${workspaceFolder}/.venv/Scripts/python.exe",
+      "args": ["-m", "djobs.mcp_server"],
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/src"
+      },
+      "autoApprove": [
+        "health",
+        "resume_session",
+        "check_task",
+        "complete_task",
+        "fail_task",
+        "list_tasks",
+        "enqueue_task",
+        "audit_log"
+      ]
+    }
+  }
+}

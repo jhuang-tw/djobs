@@ -1,0 +1,3 @@
+ALTER TABLE jobs ADD COLUMN leased_by TEXT NULL;
+ALTER TABLE jobs ADD COLUMN lease_expires_at TEXT NULL;
+ALTER TABLE jobs ADD COLUMN heartbeat_at TEXT NULL;

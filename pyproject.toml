@@ -4,9 +4,9 @@ build-backend = "hatchling.build"
 
 [project]
 name = "djobs"
-version = "0.1.0"
+version = "0.2.0"
 description = "SQLite-backed durable task queue with first-class MCP integration, purpose-built for AI coding agents (crash recovery, audit trail, embedded daemon)."
-requires-python = ">=3.13"
+requires-python = ">=3.11"
 license = "MIT"
 readme = "README.md"
 keywords = ["job-queue", "task-queue", "mcp", "ai-agent", "durable", "sqlite", "crash-recovery", "audit-log"]
@@ -14,12 +14,16 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Libraries",
     "Topic :: System :: Distributed Computing",
 ]
 
-dependencies = []
+dependencies = [
+    "mcp[cli]>=1.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/jhuang-tw/djobs"
@@ -34,9 +38,6 @@ dev = [
 pg = [
     "psycopg[binary]>=3.1",
 ]
-mcp = [
-    "mcp[cli]>=1.0",
-]
 
 [project.scripts]
 djobs = "djobs.cli:main"
@@ -50,7 +51,7 @@ pythonpath = ["src"]
 
 [tool.ruff]
 src = ["src", "tests"]
-target-version = "py313"
+target-version = "py311"
 line-length = 99
 
 [tool.ruff.lint]

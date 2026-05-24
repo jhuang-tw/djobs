@@ -142,9 +142,12 @@ def test_mark_dead_lettered(repo) -> None:
 
 
 def test_heartbeat(repo) -> None:
+    import time
+
     repo.create_job(Job(type="a"))
     claimed = repo.claim_next_job("w-1")
     old_expires = claimed.lease_expires_at
+    time.sleep(0.01)  # ensure clock advances past claim timestamp
     hb = repo.heartbeat(claimed.id, "w-1")
     assert hb.lease_expires_at > old_expires
 

@@ -23,6 +23,7 @@ Handler = Callable[[dict[str, Any]], Any]
 # Built-in handlers
 # ---------------------------------------------------------------------------
 
+
 def _echo_handler(payload: dict[str, Any]) -> dict[str, Any]:
     """Built-in handler that logs and returns the payload (for testing)."""
     logging.getLogger("djobs.handlers.echo").info("echo: %s", payload)
@@ -38,6 +39,7 @@ BUILTIN_HANDLERS: dict[str, Handler] = {
 # Handler loading
 # ---------------------------------------------------------------------------
 
+
 def _load_handlers_module(dotted_path: str) -> dict[str, Handler]:
     """Import a module and collect its HANDLERS dict.
 
@@ -46,9 +48,7 @@ def _load_handlers_module(dotted_path: str) -> dict[str, Handler]:
     module = importlib.import_module(dotted_path)
     handlers = getattr(module, "HANDLERS", None)
     if handlers is None:
-        raise ImportError(
-            f"Module {dotted_path!r} does not export a HANDLERS dict"
-        )
+        raise ImportError(f"Module {dotted_path!r} does not export a HANDLERS dict")
     if not isinstance(handlers, dict):
         raise TypeError(
             f"HANDLERS in {dotted_path!r} must be a dict, got {type(handlers).__name__}"
@@ -59,6 +59,7 @@ def _load_handlers_module(dotted_path: str) -> dict[str, Handler]:
 # ---------------------------------------------------------------------------
 # serve command
 # ---------------------------------------------------------------------------
+
 
 def _cmd_serve(args: argparse.Namespace) -> None:
     """Run the background daemon."""
@@ -93,6 +94,7 @@ def _cmd_serve(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def main(argv: list[str] | None = None) -> None:
     """CLI entry point."""

@@ -304,8 +304,7 @@ def resume_session(correlation_id: str) -> str:
             "incomplete_count": len(tasks),
             "tasks": tasks,
             "message": (
-                f"Found {len(tasks)} incomplete task(s). "
-                "These survived from a previous session."
+                f"Found {len(tasks)} incomplete task(s). These survived from a previous session."
                 if tasks
                 else "No incomplete tasks. Starting fresh."
             ),
@@ -367,9 +366,7 @@ def audit_log(
 
     now = datetime.now(UTC)
     try:
-        since_dt = (
-            datetime.fromisoformat(since) if since else now - timedelta(hours=24)
-        )
+        since_dt = datetime.fromisoformat(since) if since else now - timedelta(hours=24)
         until_dt = datetime.fromisoformat(until) if until else now
     except ValueError as exc:
         return json.dumps({"error": f"invalid datetime format: {exc}"})

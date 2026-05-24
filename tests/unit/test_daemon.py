@@ -256,10 +256,7 @@ class TestCLI:
     def test_load_handlers_module_ok(self, tmp_path, monkeypatch):
         """Module with HANDLERS dict should load correctly."""
         mod_file = tmp_path / "good_mod.py"
-        mod_file.write_text(
-            "def _h(p): return p\n"
-            "HANDLERS = {'custom': _h}\n"
-        )
+        mod_file.write_text("def _h(p): return p\nHANDLERS = {'custom': _h}\n")
         monkeypatch.syspath_prepend(str(tmp_path))
         handlers = _load_handlers_module("good_mod")
         assert "custom" in handlers

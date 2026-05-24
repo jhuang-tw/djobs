@@ -140,8 +140,7 @@ class Daemon:
         self._stop = stop_event
 
         logger.info(
-            "Daemon starting (worker_id=%s, max_concurrent=%d, "
-            "poll=%.1fs, scheduler=%.1fs)",
+            "Daemon starting (worker_id=%s, max_concurrent=%d, poll=%.1fs, scheduler=%.1fs)",
             self._worker_id,
             self._max_concurrent,
             self._poll_interval,
@@ -181,6 +180,7 @@ class Daemon:
 
     def _install_signal_handlers(self) -> None:
         """Install SIGINT/SIGTERM handlers to trigger graceful shutdown."""
+
         def _handler(signum: int, _frame: Any) -> None:
             sig_name = signal.Signals(signum).name
             logger.info("Received %s, shutting down…", sig_name)

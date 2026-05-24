@@ -63,7 +63,9 @@ def test_pool_with_scheduler_retry_flow(tmp_path) -> None:
     stop2 = threading.Event()
     pool2 = WorkerPool(queue, registry, "w-2", max_concurrent=1)
     thread2 = threading.Thread(
-        target=pool2.run_loop, args=(stop2,), kwargs={"poll_interval": 0.01},
+        target=pool2.run_loop,
+        args=(stop2,),
+        kwargs={"poll_interval": 0.01},
     )
     thread2.start()
     time.sleep(0.5)

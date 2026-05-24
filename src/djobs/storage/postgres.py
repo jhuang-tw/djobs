@@ -20,8 +20,7 @@ try:
     from psycopg.rows import dict_row
 except ImportError as _exc:
     raise ImportError(
-        "psycopg is required for PostgreSQL support. "
-        "Install it with: pip install 'djobs[pg]'"
+        "psycopg is required for PostgreSQL support. Install it with: pip install 'djobs[pg]'"
     ) from _exc
 
 DEFAULT_LEASE_DURATION = timedelta(seconds=30)
@@ -517,7 +516,8 @@ class PostgresJobRepository:
             for row in cur.fetchall():
                 job = _row_to_job(row)
                 target = (
-                    JobStatus.PENDING if job.attempt < job.max_attempts
+                    JobStatus.PENDING
+                    if job.attempt < job.max_attempts
                     else JobStatus.RETRY_SCHEDULED
                 )
                 cur.execute(
@@ -566,9 +566,7 @@ class PostgresJobRepository:
                     f"Cannot heartbeat job {job_id!r} in status {job.status.value!r}"
                 )
             if job.leased_by != worker_id:
-                raise JobNotFoundError(
-                    f"Job {job_id!r} is not leased by worker {worker_id!r}"
-                )
+                raise JobNotFoundError(f"Job {job_id!r} is not leased by worker {worker_id!r}")
             now = datetime.now(UTC)
             cur.execute(
                 """

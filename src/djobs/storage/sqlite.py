@@ -128,9 +128,7 @@ class SQLiteJobRepository:
 
     def get_job(self, job_id: str) -> Job | None:
         with self._lock:
-            row = self._connection.execute(
-                "SELECT * FROM jobs WHERE id = ?", (job_id,)
-            ).fetchone()
+            row = self._connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
             if row is None:
                 return None
             return _row_to_job(row)
@@ -214,8 +212,7 @@ class SQLiteJobRepository:
                         limit = type_concurrency_limits.get(jtype)
                         if limit is not None:
                             running = cursor.execute(
-                                "SELECT COUNT(*) AS cnt FROM jobs"
-                                " WHERE status = ? AND type = ?",
+                                "SELECT COUNT(*) AS cnt FROM jobs WHERE status = ? AND type = ?",
                                 (JobStatus.RUNNING.value, jtype),
                             ).fetchone()["cnt"]
                             if running >= limit:
@@ -284,9 +281,7 @@ class SQLiteJobRepository:
             self._connection.commit()
             return self.require_job(job_id)
 
-    def mark_retry_scheduled(
-        self, job_id: str, error: str, run_after: datetime
-    ) -> Job:
+    def mark_retry_scheduled(self, job_id: str, error: str, run_after: datetime) -> Job:
         with self._lock:
             job = self.require_job(job_id)
             validate_transition(job.status, JobStatus.RETRY_SCHEDULED)
@@ -322,9 +317,7 @@ class SQLiteJobRepository:
         with self._lock:
             job = self.require_job(job_id)
             validate_transition(job.status, JobStatus.DEAD_LETTERED)
-            self._update_status(
-                job_id, JobStatus.DEAD_LETTERED, last_error=error
-            )
+            self._update_status(job_id, JobStatus.DEAD_LETTERED, last_error=error)
             self._clear_lease(job_id)
             self._append_event(
                 job_id,
@@ -384,9 +377,7 @@ class SQLiteJobRepository:
         commit: bool = True,
     ) -> JobEvent:
         with self._lock:
-            event = self._append_event(
-                job_id, event_type, message, metadata
-            )
+            event = self._append_event(job_id, event_type, message, metadata)
             if commit:
                 self._connection.commit()
             return event
@@ -399,8 +390,7 @@ class SQLiteJobRepository:
                 ).fetchall()
             else:
                 rows = self._connection.execute(
-                    "SELECT * FROM job_events WHERE job_id = ?"
-                    " ORDER BY created_at ASC",
+                    "SELECT * FROM job_events WHERE job_id = ? ORDER BY created_at ASC",
                     (job_id,),
                 ).fetchall()
             return [_row_to_event(row) for row in rows]
@@ -415,14 +405,10 @@ class SQLiteJobRepository:
             job = self.require_job(job_id)
             if job.status != JobStatus.RUNNING:
                 raise JobNotFoundError(
-                    f"Cannot heartbeat job {job_id!r} "
-                    f"in status {job.status.value!r}"
+                    f"Cannot heartbeat job {job_id!r} in status {job.status.value!r}"
                 )
             if job.leased_by != worker_id:
-                raise JobNotFoundError(
-                    f"Job {job_id!r} is not leased by "
-                    f"worker {worker_id!r}"
-                )
+                raise JobNotFoundError(f"Job {job_id!r} is not leased by worker {worker_id!r}")
             now = datetime.now(UTC)
             new_expires = now + lease_duration
             self._connection.execute(
@@ -443,9 +429,7 @@ class SQLiteJobRepository:
             self._connection.commit()
             return self.require_job(job_id)
 
-    def recover_expired_leases(
-        self, now: datetime | None = None
-    ) -> list[Job]:
+    def recover_expired_leases(self, now: datetime | None = None) -> list[Job]:
         with self._lock:
             current_time = _serialize_datetime(now or datetime.now(UTC))
             rows = self._connection.execute(
@@ -506,8 +490,7 @@ class SQLiteJobRepository:
         """Return the number of RUNNING jobs for a given type."""
         with self._lock:
             row = self._connection.execute(
-                "SELECT COUNT(*) AS cnt FROM jobs"
-                " WHERE status = ? AND type = ?",
+                "SELECT COUNT(*) AS cnt FROM jobs WHERE status = ? AND type = ?",
                 (JobStatus.RUNNING.value, job_type),
             ).fetchone()
             return row["cnt"] if row else 0
@@ -540,9 +523,7 @@ class SQLiteJobRepository:
                 event.job_id,
                 event.event_type,
                 event.message,
-                json.dumps(
-                    event.metadata, ensure_ascii=False, sort_keys=True
-                ),
+                json.dumps(event.metadata, ensure_ascii=False, sort_keys=True),
                 _serialize_datetime(event.created_at),
             ),
         )

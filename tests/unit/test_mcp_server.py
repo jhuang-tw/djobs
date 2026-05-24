@@ -44,18 +44,12 @@ class TestEnqueueTask:
         assert result["payload"]["file"] == "src/foo.py"
 
     def test_enqueue_with_correlation_id(self):
-        result = json.loads(
-            enqueue_task(task_type="test.job", correlation_id="workspace-123")
-        )
+        result = json.loads(enqueue_task(task_type="test.job", correlation_id="workspace-123"))
         assert result["correlation_id"] == "workspace-123"
 
     def test_enqueue_idempotency(self):
-        r1 = json.loads(
-            enqueue_task(task_type="lint", idempotency_key="lint:foo.py")
-        )
-        r2 = json.loads(
-            enqueue_task(task_type="lint", idempotency_key="lint:foo.py")
-        )
+        r1 = json.loads(enqueue_task(task_type="lint", idempotency_key="lint:foo.py"))
+        r2 = json.loads(enqueue_task(task_type="lint", idempotency_key="lint:foo.py"))
         assert r1["id"] == r2["id"]  # same task, not duplicated
 
     def test_enqueue_different_keys_create_separate_tasks(self):
@@ -252,9 +246,7 @@ class TestAuditLog:
         """Helper: enqueue a task and either succeed or fail it."""
         from djobs.mcp_server import _get_queue
 
-        created = json.loads(
-            enqueue_task(task_type=task_type, correlation_id=cid)
-        )
+        created = json.loads(enqueue_task(task_type=task_type, correlation_id=cid))
         q = _get_queue()
         repo = q._repository
         claimed = repo.claim_next_job(f"worker-{created['id'][:8]}")
@@ -328,10 +320,7 @@ class TestAuditLog:
         result = json.loads(audit_log(summary=False, limit=10))
         assert "events" in result
         assert result["count"] >= 1
-        assert all(
-            "event_type" in e and "task_type" in e and "at" in e
-            for e in result["events"]
-        )
+        assert all("event_type" in e and "task_type" in e and "at" in e for e in result["events"])
         # Most recent event first
         types_in_order = [e["event_type"] for e in result["events"]]
         assert "job_succeeded" in types_in_order

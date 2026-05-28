@@ -379,7 +379,11 @@ class PostgresJobRepository:
             )
             metadata = {"evidence": evidence} if evidence else {}
             self._append_event(
-                cur, job_id, "job_succeeded", message=evidence, metadata=metadata,
+                cur,
+                job_id,
+                "job_succeeded",
+                message=evidence,
+                metadata=metadata,
             )
         self._conn.commit()
         return self.require_job(job_id)

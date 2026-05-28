@@ -269,7 +269,10 @@ class SQLiteJobRepository:
             self._clear_lease(job_id)
             metadata = {"evidence": evidence} if evidence else {}
             self._append_event(
-                job_id, "job_succeeded", message=evidence, metadata=metadata,
+                job_id,
+                "job_succeeded",
+                message=evidence,
+                metadata=metadata,
             )
             self._connection.commit()
             return self.require_job(job_id)

@@ -23,7 +23,7 @@ class JobRepository(Protocol):
         type_concurrency_limits: dict[str, int] | None = ...,
         type_filter: list[str] | None = ...,
     ) -> Job | None: ...
-    def mark_succeeded(self, job_id: str) -> Job: ...
+    def mark_succeeded(self, job_id: str, *, evidence: str | None = None) -> Job: ...
     def mark_failed(self, job_id: str, error: str) -> Job: ...
     def mark_retry_scheduled(self, job_id: str, error: str, run_after: datetime) -> Job: ...
     def mark_dead_lettered(self, job_id: str, error: str) -> Job: ...
@@ -34,6 +34,7 @@ class JobRepository(Protocol):
     def count_running_by_type(self, job_type: str) -> int: ...
     def list_by_status(self, status: str, limit: int = 100) -> list[Job]: ...
     def list_events(self, job_id: str | None = None) -> list[JobEvent]: ...
+    def count_stuck_running(self, now: datetime | None = None) -> int: ...
 
 
 class QueueService:
@@ -110,8 +111,8 @@ class QueueService:
             type_filter=type_filter,
         )
 
-    def complete(self, job_id: str) -> Job:
-        return self._repository.mark_succeeded(job_id)
+    def complete(self, job_id: str, *, evidence: str | None = None) -> Job:
+        return self._repository.mark_succeeded(job_id, evidence=evidence)
 
     def fail(self, job_id: str, error: str) -> Job:
         return self._repository.mark_failed(job_id, error)
@@ -165,13 +166,18 @@ class QueueService:
         return inspect_job(job, job_events)
 
     def health(self) -> dict[str, Any]:
-        """Return a health summary: queue depth by status + running by type."""
+        """Return a health summary: queue depth by status + stuck running tasks."""
         counts = self._repository.count_by_status()
-        return {
+        stuck = self._repository.count_stuck_running()
+        result: dict[str, Any] = {
             "status": "ok",
             "queue_depth": counts,
             "total_jobs": sum(counts.values()),
         }
+        if stuck > 0:
+            result["stuck_running"] = stuck
+            result["status"] = "warning"
+        return result
 
     def list_by_status(self, status: str, limit: int = 100) -> list[Job]:
         """Return jobs with the given status string (e.g. 'dead_lettered')."""

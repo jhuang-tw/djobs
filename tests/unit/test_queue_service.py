@@ -119,3 +119,34 @@ def test_promote_due_retries(tmp_path) -> None:
 
     assert [job.id for job in promoted_jobs] == [submitted_job.id]
     assert queue.get_job(submitted_job.id).status == JobStatus.PENDING
+
+
+# ------------------------------------------------------------------
+# Phase 11: evidence on complete
+# ------------------------------------------------------------------
+
+
+def test_complete_with_evidence_stores_in_event(tmp_path) -> None:
+    queue = QueueService(SQLiteJobRepository.from_path(tmp_path / "jobs.db"))
+    job = queue.submit("refactor")
+
+    queue.complete(job.id, evidence="updated 5 imports")
+
+    events = queue.events(job.id)
+    succeeded_events = [e for e in events if e.event_type == "job_succeeded"]
+    assert len(succeeded_events) == 1
+    assert succeeded_events[0].message == "updated 5 imports"
+    assert succeeded_events[0].metadata["evidence"] == "updated 5 imports"
+
+
+def test_complete_without_evidence_no_metadata(tmp_path) -> None:
+    queue = QueueService(SQLiteJobRepository.from_path(tmp_path / "jobs.db"))
+    job = queue.submit("refactor")
+
+    queue.complete(job.id)
+
+    events = queue.events(job.id)
+    succeeded_events = [e for e in events if e.event_type == "job_succeeded"]
+    assert len(succeeded_events) == 1
+    assert succeeded_events[0].message is None
+    assert succeeded_events[0].metadata == {}

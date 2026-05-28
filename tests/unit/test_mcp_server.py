@@ -103,6 +103,26 @@ class TestCompleteTask:
         assert result["incomplete_count"] == 1
         assert result["tasks"][0]["id"] == t2["id"]
 
+    def test_complete_with_evidence(self):
+        """Evidence is stored in audit log when provided."""
+        created = json.loads(enqueue_task(task_type="refactor", correlation_id="ws"))
+        result = json.loads(
+            complete_task(created["id"], evidence="renamed 3 functions in utils.py")
+        )
+        assert result["status"] == "succeeded"
+
+        # Verify evidence shows up in check_task via inspect
+        info = json.loads(check_task(created["id"]))
+        assert info["evidence"] == "renamed 3 functions in utils.py"
+
+    def test_complete_without_evidence(self):
+        """No evidence field when not provided."""
+        created = json.loads(enqueue_task(task_type="lint", correlation_id="ws"))
+        complete_task(created["id"])
+
+        info = json.loads(check_task(created["id"]))
+        assert "evidence" not in info
+
 
 class TestFailTask:
     """Tests for fail_task MCP tool."""

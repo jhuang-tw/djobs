@@ -29,7 +29,23 @@ def inspect_job(job: Job, events: list[JobEvent]) -> dict[str, Any]:
         for e in events
     ]
 
-    return {
+    # Extract evidence from the job_succeeded event (if any).
+    evidence: str | None = None
+    for e in events:
+        if e.event_type == "job_succeeded" and e.metadata.get("evidence"):
+            evidence = e.metadata["evidence"]
+            break
+
+    # Detect stuck running task (lease expired but still marked running).
+    stuck = False
+    if (
+        job.status.value == "running"
+        and job.lease_expires_at is not None
+        and job.lease_expires_at < datetime.now(UTC)
+    ):
+        stuck = True
+
+    result: dict[str, Any] = {
         "job_id": job.id,
         "type": job.type,
         "status": job.status.value,
@@ -45,3 +61,13 @@ def inspect_job(job: Job, events: list[JobEvent]) -> dict[str, Any]:
         "events": event_timeline,
         "event_count": len(events),
     }
+    if evidence is not None:
+        result["evidence"] = evidence
+    if stuck:
+        result["stuck"] = True
+        result["warning"] = (
+            "This task's lease has expired but it is still marked as running. "
+            "The worker may have crashed. Run lease recovery or resume_session "
+            "to reclaim it."
+        )
+    return result

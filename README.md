@@ -1,6 +1,6 @@
 # djobs
 
-**A SQLite-backed durable task queue with first-class MCP integration**, purpose-built for AI coding agents that need crash recovery, audit trails, and zero infrastructure.
+**Crash-proof task memory for AI coding agents.** When your AI agent is halfway through editing 20 files and VS Code crashes, djobs makes sure it picks up from file 13 instead of starting over.
 
 [![CI](https://github.com/jhuang-tw/djobs/actions/workflows/ci.yml/badge.svg)](https://github.com/jhuang-tw/djobs/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -8,76 +8,56 @@
 
 ---
 
-## Why djobs?
+## The Problem
 
-AI coding agents (GitHub Copilot, Cursor, Cline, etc.) often run multi-file tasks that can take several minutes. When the IDE crashes or the chat disconnects mid-way, in-flight progress is usually lost because the agent's state lives only in chat history.
+AI coding agents (GitHub Copilot, Cursor, Cline, Claude Code) often run multi-file tasks: add docstrings to 40 files, migrate a framework version, batch-refactor an API. These can take minutes.
 
-djobs gives agents a small, durable checkpoint queue so they can resume exactly where they stopped:
+When the IDE crashes, the chat disconnects, or you accidentally close the window — **all in-flight progress is lost.** The agent's state lives only in chat history. You have to start over and guess which files were already done.
+
+## The Fix
+
+djobs gives your agent three tools that solve this:
+
+| Tool | What it does |
+|------|-------------|
+| `enqueue_task` | Save each file as a durable task — survives any crash |
+| `complete_task` | Mark a file done after the agent edits it |
+| `resume_session` | On next chat, find all unfinished files instantly |
 
 ```
-Agent: "Add docstrings to 12 files"
-  -> enqueue 12 tasks (crash-safe checkpoint)
-  -> edit file -> complete_task
-  -> edit file -> complete_task
-  -> ... IDE crashes after file 7 ...
+You: "Add docstrings to all 20 files in src/"
 
-New chat: "hi"
-  -> resume_session -> 5 incomplete tasks found
-  -> auto-resume from file 8 — no questions asked
+  Agent calls enqueue_task for each file  ← checkpoint saved
+  Agent edits file 1 → complete_task      ✅
+  Agent edits file 2 → complete_task      ✅
+  ...
+  Agent edits file 12 → complete_task     ✅
+  💥 VS Code crashes
+
+You reopen VS Code, start a new chat: "hi"
+
+  Agent calls resume_session              ← finds 8 incomplete tasks
+  Agent edits file 13 → complete_task     ✅
+  ...
+  Agent edits file 20 → complete_task     ✅
+  Done — zero files lost, zero files re-done.
 ```
 
-Under the hood it is a fairly conventional durable job queue (state machine, retry policy, lease, scheduler, event log). The interesting part is how it is wired to AI agents: an MCP server with `enqueue_task` / `complete_task` / `resume_session` / `audit_log`, plus an embedded background daemon, plus a `type_filter` so daemon-managed jobs and agent-managed jobs do not fight over the same queue.
-
-### What is in the box
-
-| Area | What you get |
-|------|--------------|
-| **MCP server** | 8 tools exposed via FastMCP / stdio — works in VS Code, Claude Desktop, etc. |
-| **Crash recovery** | `resume_session` returns incomplete tasks for a given workspace / correlation id |
-| **Audit trail** | `audit_log` aggregates `job_events` so you can answer "what did the AI do yesterday?" |
-| **Type isolation** | Built-in daemon only claims job types it has handlers for; AI-only types are left to the agent via `complete_task` / `fail_task` |
-| **SQLite first** | No Redis, RabbitMQ, Docker, or Postgres required for local use |
-| **Postgres path** | Same `JobRepository` protocol implemented on top of `SELECT ... FOR UPDATE SKIP LOCKED` for multi-worker setups |
-| **Test coverage** | 214 passing tests (16 skipped without Postgres), strict ruff lint |
+Everything is stored in a local SQLite file. No Redis, no Docker, no cloud service.
 
 ---
 
 ## Quick Start
-
-### As a Python Library
-
-```bash
-pip install djobs
-```
-
-```python
-from djobs import SQLiteJobRepository, QueueService, HandlerRegistry, WorkerPool
-
-# 1. Set up
-repo = SQLiteJobRepository.from_path("jobs.db")
-queue = QueueService(repo)
-
-# 2. Submit a job
-job = queue.submit("send_email", {"to": "user@example.com"}, max_attempts=3)
-
-# 3. Process jobs
-registry = HandlerRegistry()
-registry.register("send_email", lambda payload: send_email(**payload))
-
-pool = WorkerPool(queue, registry, worker_id="worker-1", max_concurrent=4)
-pool.run_loop(stop_event)
-```
-
-### As an MCP Server (for AI Agents)
 
 ```bash
 pip install djobs
 djobs install-mcp
 ```
 
-That's it. Two commands, ready to go.
+Two commands. Your AI agent now has crash-proof task memory.
 
-Options:
+<details>
+<summary>Options and manual setup</summary>
 
 ```bash
 # Safe default (read-only tools auto-approved)
@@ -87,8 +67,7 @@ djobs install-mcp
 djobs install-mcp --full-approve
 ```
 
-<details>
-<summary>Or add to .vscode/mcp.json manually</summary>
+Or add to `.vscode/mcp.json` manually:
 
 <!-- Windows (venv) -->
 ```json
@@ -144,168 +123,59 @@ djobs install-mcp --full-approve
 ```
 </details>
 
-</details>
-
 > **Security note:** The default `autoApprove` list only includes **read-only** tools.
 > If you want your agent to enqueue/complete/fail tasks without confirmation prompts, add
 > `"enqueue_task"`, `"complete_task"`, and `"fail_task"` to the array — but understand that
 > this allows the agent to mutate queue state without asking.
 
-Then any AI agent can call these MCP tools:
-
-| Tool | Purpose |
-|------|---------|
-| `enqueue_task` | Submit a durable task (survives crashes) |
-| `complete_task` | Mark task succeeded after agent finishes work |
-| `fail_task` | Mark task failed with error message |
-| `resume_session` | Find incomplete tasks from previous sessions |
-| `check_task` | Inspect task status, attempts, duration |
-| `list_tasks` | List tasks by correlation_id |
-| `audit_log` | Query event history — "what did the AI do?" |
-| `health` | Queue depth by status |
+</details>
 
 ---
 
-## How is this different from X?
+## Making Your Agent Use djobs Automatically
 
-djobs is not the first project to expose a task queue to an AI agent over MCP. It targets a specific combination of properties: SQLite-first, MCP-driven, with crash recovery and audit-log style observability built in.
+After installing, your agent has the MCP tools available — but it won't use them unless you tell it to. The easiest way is to copy the **Durable Coder** agent definition from this repo:
 
-| Project | Storage | Focus | Closest to djobs? |
-|---------|---------|-------|-------------------|
-| [TadMSTR/task-queue-mcp](https://github.com/TadMSTR/task-queue-mcp) | YAML files | Multi-agent task hand-off for Claude Code | Closest in spirit. Different storage model (YAML files + dispatcher), no `resume_session` / `audit_log` style observability. |
-| [midweste/mcp-cli-gateway](https://github.com/midweste/mcp-cli-gateway) | SQLite | Routing prompts to CLI agents (Gemini / Codex / Claude) with pacing | Overlaps on persistence + observability, but the unit of work is "dispatch a prompt to a CLI", not "durable user task with retry / lease". |
-| [j0j1j2/claude-tunnel](https://github.com/j0j1j2/claude-tunnel) | In-memory | Pub/sub + 1:1 request/reply + job queue between Claude Code sessions | Different problem: inter-session messaging, not durable work tracking. |
-| Celery / RQ / Dramatiq / Hatchet | Redis / Postgres | General-purpose distributed task queues | Strictly more capable as general queues, but not designed to be driven directly by an AI agent over MCP. |
-| Temporal / Inngest / DBOS | Server / SaaS | Durable workflow / execution engines | Much more powerful and much heavier; no MCP integration; not aimed at single-developer laptop use. |
+**Option A: Copy to your project (recommended)**
 
-In one sentence: **djobs is what you reach for when you want a small, Celery-shaped Python job queue, driven mostly by an AI agent through MCP, on a single developer machine, with SQLite.**
+Copy [`.agent.md`](.agent.md) from this repo into your project root.
 
----
+**Option B: Use the GitHub Copilot agent picker**
 
-## Configuration
+If you cloned this repo, the agent is already at `.github/agents/durable-coder.agent.md`. In VS Code, select "Durable Coder" from the agent picker in Copilot Chat.
 
-### Environment Variables
+**What the agent does:**
+- On every new chat, silently calls `resume_session` to find unfinished work
+- For multi-file tasks (>3 files), automatically enqueues each file as a durable task
+- After editing each file, calls `complete_task` to record progress
+- If a session crashes, the next chat auto-resumes from where it stopped — no questions asked
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DJOBS_DB_PATH` | `djobs.db` | SQLite database file path |
-| `DJOBS_LOG_LEVEL` | `INFO` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
-| `DJOBS_LOG_FORMAT` | `json` | Log output format (`json` or `text`) |
-| `DJOBS_WORKER_ID` | `worker-1` | Identifier for this worker instance |
-
-These are read by `Config.from_env()` and used by the daemon / worker pool. The MCP server and CLI default to `djobs_mcp.db` via their own `--db` argument.
-
-### correlation_id convention
-
-`resume_session` and `list_tasks` filter by `correlation_id`. The recommended convention:
-
-- **VS Code agent**: use the workspace folder path (e.g. `c:\src\my\project` or `/home/user/project`)
-- **CI / automation**: use the run ID or pipeline name
-- **Multi-repo**: use `{workspace_path}:{repo_name}` to avoid collision
-
-The value is opaque — djobs does not interpret it. Pick any stable string that groups related tasks.
-
-### SQLite concurrency notes
-
-SQLite uses file-level locking. On Windows, only one process can write at a time (journal mode is WAL by default, which helps with read concurrency). For single-developer laptop use this is fine. If you need multi-process writes, use the PostgreSQL backend (`pip install "djobs[pg]"`).
-
-### Dead-lettered tasks
-
-After a job exhausts all `max_attempts`, it moves to `dead_lettered` status. These tasks stay in the database for audit purposes but are not retried automatically. To inspect and handle them:
-
-```python
-from djobs import SQLiteJobRepository, QueueService
-
-repo = SQLiteJobRepository.from_path("djobs_mcp.db")
-queue = QueueService(repo)
-
-# Find dead-lettered tasks
-dead = queue.list_by_status("dead_lettered")
-for job in dead:
-    print(f"{job.id} | {job.type} | {job.last_error}")
-    # Resubmit as a fresh job if needed:
-    # queue.submit(job.type, job.payload, max_attempts=job.max_attempts,
-    #              correlation_id=job.correlation_id)
-```
-
-See also: [examples/dead_letter_example.py](examples/dead_letter_example.py)
+You can also write your own `.agent.md` or add djobs tool calls to any existing agent instructions.
 
 ---
 
-## Architecture
-
-```
-┌─────────────┐     MCP tools      ┌──────────────┐
-│  AI Agent   │ ──────────────────> │  MCP Server  │
-│  (Copilot)  │ <────────────────── │  (FastMCP)   │
-└─────────────┘                     └──────┬───────┘
-                                           │
-                              ┌────────────┼────────────┐
-                              │            │            │
-                        ┌─────▼─────┐ ┌────▼────┐ ┌────▼─────┐
-                        │  Queue    │ │ Daemon  │ │ Audit    │
-                        │  Service  │ │ (Pool + │ │ Log      │
-                        │           │ │ Sched)  │ │          │
-                        └─────┬─────┘ └─────────┘ └──────────┘
-                              │
-                        ┌─────▼─────┐
-                        │  SQLite   │
-                        │  (or PG)  │
-                        └───────────┘
-```
-
-### Job State Machine
-
-```
-pending ──────► running ──────► succeeded
-   │               │
-   │               ├──────► failed
-   │               │
-   │               ├──────► retry_scheduled ──► pending (retry)
-   │               │
-   │               └──────► dead_lettered
-   │
-   ├──────► succeeded  (AI agent direct complete)
-   └──────► failed     (AI agent direct fail)
-```
-
-### Module Map
-
-| Module | Responsibility |
-|--------|---------------|
-| `djobs.core` | Job model, state machine, domain errors |
-| `djobs.queue` | Submit, claim, complete, fail, retry logic |
-| `djobs.storage` | SQLite & PostgreSQL repositories, event log |
-| `djobs.worker` | Handler registry, WorkerPool, WorkerRunner |
-| `djobs.scheduler` | Retry promotion, expired lease recovery |
-| `djobs.daemon` | Composes WorkerPool + Scheduler into one process |
-| `djobs.observability` | Metrics, structured logging, job inspection |
-| `djobs.mcp_server` | MCP tool definitions, embedded daemon |
-| `djobs.cli` | `djobs serve` CLI entry point |
-
----
-
-## Examples
+## See It In Action
 
 ```bash
-# Basic job lifecycle
-python examples/run_echo_job.py
-
-# Retry with exponential backoff
-python examples/run_retry_job.py
-
-# Concurrent worker pool
-python examples/run_pool_demo.py
-
-# Scheduler loop (retry promotion + lease recovery)
-python examples/run_scheduler_demo.py
-
-# AI task platform (batch submit + cost tracking)
-python examples/run_ai_demo.py
-
-# Durable crash recovery demo
-python examples/run_durable_demo.py
+# Codebase migration demo — crash mid-way, resume, zero data loss
+python examples/run_migration_demo.py
 ```
+
+The demo scans 20 Python files, enqueues each as an "add-docstrings" task, completes 12, simulates an IDE crash, then calls `resume_session` and finishes the remaining 8.
+
+---
+
+## What Else Can It Do?
+
+Beyond the three core tools, djobs also provides:
+
+- **`audit_log`** — "What did the AI do yesterday?" Full event history across sessions.
+- **`check_task` / `list_tasks`** — Inspect individual tasks or list by workspace.
+- **`health`** — Queue depth by status at a glance.
+- **Retry with backoff** — Failed tasks can retry automatically.
+- **Dead letter queue** — Tasks that exhaust all retries are preserved for review.
+
+For the full architecture, Python library API, PostgreSQL backend, configuration reference, and comparison with other tools, see [docs/INTERNALS.md](docs/INTERNALS.md).
 
 ---
 
@@ -327,22 +197,13 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## Roadmap
 
-- [x] Durable job queue with retry, lease, heartbeat
-- [x] SQLite + PostgreSQL backends
-- [x] Worker pool with concurrency control
-- [x] Scheduler (retry promotion + lease recovery)
-- [x] Event sourcing & audit trail
+- [x] Crash-proof task memory (`enqueue` → `complete` → `resume`)
+- [x] Audit trail — "what did the AI do?"
 - [x] MCP server with 8 tools
-- [x] Embedded daemon (auto-start with MCP)
-- [x] Type isolation (daemon vs. AI agent tasks)
-- [x] Published on PyPI (`pip install djobs`)
-- [x] `djobs install-mcp` — auto-generate mcp.json snippet
-- [x] `djobs audit` — CLI access to the audit trail
-- [x] Python 3.11+ support
-- [ ] Async worker support
-- [ ] Priority queues
-- [ ] Web dashboard for audit trail
-- [ ] Rate limiting per job type
+- [x] `pip install djobs && djobs install-mcp` — two-command setup
+- [x] Published on PyPI
+- [x] `complete_task` evidence field — agent records what it changed
+- [ ] VS Code sidebar — visual task progress and one-click resume
 
 ---
 

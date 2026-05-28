@@ -185,7 +185,7 @@ def check_task(task_id: str) -> str:
 
 
 @_server.tool()
-def complete_task(task_id: str) -> str:
+def complete_task(task_id: str, evidence: str | None = None) -> str:
     """Mark a task as successfully completed.
 
     Call this after the AI agent has finished processing a task (e.g. editing
@@ -194,12 +194,15 @@ def complete_task(task_id: str) -> str:
 
     Args:
         task_id: The UUID of the task to mark as succeeded.
+        evidence: Optional free-form summary of what was done (e.g.
+                  "added docstrings to 3 functions in utils/helpers.py").
+                  Stored in the audit trail for later review.
 
     Returns:
         JSON summary of the completed task.
     """
     q = _get_queue()
-    job = q.complete(task_id)
+    job = q.complete(task_id, evidence=evidence)
     return json.dumps(_job_to_dict(job), indent=2)
 
 

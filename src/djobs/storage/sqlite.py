@@ -261,13 +261,16 @@ class SQLiteJobRepository:
                 self._connection.rollback()
                 raise
 
-    def mark_succeeded(self, job_id: str) -> Job:
+    def mark_succeeded(self, job_id: str, *, evidence: str | None = None) -> Job:
         with self._lock:
             job = self.require_job(job_id)
             validate_transition(job.status, JobStatus.SUCCEEDED)
             self._update_status(job_id, JobStatus.SUCCEEDED, last_error=None)
             self._clear_lease(job_id)
-            self._append_event(job_id, "job_succeeded")
+            metadata = {"evidence": evidence} if evidence else {}
+            self._append_event(
+                job_id, "job_succeeded", message=evidence, metadata=metadata,
+            )
             self._connection.commit()
             return self.require_job(job_id)
 
@@ -503,6 +506,19 @@ class SQLiteJobRepository:
                 (status, limit),
             ).fetchall()
         return [self.require_job(row["id"]) for row in rows]
+
+    def count_stuck_running(self, now: datetime | None = None) -> int:
+        """Count running jobs whose lease has expired (stuck tasks)."""
+        if now is None:
+            now = datetime.now(UTC)
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT COUNT(*) AS cnt FROM jobs
+                   WHERE status = ? AND lease_expires_at IS NOT NULL
+                   AND lease_expires_at < ?""",
+                (JobStatus.RUNNING.value, _serialize_datetime(now)),
+            ).fetchone()
+            return row["cnt"] if row else 0
 
     # ------------------------------------------------------------------
     # Internal helpers (called within lock)

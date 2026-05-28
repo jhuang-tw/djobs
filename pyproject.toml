@@ -4,12 +4,12 @@ build-backend = "hatchling.build"
 
 [project]
 name = "djobs"
-version = "0.2.1"
-description = "SQLite-backed durable task queue with first-class MCP integration, purpose-built for AI coding agents (crash recovery, audit trail, embedded daemon)."
+version = "0.3.0"
+description = "Crash-proof task memory for AI coding agents — your agent's multi-file work survives IDE crashes."
 requires-python = ">=3.11"
 license = "MIT"
 readme = "README.md"
-keywords = ["job-queue", "task-queue", "mcp", "ai-agent", "durable", "sqlite", "crash-recovery", "audit-log"]
+keywords = ["mcp", "ai-agent", "crash-recovery", "task-queue", "durable", "sqlite", "copilot", "cursor", "cline", "audit-log"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",

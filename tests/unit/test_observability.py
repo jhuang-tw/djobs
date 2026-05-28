@@ -153,3 +153,101 @@ def test_started_at_none_before_claim(tmp_path) -> None:
 
     submitted = queue.submit("demo.echo")
     assert submitted.started_at is None
+
+
+# ------------------------------------------------------------------
+# Phase 11: evidence in inspect
+# ------------------------------------------------------------------
+
+
+def test_inspect_shows_evidence_after_complete(tmp_path) -> None:
+    repo = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
+    queue = QueueService(repo)
+
+    job = queue.submit("add-docstrings")
+    queue.complete(job.id, evidence="added docstrings to 3 functions")
+
+    result = queue.inspect(job.id)
+    assert result["evidence"] == "added docstrings to 3 functions"
+    assert result["status"] == "succeeded"
+
+
+def test_inspect_no_evidence_when_not_provided(tmp_path) -> None:
+    repo = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
+    queue = QueueService(repo)
+
+    job = queue.submit("add-docstrings")
+    queue.complete(job.id)
+
+    result = queue.inspect(job.id)
+    assert "evidence" not in result
+
+
+def test_inspect_stuck_running_task(tmp_path) -> None:
+    """A running task with expired lease should show stuck warning."""
+    from datetime import timedelta
+
+    repo = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
+    queue = QueueService(repo)
+
+    job = queue.submit("slow-task")
+    repo.claim_next_job("worker-1", lease_duration=timedelta(seconds=1))
+
+    # Simulate expired lease by backdating lease_expires_at
+    from datetime import UTC, datetime
+
+    past = datetime.now(UTC) - timedelta(hours=1)
+    with repo._lock:
+        repo._connection.execute(
+            "UPDATE jobs SET lease_expires_at = ? WHERE id = ?",
+            (past.isoformat(), job.id),
+        )
+        repo._connection.commit()
+
+    result = queue.inspect(job.id)
+    assert result["stuck"] is True
+    assert "lease has expired" in result["warning"]
+
+
+# ------------------------------------------------------------------
+# Phase 11: stuck_running in health
+# ------------------------------------------------------------------
+
+
+def test_health_warns_on_stuck_running(tmp_path) -> None:
+    from datetime import timedelta
+
+    repo = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
+    queue = QueueService(repo)
+
+    job = queue.submit("test")
+    repo.claim_next_job("w-1", lease_duration=timedelta(seconds=1))
+
+    # Backdate lease to simulate expiry
+    from datetime import UTC, datetime
+
+    past = datetime.now(UTC) - timedelta(hours=1)
+    with repo._lock:
+        repo._connection.execute(
+            "UPDATE jobs SET lease_expires_at = ? WHERE id = ?",
+            (past.isoformat(), job.id),
+        )
+        repo._connection.commit()
+
+    h = queue.health()
+    assert h["status"] == "warning"
+    assert h["stuck_running"] == 1
+
+
+def test_health_no_stuck_when_lease_active(tmp_path) -> None:
+    from datetime import timedelta
+
+    repo = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
+    queue = QueueService(repo)
+
+    queue.submit("test")
+    repo.claim_next_job("w-1", lease_duration=timedelta(minutes=30))
+
+    h = queue.health()
+    assert h["status"] == "ok"
+    assert "stuck_running" not in h

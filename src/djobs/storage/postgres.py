@@ -363,7 +363,7 @@ class PostgresJobRepository:
     # State transitions
     # ------------------------------------------------------------------
 
-    def mark_succeeded(self, job_id: str) -> Job:
+    def mark_succeeded(self, job_id: str, *, evidence: str | None = None) -> Job:
         with self._conn.cursor() as cur:
             job = self._require_job(cur, job_id)
             validate_transition(job.status, JobStatus.SUCCEEDED)
@@ -377,7 +377,10 @@ class PostgresJobRepository:
                 """,
                 (JobStatus.SUCCEEDED.value, _serialize_dt(datetime.now(UTC)), job_id),
             )
-            self._append_event(cur, job_id, "job_succeeded")
+            metadata = {"evidence": evidence} if evidence else {}
+            self._append_event(
+                cur, job_id, "job_succeeded", message=evidence, metadata=metadata,
+            )
         self._conn.commit()
         return self.require_job(job_id)
 
@@ -610,6 +613,20 @@ class PostgresJobRepository:
                 (status, limit),
             )
             return [_row_to_job(row) for row in cur.fetchall()]
+
+    def count_stuck_running(self, now: datetime | None = None) -> int:
+        """Count running jobs whose lease has expired (stuck tasks)."""
+        if now is None:
+            now = datetime.now(UTC)
+        with self._conn.cursor() as cur:
+            cur.execute(
+                """SELECT COUNT(*) AS cnt FROM jobs
+                   WHERE status = %s AND lease_expires_at IS NOT NULL
+                   AND lease_expires_at < %s""",
+                (JobStatus.RUNNING.value, _serialize_dt(now)),
+            )
+            row = cur.fetchone()
+            return row["cnt"] if row else 0
 
     # ------------------------------------------------------------------
     # Events

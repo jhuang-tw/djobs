@@ -383,3 +383,224 @@ dead_lettered
 - 為什麼 durable execution（lease + heartbeat + recovery）能解決。
 - 與 Temporal / Inngest / Restate 的定位比較。
 - 從 queue system 到 agent runtime 的演進路徑。
+
+## Post-Phase 9 Product Strategy Checkpoint
+
+狀態：建議採用。
+
+核心判斷：目前 djobs 的技術基礎已經足夠支撐 durable queue / MCP / audit trail，但產品價值還需要更尖銳的 use case。下一階段不應急著擴成通用 workflow engine、hosted SaaS 或完整 VS Code extension，而應先證明一個具體痛點：AI coding agent 做 multi-file change 時，中斷後可以可靠恢復。
+
+四角色確認：
+
+- 產品視角：先綁定 codebase migration / multi-file refactor，不再用「通用 queue」當首頁敘事。
+- 架構視角：不刪 Postgres、daemon、scheduler、worker pool；但把這些能力降到 advanced / internals，不放在首屏賣點。
+- 可靠性視角：要補強 agent 忘記回報、IDE crash、lease 過期、audit evidence 等 failure mode，否則 demo 容易被真實使用打穿。
+- 工程管理視角：Phase 10 到 Phase 12 先用低成本驗證市場訊號；VS Code extension、multi-agent orchestration、hosted dashboard 都要等訊號成立後才排期。
+
+後續 phase 的優先順序：
+
+```text
+Phase 10  Killer use case demo and README repositioning
+Phase 11  Reliability hardening for the killer workflow
+Phase 12  Community signal validation
+Phase 13  VS Code sidebar MVP, only if signal is good
+Phase 14  Multi-agent / hosted dashboard, optional future tracks
+```
+
+## Phase 10: Killer Use Case Demo And Positioning
+
+狀態：未開始。
+
+目標：把 djobs 的對外故事從「durable task queue」收斂成「AI coding agent 做多檔重構時，不會因為 IDE / chat 中斷而丟失進度」。
+
+範圍原則：這個 phase 優先改 demo、README 敘事與使用者第一印象，不改核心 queue 架構。先證明 killer use case 能讓人一眼理解，再決定要不要投入 VS Code extension 或 SaaS。
+
+功能 / 交付：
+
+- 新增或改寫一個 codebase migration demo：模擬 agent 對多個檔案執行 docstring / type hint / mechanical refactor。
+- demo 流程要清楚展示：enqueue 多個 file-level tasks、完成一部分、模擬中斷、重新啟動後 `resume_session` 找回未完成任務、最後全部完成。
+- README 首屏改成痛點導向，不再以「SQLite-backed durable queue」作為第一句賣點。
+- README 首屏只主打三個核心操作：`enqueue_task`、`complete_task`、`resume_session`。
+- Postgres、scheduler、daemon、worker pool、rate limit 等內容移到 advanced / internals 敘事，不作為首頁主要價值主張。
+- 準備 30 秒 demo GIF / asciinema 腳本，主角是「改到一半中斷，重開後接續」。
+
+不做：
+
+- 不刪除 Postgres backend。
+- 不刪除 daemon / scheduler / worker pool。
+- 不新增 VS Code extension。
+- 不新增 hosted dashboard。
+- 不做 multi-agent orchestration。
+
+驗證重點：
+
+- 乾淨環境可以用一條指令跑完 demo。
+- demo 輸出要讓使用者不用懂 queue theory，也能看出 crash recovery 的價值。
+- README 上半頁應優先回答「我為什麼需要這個」，而不是「底層用了什麼」。
+
+面試 / 產品故事：
+
+- 為什麼先從 codebase migration 切入，而不是做通用 job queue。
+- 為什麼 file-level task checklist 適合 AI coding agent。
+- 為什麼先改定位和 demo，比先做新功能更重要。
+
+## Phase 11: Reliability Hardening For Agent Workflows
+
+狀態：已完成。
+
+目標：補強 Phase 10 killer workflow 的真實可靠性，避免 demo 成功但使用者第一週就遇到 false success、false pending 或無法理解的 stuck task。
+
+範圍原則：只處理 AI agent durable checklist 會直接碰到的 failure modes。不擴成完整 distributed workflow engine。
+
+功能 / 交付：
+
+- 為 `complete_task` 增加 optional evidence / summary 欄位，讓 agent 回報完成任務時可以留下「改了什麼」的佐證。
+- audit log 顯示 task 完成 evidence，讓使用者可以回看 AI agent 的實際行為。
+- health / inspect 顯示 stuck running tasks，例如 running 時間超過 lease 或超過設定門檻的任務數。
+- 文件新增 Failure Modes 說明：agent 忘記 complete、agent 完成但未留下足夠 evidence、IDE crash、MCP process crash、lease expiry 各自會發生什麼。
+- 評估 `djobs serve` 作為獨立常駐 daemon 的使用方式，讓 lease recovery 不完全依賴 MCP process 生命週期。
+
+不做：
+
+- 不做 web dashboard。
+- 不做 workflow builder。
+- 不做團隊權限、登入、遠端同步。
+- 不追求 exactly-once execution。
+
+驗證重點：
+
+- agent 完成任務時，audit log 能看見 evidence。
+- task 長時間卡在 running 時，CLI / MCP inspect 能明確指出風險。
+- 模擬 MCP process 中斷後，重新啟動仍能透過 lease recovery 找回未完成任務。
+
+面試 / 產品故事：
+
+- 為什麼 durable agent runtime 需要 audit evidence，不只是 status flag。
+- 為什麼 stuck task 是 UX 問題，不只是 queue implementation detail。
+- 為什麼要誠實描述 failure modes，避免把 demo 包裝成不存在的 exactly-once 保證。
+
+## Phase 12: Community Signal Validation
+
+狀態：進行中。
+
+目標：在投入 VS Code extension、multi-agent orchestration 或 SaaS 前，先驗證「AI coding agent 多檔任務中斷恢復」是不是足夠痛的問題。
+
+範圍原則：這是一個產品驗證 phase，預設不寫核心 code。用 Phase 10 的 demo 和 README 去測試市場反應。
+
+交付：
+
+- 發布 Phase 10 demo 到 r/ChatGPTCoding、Hacker News Show、Cursor / Cline / Claude Code 相關社群。
+- 固定驗證問題：使用者是否遇過 AI coding agent 改到一半中斷，導致不知道哪些檔案已完成、哪些需要接續。
+- 收集 GitHub stars、issues、討論、PyPI downloads、實際安裝與使用回饋。
+- 將回饋分類：定位不清、安裝困難、MCP 門檻、缺 UI、缺 review / CI integration、缺 team audit。
+
+通過條件：
+
+- 有明確真實使用者回饋，而不只是泛泛稱讚。
+- 至少有人表示願意在自己的 repo 內嘗試 Phase 10 workflow。
+- 回饋集中在「想更容易看狀態 / resume / audit」，而不是完全不理解場景。
+
+退出條件：
+
+- 若訊號集中在「MCP 太難裝」或「沒有 UI 不會用」，再進 Phase 13。
+- 若訊號集中在「我其實想要 PR review / CI fixer」，回到 Phase 10 重新選 killer use case。
+- 若幾乎沒有回饋，不直接做 extension；先重寫 README / demo 或換推廣渠道。
+
+不做：
+
+- 不因為少量好奇 feedback 就直接開發 hosted SaaS。
+- 不因為 roadmap 看起來漂亮就投入 multi-agent DAG。
+- 不把 stars 當唯一成功指標；真實使用回饋更重要。
+
+## Phase 13: VS Code Sidebar MVP
+
+狀態：條件式，只有 Phase 12 訊號成立後才開始。
+
+目標：把 djobs 從 CLI / MCP tool 提升成使用者看得到的 local-first UI，降低 MCP 使用門檻並強化 resume 體驗。
+
+範圍原則：VS Code extension 是人機介面，不取代 MCP server。第一版只做 task visibility 和少量控制，不做完整 workflow builder。
+
+功能 / 交付：
+
+- VS Code sidebar 顯示目前 workspace correlation_id 下的 tasks。
+- task list 顯示 succeeded、running、pending、retry_scheduled、failed、dead_lettered 等狀態。
+- 點選 task 可以查看 audit log / evidence / last_error。
+- 提供 Resume All 動作：讀取 `resume_session` 結果，協助 agent 接續未完成任務。
+- 提供 Cancel / Mark Failed 動作：使用者可中止不想繼續的 task，並寫入 audit trail。
+- extension 優先讀取本機 djobs DB 或呼叫本機 djobs CLI，不引入 hosted dependency。
+
+不做：
+
+- 不在 UI 裡建立完整 task graph。
+- 不做 multi-agent routing UI。
+- 不做登入、團隊 workspace、遠端同步。
+- 不要求使用者離開 local-first 模型。
+
+驗證重點：
+
+- 使用者不用看 SQLite / CLI，也能知道 agent 做到哪裡。
+- UI 顯示和 MCP / CLI 查到的 task 狀態一致。
+- Resume All 行為清楚，不讓使用者誤以為系統會自動修正所有失敗。
+
+面試 / 產品故事：
+
+- 為什麼 MCP 解決 agent integration，但 VS Code extension 解決 user trust。
+- 為什麼第一版 UI 只做 visibility，不做 authoring。
+- 如何在 local-first、低依賴的前提下改善 developer experience。
+
+## Phase 14: Optional Future Tracks
+
+狀態：不排期，等 Phase 12 / Phase 13 出現明確需求後再拆 phase。
+
+目標：保留 multi-agent orchestration 與 hosted observability 的演進方向，但不讓它們干擾近期 killer use case 驗證。
+
+### Phase 14a: Multi-Agent Orchestration
+
+啟動條件：使用者明確需要多個 AI agent 串接，例如 Agent A 改 code、Agent B 跑測試、失敗後派回 Agent A。
+
+可能範圍：
+
+- task dependency / simplified DAG。
+- agent role metadata。
+- handoff event log。
+- loop guard，避免 agent 互相反覆派工。
+- policy：哪些 task 可以自動觸發，哪些需要人工確認。
+
+暫不做原因：
+
+- 會大幅增加 product surface。
+- 需要先解決 trust、audit、failure handling。
+- 沒有真實使用者前，很容易做成展示漂亮但沒人用的 workflow engine。
+
+### Phase 14b: Hosted Audit Dashboard
+
+啟動條件：出現團隊使用者，且他們需要跨開發者、跨 repo、跨 CI run 查看 AI agent audit trail。
+
+可能範圍：
+
+- optional export / sync。
+- hosted dashboard。
+- GitHub Actions / CI report integration。
+- team-level audit timeline。
+- retention、redaction、workspace privacy policy。
+
+暫不做原因：
+
+- 原始碼與 agent 行為紀錄有高度隱私風險。
+- auth、multi-tenant、billing、資料保留會把專案推向另一條產品線。
+- local-first audit trail 尚未證明前，不應先做 hosted SaaS。
+
+## Roadmap Noise Reduction
+
+狀態：建議下一次 README 更新時執行。
+
+原則：首頁 roadmap 應只保留和 killer workflow 直接相關的項目。通用 queue infra 能力可以存在，但不要讓使用者誤以為 djobs 的主要方向是成為 Celery / Temporal 的替代品。
+
+建議從 README 首頁 roadmap 降級的項目：
+
+- Async worker support。
+- Priority queues。
+- Web dashboard for audit trail。
+- Rate limiting per job type。
+
+這些項目可移到 advanced / internals / possible improvements，等 Phase 12 或 Phase 13 的真實回饋證明需要後再重新排期。

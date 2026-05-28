@@ -39,3 +39,11 @@ coverage.xml
 # Distribution
 *.whl
 *.tar.gz
+
+# Internal docs (Chinese, not for public repo)
+docs/ROADMAP.md
+docs/HANDOFF.md
+docs/IMPLEMENTATION_NOTES.md
+docs/ARCHITECTURE.md
+docs/FAILURE_MODES.md
+docs/LAUNCH_KIT.md

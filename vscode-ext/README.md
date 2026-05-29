@@ -1,6 +1,6 @@
 # djobs
 
-![djobs — crash-proof task memory for AI coding agents](media/banner.png)
+![djobs — crash-proof task memory for AI coding agents](https://raw.githubusercontent.com/jhuang-tw/djobs/main/vscode-ext/media/banner.png)
 
 A thin VS Code sidebar for djobs crash-proof task memory.
 

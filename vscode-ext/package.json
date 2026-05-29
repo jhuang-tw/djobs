@@ -73,6 +73,12 @@
         "category": "djobs"
       },
       {
+        "command": "djobs.toggleQueueLocation",
+        "title": "Toggle Queue: Workspace / Global",
+        "icon": "$(database)",
+        "category": "djobs"
+      },
+      {
         "command": "djobs.resumeFromHere",
         "title": "Resume from here",
         "icon": "$(play)",
@@ -167,7 +173,22 @@
         "djobs.dbPath": {
           "type": "string",
           "default": "djobs_mcp.db",
-          "description": "Path to the djobs SQLite database (relative to workspace root)."
+          "description": "Path to the djobs SQLite database (relative to workspace root). Ignored when djobs.queueLocation is set to global."
+        },
+        "djobs.queueLocation": {
+          "type": "string",
+          "enum": ["workspace", "global"],
+          "default": "global",
+          "enumDescriptions": [
+            "Each workspace uses its own djobs_mcp.db.",
+            "All workspaces share one global queue (djobs.globalDbPath) (default)."
+          ],
+          "description": "Where the task queue lives. 'global' (default) shares one queue across all projects and Python environments; 'workspace' keeps a separate queue per project."
+        },
+        "djobs.globalDbPath": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to the shared global queue database. Leave empty to use ~/.djobs/global.db. Only used when djobs.queueLocation is 'global'."
         },
         "djobs.scope": {
           "type": "string",

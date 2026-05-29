@@ -15,11 +15,29 @@ from __future__ import annotations
 import argparse
 import importlib
 import logging
+import os
 import sys
 from collections.abc import Callable
 from typing import Any
 
 Handler = Callable[[dict[str, Any]], Any]
+
+
+def _default_db() -> str:
+    """Resolve the default database path.
+
+    Honors the ``DJOBS_DB`` environment variable so a single global queue can
+    be shared across projects and Python environments. Falls back to the
+    workspace-local ``djobs_mcp.db`` when unset.
+    """
+    return os.environ.get("DJOBS_DB") or "djobs_mcp.db"
+
+
+def _global_db() -> str:
+    """Return the path to the shared global queue (``~/.djobs/global.db``)."""
+    from pathlib import Path
+
+    return str(Path.home() / ".djobs" / "global.db")
 
 
 # ---------------------------------------------------------------------------
@@ -293,16 +311,21 @@ def _cmd_install_mcp(args: argparse.Namespace) -> None:
     else:
         cmd = "${workspaceFolder}/.venv/bin/python"
 
-    snippet = {
-        "servers": {
-            "djobs": {
-                "type": "stdio",
-                "command": cmd,
-                "args": ["-m", "djobs.mcp_server"],
-                "autoApprove": approve_list,
-            }
-        }
+    server: dict[str, Any] = {
+        "type": "stdio",
+        "command": cmd,
+        "args": ["-m", "djobs.mcp_server"],
+        "autoApprove": approve_list,
     }
+
+    # When a global/shared queue is requested, point the agent's MCP server at
+    # the same database via the DJOBS_DB environment variable so reads (the VS
+    # Code sidebar) and writes (the agent) share one queue.
+    db = _global_db() if getattr(args, "use_global", False) else getattr(args, "db", None)
+    if db:
+        server["env"] = {"DJOBS_DB": str(Path(db).expanduser().resolve())}
+
+    snippet = {"servers": {"djobs": server}}
 
     content = json.dumps(snippet, indent=2) + "\n"
 
@@ -439,8 +462,8 @@ def main(argv: list[str] | None = None) -> None:
     )
     serve_parser.add_argument(
         "--db",
-        default="djobs_mcp.db",
-        help="SQLite database path (default: djobs_mcp.db — same as MCP server)",
+        default=None,
+        help="SQLite database path (default: $DJOBS_DB or djobs_mcp.db — same as MCP server)",
     )
     serve_parser.add_argument(
         "--workers",
@@ -478,8 +501,8 @@ def main(argv: list[str] | None = None) -> None:
     )
     dashboard_parser.add_argument(
         "--db",
-        default="djobs_mcp.db",
-        help="SQLite database path (default: djobs_mcp.db — same as MCP server)",
+        default=None,
+        help="SQLite database path (default: $DJOBS_DB or djobs_mcp.db — same as MCP server)",
     )
     dashboard_parser.add_argument(
         "--host",
@@ -511,8 +534,8 @@ def main(argv: list[str] | None = None) -> None:
     )
     status_parser.add_argument(
         "--db",
-        default="djobs_mcp.db",
-        help="SQLite database path (default: djobs_mcp.db)",
+        default=None,
+        help="SQLite database path (default: $DJOBS_DB or djobs_mcp.db)",
     )
     status_parser.add_argument(
         "--correlation-id",
@@ -527,7 +550,7 @@ def main(argv: list[str] | None = None) -> None:
         help="Mark a task as intentionally skipped/accepted",
     )
     skip_parser.add_argument("job_id", help="Task/job ID to mark as skipped")
-    skip_parser.add_argument("--db", default="djobs_mcp.db", help="SQLite database path")
+    skip_parser.add_argument("--db", default=None, help="SQLite database path")
     skip_parser.add_argument(
         "--evidence",
         default="Skipped by user/operator",
@@ -541,7 +564,7 @@ def main(argv: list[str] | None = None) -> None:
         help="Mark all earlier tasks in the same workflow as accepted",
     )
     accept_before_parser.add_argument("job_id", help="Start task/job ID")
-    accept_before_parser.add_argument("--db", default="djobs_mcp.db", help="SQLite database path")
+    accept_before_parser.add_argument("--db", default=None, help="SQLite database path")
     accept_before_parser.add_argument(
         "--evidence",
         default=None,
@@ -556,7 +579,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     archive_workflow_parser.add_argument(
         "--db",
-        default="djobs_mcp.db",
+        default=None,
         help="SQLite database path",
     )
     archive_workflow_parser.add_argument(
@@ -597,6 +620,20 @@ def main(argv: list[str] | None = None) -> None:
         default=".vscode/mcp.json",
         help="Output path (default: .vscode/mcp.json)",
     )
+    mcp_parser.add_argument(
+        "--db",
+        default=None,
+        help=(
+            "Point the agent's MCP server at this database via DJOBS_DB. "
+            "Use for a shared/global queue. Omit for the workspace-local default."
+        ),
+    )
+    mcp_parser.add_argument(
+        "--global",
+        dest="use_global",
+        action="store_true",
+        help="Use the shared global queue at ~/.djobs/global.db (sets --db for you).",
+    )
     mcp_parser.set_defaults(func=_cmd_install_mcp)
 
     # --- audit ---
@@ -606,8 +643,8 @@ def main(argv: list[str] | None = None) -> None:
     )
     audit_parser.add_argument(
         "--db",
-        default="djobs_mcp.db",
-        help="SQLite database path (default: djobs_mcp.db)",
+        default=None,
+        help="SQLite database path (default: $DJOBS_DB or djobs_mcp.db)",
     )
     audit_parser.add_argument(
         "--since",
@@ -648,6 +685,9 @@ def main(argv: list[str] | None = None) -> None:
     if not hasattr(args, "func"):
         parser.print_help()
         sys.exit(1)
+    # install-mcp manages its own db wiring (DJOBS_DB env); don't auto-resolve.
+    if args.command != "install-mcp" and getattr(args, "db", None) is None and hasattr(args, "db"):
+        args.db = _default_db()
     args.func(args)
 
 

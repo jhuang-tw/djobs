@@ -26,6 +26,7 @@ from __future__ import annotations
 import atexit
 import json
 import logging
+import os
 import threading
 from collections import Counter
 from datetime import UTC, datetime, timedelta
@@ -59,16 +60,20 @@ _server = FastMCP(
 )
 
 _queue: QueueService | None = None
-_db_path: str = "djobs_mcp.db"
+_db_path: str = os.environ.get("DJOBS_DB") or "djobs_mcp.db"
 _daemon: Daemon | None = None
 _daemon_thread: threading.Thread | None = None
 
 
-def configure(db_path: str = "djobs_mcp.db") -> QueueService:
-    """Initialise the QueueService backing the MCP tools."""
+def configure(db_path: str | None = None) -> QueueService:
+    """Initialise the QueueService backing the MCP tools.
+
+    When ``db_path`` is omitted, honors the ``DJOBS_DB`` environment variable
+    (for a shared global queue), falling back to the workspace-local default.
+    """
     global _queue, _db_path
-    _db_path = db_path
-    repo = SQLiteJobRepository.from_path(db_path)
+    _db_path = db_path or os.environ.get("DJOBS_DB") or "djobs_mcp.db"
+    repo = SQLiteJobRepository.from_path(_db_path)
     _queue = QueueService(repo)
     return _queue
 

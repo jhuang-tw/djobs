@@ -1,5 +1,6 @@
 import * as childProcess from 'child_process';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { DjobsCommandOptions, DjobsScope, DjobsStatus, DjobsTask } from './types';
@@ -113,22 +114,91 @@ export class DjobsClient {
     return result.count ?? 0;
   }
 
+  /** True when the user has selected the shared global queue. */
+  isGlobalQueue(): boolean {
+    return (vscode.workspace.getConfiguration('djobs').get<string>('queueLocation') ?? 'global') === 'global';
+  }
+
+  /**
+   * True when this workspace's .vscode/mcp.json already points the djobs MCP
+   * server at the shared global database (i.e. the agent's write side is wired).
+   */
+  isGlobalMcpWired(): boolean {
+    try {
+      const mcpPath = path.join(this.workspaceRoot, '.vscode', 'mcp.json');
+      if (!fs.existsSync(mcpPath)) {
+        return false;
+      }
+      const parsed = JSON.parse(fs.readFileSync(mcpPath, 'utf8')) as {
+        servers?: Record<string, { env?: Record<string, string> }>;
+      };
+      const env = parsed.servers?.djobs?.env;
+      return Boolean(env && typeof env.DJOBS_DB === 'string' && env.DJOBS_DB.length > 0);
+    } catch {
+      return false;
+    }
+  }
+
+  /** Wire the agent's write side to the shared global queue via the CLI. */
+  async wireGlobalMcp(): Promise<void> {
+    const options = this.getOptions();
+    const args = ['-m', 'djobs.cli', 'install-mcp', '--global', '--force'];
+    await this.execPython(options.pythonPath, args, options.workspaceRoot);
+  }
+
+  /** True when the djobs Python package can be imported by the detected interpreter. */
+  async isPackageInstalled(): Promise<boolean> {
+    const options = this.getOptions();
+    try {
+      await this.execPython(options.pythonPath, ['-c', 'import djobs'], options.workspaceRoot);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Install the djobs package into the detected interpreter via pip. */
+  async installPackage(): Promise<void> {
+    const options = this.getOptions();
+    await this.execPython(
+      options.pythonPath,
+      ['-m', 'pip', 'install', '--upgrade', 'djobs'],
+      options.workspaceRoot,
+      120000,
+    );
+  }
+
   private getOptions(): DjobsCommandOptions {
     const config = vscode.workspace.getConfiguration('djobs');
     const configuredPython = config.get<string>('pythonPath')?.trim();
     const configuredDb = config.get<string>('dbPath')?.trim() || 'djobs_mcp.db';
     const configuredScope = config.get<DjobsScope>('scope') ?? 'allWorkspaces';
     const showCompleted = config.get<boolean>('showCompleted') ?? false;
+    const queueLocation = config.get<string>('queueLocation') ?? 'global';
 
     return {
       workspaceRoot: this.workspaceRoot,
       pythonPath: configuredPython || this.detectPython(),
-      dbPath: path.isAbsolute(configuredDb)
-        ? configuredDb
-        : path.join(this.workspaceRoot, configuredDb),
+      dbPath: this.resolveDbPath(queueLocation, configuredDb, config),
       scope: configuredScope,
       showCompleted,
     };
+  }
+
+  private resolveDbPath(
+    queueLocation: string,
+    configuredDb: string,
+    config: vscode.WorkspaceConfiguration,
+  ): string {
+    if (queueLocation === 'global') {
+      const configuredGlobal = config.get<string>('globalDbPath')?.trim();
+      return configuredGlobal && configuredGlobal.length > 0
+        ? configuredGlobal
+        : path.join(os.homedir(), '.djobs', 'global.db');
+    }
+    return path.isAbsolute(configuredDb)
+      ? configuredDb
+      : path.join(this.workspaceRoot, configuredDb);
   }
 
   private detectPython(): string {
@@ -148,12 +218,12 @@ export class DjobsClient {
       ?? candidates[candidates.length - 1];
   }
 
-  private execPython(pythonPath: string, args: string[], cwd: string): Promise<string> {
+  private execPython(pythonPath: string, args: string[], cwd: string, timeout = 15000): Promise<string> {
     return new Promise((resolve, reject) => {
       childProcess.execFile(
         pythonPath,
         args,
-        { cwd, timeout: 15000, windowsHide: true },
+        { cwd, timeout, windowsHide: true },
         (error, stdout, stderr) => {
           if (error) {
             const detail = stderr.trim() || stdout.trim() || error.message;

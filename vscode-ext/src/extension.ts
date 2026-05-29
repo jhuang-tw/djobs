@@ -159,6 +159,30 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     await provider.refresh();
   });
 
+  const toggleQueueLocation = vscode.commands.registerCommand('djobs.toggleQueueLocation', async () => {
+    const config = vscode.workspace.getConfiguration('djobs');
+    const current = config.get<string>('queueLocation', 'workspace');
+    const next = current === 'global' ? 'workspace' : 'global';
+    await config.update('queueLocation', next, vscode.ConfigurationTarget.Global);
+
+    if (next === 'global') {
+      const wireUp = 'Wire up agent';
+      const selected = await vscode.window.showInformationMessage(
+        'djobs now reads the shared global queue (~/.djobs/global.db). '
+          + 'Run "djobs install-mcp --global" in each project so the agent writes there too.',
+        wireUp,
+      );
+      if (selected === wireUp) {
+        const terminal = vscode.window.createTerminal('djobs');
+        terminal.show();
+        terminal.sendText('python -m djobs.cli install-mcp --global --force');
+      }
+    } else {
+      vscode.window.showInformationMessage('djobs now uses the per-workspace queue (djobs_mcp.db).');
+    }
+    await provider.refresh();
+  });
+
   const configWatcher = vscode.workspace.onDidChangeConfiguration(async (event) => {
     if (event.affectsConfiguration('djobs')) {
       const newScope = vscode.workspace.getConfiguration('djobs').get<string>('scope', 'allWorkspaces');
@@ -183,14 +207,106 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     archiveWorkflow,
     resumeWorkflow,
     toggleScope,
+    toggleQueueLocation,
     configWatcher,
     { dispose: () => clearInterval(timer) },
   );
 
   await provider.refresh();
+  await maybeOfferPackageInstall(context, client, provider);
+  await maybeOfferGlobalWiring(context, client, provider);
 }
 
 export function deactivate(): void {}
+
+/**
+ * When the djobs Python package is missing from the detected interpreter,
+ * offer a one-click `pip install djobs` so the sidebar and agent can work.
+ * Skips silently once the user opts out per workspace.
+ */
+async function maybeOfferPackageInstall(
+  context: vscode.ExtensionContext,
+  client: DjobsClient,
+  provider: DjobsTasksProvider,
+): Promise<void> {
+  if (await client.isPackageInstalled()) {
+    return;
+  }
+  const dismissKey = 'djobs.packageInstall.dismissed';
+  if (context.workspaceState.get<boolean>(dismissKey)) {
+    return;
+  }
+
+  const install = 'Install (pip)';
+  const dontAsk = "Don't ask again";
+  const selected = await vscode.window.showInformationMessage(
+    'The djobs Python package is not installed for this project\'s interpreter. '
+      + 'Install it so the sidebar and agent can run?',
+    install,
+    dontAsk,
+  );
+
+  if (selected === install) {
+    try {
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: 'Installing djobs…' },
+        () => client.installPackage(),
+      );
+      vscode.window.showInformationMessage('djobs installed.');
+      await provider.refresh();
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      vscode.window.showErrorMessage(
+        `djobs: pip install failed. Install it manually with "pip install djobs". ${detail}`,
+      );
+    }
+  } else if (selected === dontAsk) {
+    await context.workspaceState.update(dismissKey, true);
+  }
+}
+
+/**
+ * When the shared global queue is active but this workspace's agent (MCP
+ * server) is not yet wired to it, offer a one-click setup so reads and writes
+ * share the same queue. Skips silently once the user opts out per workspace.
+ */
+async function maybeOfferGlobalWiring(
+  context: vscode.ExtensionContext,
+  client: DjobsClient,
+  provider: DjobsTasksProvider,
+): Promise<void> {
+  if (!client.isGlobalQueue() || client.isGlobalMcpWired()) {
+    return;
+  }
+  const dismissKey = 'djobs.globalWiring.dismissed';
+  if (context.workspaceState.get<boolean>(dismissKey)) {
+    return;
+  }
+
+  const wireUp = 'Set up now';
+  const dontAsk = "Don't ask again";
+  const selected = await vscode.window.showInformationMessage(
+    'djobs uses a shared global queue. Wire this project\'s agent to it so '
+      + 'tasks it creates show up everywhere?',
+    wireUp,
+    dontAsk,
+  );
+
+  if (selected === wireUp) {
+    try {
+      await client.wireGlobalMcp();
+      vscode.window.showInformationMessage(
+        'djobs agent wired to the global queue. Reload the window if the MCP server was already running.',
+      );
+      await provider.refresh();
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      vscode.window.showErrorMessage(`djobs: could not wire the global queue. ${detail}`);
+    }
+  } else if (selected === dontAsk) {
+    await context.workspaceState.update(dismissKey, true);
+  }
+}
 
 async function openChatWithPrompt(prompt: string): Promise<void> {
   try {

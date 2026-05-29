@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from djobs.core.states import JobStatus
+from djobs.core.states import AgentStatus, JobStatus
 
 
 def _utcnow() -> datetime:
@@ -36,6 +36,8 @@ class Job:
     run_after: datetime | None = None
     idempotency_key: str | None = None
     correlation_id: str = field(default_factory=_new_id)
+    depends_on: list[str] = field(default_factory=list)
+    resource_key: str | None = None
     last_error: str | None = None
     leased_by: str | None = None
     lease_expires_at: datetime | None = None
@@ -43,3 +45,19 @@ class Job:
     started_at: datetime | None = None
     created_at: datetime = field(default_factory=_utcnow)
     updated_at: datetime = field(default_factory=_utcnow)
+
+
+@dataclass
+class Agent:
+    """A worker/agent registered with the queue (Phase M4: agent registry).
+
+    Tracks liveness via ``last_heartbeat_at``; agents that stop heartbeating
+    are auto-marked OFFLINE so the queue knows who is actually available.
+    """
+
+    id: str
+    status: AgentStatus = AgentStatus.ONLINE
+    capabilities: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    registered_at: datetime = field(default_factory=_utcnow)
+    last_heartbeat_at: datetime = field(default_factory=_utcnow)

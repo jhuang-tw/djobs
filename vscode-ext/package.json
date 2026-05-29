@@ -1,0 +1,205 @@
+{
+  "name": "djobs",
+  "displayName": "djobs — Crash-Proof Task Memory",
+  "description": "Sidebar view for djobs: see task status, one-click resume, audit trail.",
+  "version": "1.0.3",
+  "publisher": "jhuang-tw",
+  "license": "MIT",
+  "icon": "media/icon-128.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jhuang-tw/djobs"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "keywords": ["djobs", "durable", "crash-recovery", "ai-agent", "mcp", "copilot"],
+  "activationEvents": [
+    "onView:djobsTasks",
+    "onCommand:djobs.refresh",
+    "onCommand:djobs.resumeAll",
+    "onCommand:djobs.copyTaskId",
+    "onCommand:djobs.inspectTask",
+    "workspaceContains:**/djobs_mcp.db",
+    "workspaceContains:.vscode/mcp.json"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "djobs",
+          "title": "djobs",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "djobs": [
+        {
+          "id": "djobsTasks",
+          "name": "Tasks"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "djobs.refresh",
+        "title": "Refresh",
+        "icon": "$(refresh)",
+        "category": "djobs"
+      },
+      {
+        "command": "djobs.resumeAll",
+        "title": "Resume Incomplete Tasks",
+        "icon": "$(play)",
+        "category": "djobs"
+      },
+      {
+        "command": "djobs.copyTaskId",
+        "title": "Copy Task ID",
+        "category": "djobs"
+      },
+      {
+        "command": "djobs.inspectTask",
+        "title": "Inspect Task",
+        "category": "djobs"
+      },
+      {
+        "command": "djobs.toggleScope",
+        "title": "Toggle Scope: All / Current Workspace",
+        "icon": "$(globe)",
+        "category": "djobs"
+      },
+      {
+        "command": "djobs.resumeFromHere",
+        "title": "Resume from here",
+        "icon": "$(play)",
+        "category": "djobs"
+      },
+      {
+        "command": "djobs.skipTask",
+        "title": "Skip this task",
+        "icon": "$(debug-step-over)",
+        "category": "djobs"
+      },
+      {
+        "command": "djobs.archiveWorkflow",
+        "title": "Archive this workflow",
+        "icon": "$(archive)",
+        "category": "djobs"
+      },
+      {
+        "command": "djobs.resumeWorkflow",
+        "title": "Resume this workflow",
+        "icon": "$(play)",
+        "category": "djobs"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "djobs.refresh",
+          "when": "view == djobsTasks",
+          "group": "navigation"
+        },
+        {
+          "command": "djobs.resumeAll",
+          "when": "view == djobsTasks",
+          "group": "navigation"
+        },
+        {
+          "command": "djobs.toggleScope",
+          "when": "view == djobsTasks",
+          "group": "navigation"
+        },
+        {
+          "command": "djobs.archiveWorkflow",
+          "when": "view == djobsTasks",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "djobs.resumeWorkflow",
+          "when": "view == djobsTasks && viewItem == workflowGroup",
+          "group": "inline"
+        },
+        {
+          "command": "djobs.archiveWorkflow",
+          "when": "view == djobsTasks && viewItem == workflowGroup",
+          "group": "inline"
+        },
+        {
+          "command": "djobs.resumeWorkflow",
+          "when": "view == djobsTasks && viewItem == actionGroup",
+          "group": "inline"
+        },
+        {
+          "command": "djobs.resumeFromHere",
+          "when": "view == djobsTasks && viewItem == task",
+          "group": "inline"
+        },
+        {
+          "command": "djobs.skipTask",
+          "when": "view == djobsTasks && viewItem == task",
+          "group": "inline"
+        },
+        {
+          "command": "djobs.copyTaskId",
+          "when": "view == djobsTasks && viewItem == task"
+        },
+        {
+          "command": "djobs.inspectTask",
+          "when": "view == djobsTasks && viewItem == task"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "djobs",
+      "properties": {
+        "djobs.pythonPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to Python executable with djobs installed. Leave empty to auto-detect from .venv or PATH."
+        },
+        "djobs.dbPath": {
+          "type": "string",
+          "default": "djobs_mcp.db",
+          "description": "Path to the djobs SQLite database (relative to workspace root)."
+        },
+        "djobs.scope": {
+          "type": "string",
+          "enum": ["allWorkspaces", "currentWorkspace"],
+          "default": "allWorkspaces",
+          "description": "Task scope shown in the sidebar. Use currentWorkspace for only this workspace correlation_id, or allWorkspaces for every task in the configured database."
+        },
+        "djobs.showCompleted": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show completed tasks in the sidebar. Disabled by default to keep the task list focused on active work."
+        },
+        "djobs.autoRefreshInterval": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 60,
+          "description": "Auto-refresh interval in seconds."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0",
+    "@vscode/vsce": "^3.0.0"
+  }
+}

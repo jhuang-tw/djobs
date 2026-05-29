@@ -1,3 +1,4 @@
 {
-    "vscode-nmake-tools.workspaceBuildDirectories": []
+    "vscode-nmake-tools.workspaceBuildDirectories": [],
+    "djobs.scope": "allWorkspaces"
 }

@@ -61,7 +61,7 @@ Phase 0–Phase 7 已完成。目前已具備：
 - `src/djobs/storage/sqlite.py`：retry scheduling、retry promotion、DLQ、active idempotency key lookup。
 - `migrations/002_active_idempotency_key.sql`：active idempotency key unique index。
 - `examples/run_retry_job.py`：retry -> promote -> rerun -> succeeded demo。
-- `src/djobs/scheduler/scheduler.py`：`SchedulerLoop`（`tick()` 單次 + `run_loop()` 持續）、`TickResult`。
+- `src/djobs/scheduler/scheduler.py`：`SchedulerLoop`（`tick()` 單次 + `run_loop()` 持續）、`TickResult`。`tick()` 每週期執行三件事：promote due retries、recover expired leases、reap stale agents。
 - `examples/run_scheduler_demo.py`：crash recovery + retry promotion 完整 demo。
 - `src/djobs/worker/pool.py`：`WorkerPool`（`max_concurrent` + `ThreadPoolExecutor` + graceful drain）。
 - `src/djobs/storage/sqlite.py`：`count_by_status`、`count_running_by_type`、per-type `claim_next_job` 並行上限、`busy_timeout`。
@@ -99,17 +99,30 @@ Phase 9 已完成：
 - `.agent.md`：Durable Coder agent 規則定義。
 - `examples/run_durable_demo.py`：crash recovery demo（enqueue → 部分處理 → 模擬 crash → resume → 完成）。
 - `pyproject.toml`：`mcp` optional dependency（`mcp[cli]>=1.0`）。
-- `tests/unit/test_mcp_server.py`：16 個 MCP tool 單元測試。
+- `tests/unit/test_mcp_server.py`：MCP tool 單元測試。
 
 驗證結果：`python -m ruff check .` 通過，`python -m pytest` 188 passed + 16 skipped。
 
+## Multi-Agent 演進（M1–M5，已完成）
+
+Phase 9 之後完成了 multi-agent orchestration（對應 ROADMAP Phase 14a），讓多個 AI agent 可以安全共用同一個 queue：
+
+- **M1 共用 queue**：`claim_task`（原子租用）、`heartbeat_task`（續租）、`release_task`（歸還）。
+- **M2 task dependency**：`enqueue_task` 的 `depends_on`，依賴全部 succeeded 後才會被 claim。
+- **M3 resource lock**：`enqueue_task` 的 `resource_key`，同一 key 同時只跑一個 task。
+- **M4 agent registry**：`register_agent` / `agent_heartbeat` / `list_agents`，超時未 heartbeat 自動標記 OFFLINE。
+- **M5 web dashboard**：`djobs dashboard`（stdlib HTTP server，唯讀），顯示 queue health、agent fleet、active tasks，預設 http://127.0.0.1:8787。
+
+MCP server 目前共暴露 **14 個 tool**（核心 8 個 + multi-agent 6 個）。`src/djobs/dashboard.py` 為新模組；`migrations/006`–`008` 涵蓋 lease / dependency / resource_key / agents 等欄位。
+
+最新驗證：`python -m ruff check .` 通過，`python -m pytest` 271 passed + 16 skipped。
+
 ## Next AI Should Do First
 
-Phase 0–9 已全部完成。建議方向：
+Phase 0–9 與 multi-agent M1–M5 已全部完成。剩餘可選方向：
 
-- Web dashboard（FastAPI + htmx）展示 job 狀態。
 - HTTP SSE transport 讓 MCP server 可遠端使用。
-- Task dependency / DAG execution。
+- agent role-based routing / 自動派工 policy。
 - Kubernetes Job backend。
 
 ## Do Not Do Yet

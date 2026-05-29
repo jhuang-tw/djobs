@@ -3,6 +3,12 @@
 Tools
 -----
 - enqueue_task: Submit a durable task that survives crashes.
+- claim_task: Atomically claim the next pending task (multi-agent).
+- heartbeat_task: Renew the lease on a claimed task (multi-agent).
+- release_task: Return a claimed task to the queue (multi-agent).
+- register_agent: Register an agent so the fleet can see it is online (multi-agent).
+- agent_heartbeat: Liveness ping so the queue knows an agent is alive (multi-agent).
+- list_agents: Cross-agent fleet view of who is online and what they can do.
 - check_task: Inspect a task by ID (status, attempts, errors, duration).
 - list_tasks: List tasks by correlation_id, optionally filtered by status.
 - resume_session: Find all incomplete tasks for a correlation_id (crash recovery).
@@ -28,7 +34,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from djobs.cli import BUILTIN_HANDLERS
-from djobs.core.models import Job
+from djobs.core.models import Agent, Job
 from djobs.daemon import Daemon
 from djobs.queue.service import QueueService
 from djobs.storage.sqlite import SQLiteJobRepository
@@ -44,7 +50,11 @@ _server = FastMCP(
     instructions=(
         "Durable job queue for AI agents. "
         "Use enqueue_task to submit long-running work that survives crashes. "
-        "Use resume_session at the start of each conversation to recover in-progress tasks."
+        "Use resume_session at the start of each conversation to recover in-progress tasks. "
+        "For multi-agent workflows, agents share one queue: use claim_task to atomically "
+        "take the next task, heartbeat_task to keep the lease alive, and complete_task / "
+        "fail_task / release_task when done. Register each agent with register_agent and "
+        "keep it alive with agent_heartbeat; list_agents shows the live fleet."
     ),
 )
 
@@ -127,8 +137,24 @@ def _job_to_dict(job: Job) -> dict[str, Any]:
         "correlation_id": job.correlation_id,
         "last_error": job.last_error,
         "run_after": job.run_after.isoformat() if job.run_after else None,
+        "depends_on": job.depends_on,
+        "resource_key": job.resource_key,
+        "leased_by": job.leased_by,
+        "lease_expires_at": job.lease_expires_at.isoformat() if job.lease_expires_at else None,
         "created_at": job.created_at.isoformat(),
         "updated_at": job.updated_at.isoformat(),
+    }
+
+
+def _agent_to_dict(agent: Agent) -> dict[str, Any]:
+    """Serialise an Agent dataclass to a JSON-safe dict."""
+    return {
+        "id": agent.id,
+        "status": agent.status.value,
+        "capabilities": agent.capabilities,
+        "metadata": agent.metadata,
+        "registered_at": agent.registered_at.isoformat(),
+        "last_heartbeat_at": agent.last_heartbeat_at.isoformat(),
     }
 
 
@@ -144,6 +170,8 @@ def enqueue_task(
     max_attempts: int = 3,
     correlation_id: str | None = None,
     idempotency_key: str | None = None,
+    depends_on: list[str] | None = None,
+    resource_key: str | None = None,
 ) -> str:
     """Submit a durable task that survives agent/IDE crashes.
 
@@ -153,6 +181,13 @@ def enqueue_task(
         max_attempts: How many times to retry on failure (default 3).
         correlation_id: Groups related tasks (use workspace path or session id).
         idempotency_key: Prevents duplicate submission of the same task.
+        depends_on: Optional list of task ids that must succeed before this task
+                    becomes claimable. Use this to build a dependency DAG —
+                    e.g. run tests only after all refactor tasks complete.
+        resource_key: Optional exclusive-lock key (e.g. a file path). While a
+                      task holding this key is running, no other task with the
+                      same key is claimable — preventing two agents from editing
+                      the same resource at once.
 
     Returns:
         JSON summary of the created task including its id.
@@ -165,6 +200,8 @@ def enqueue_task(
         max_attempts=max_attempts,
         correlation_id=correlation_id,
         idempotency_key=idempotency_key,
+        depends_on=depends_on,
+        resource_key=resource_key,
     )
     return json.dumps(_job_to_dict(job), indent=2)
 
@@ -230,6 +267,162 @@ def fail_task(task_id: str, error: str) -> str:
 
 
 @_server.tool()
+def claim_task(
+    agent_id: str,
+    task_types: list[str] | None = None,
+    lease_seconds: int | None = None,
+) -> str:
+    """Atomically claim the next available task for this agent (multi-agent).
+
+    Multiple agents (even from different vendors/IDEs) can share one djobs
+    queue.  Each call hands exactly one pending task to exactly one agent —
+    the claim is atomic, so two agents never get the same task.  The claimed
+    task is leased to ``agent_id``; call ``heartbeat_task`` periodically to
+    keep the lease alive, then ``complete_task`` / ``fail_task`` / ``release_task``
+    when done.
+
+    Args:
+        agent_id: Stable identifier for the calling agent (used as the lease owner).
+        task_types: Optional allow-list of task types this agent can handle.
+                    Omit to claim any pending task.
+        lease_seconds: Optional lease duration in seconds. Omit for the default.
+
+    Returns:
+        JSON summary of the claimed task, or a message if the queue is empty.
+    """
+    q = _get_queue()
+    if lease_seconds is not None:
+        job = q._repository.claim_next_job(
+            agent_id,
+            timedelta(seconds=lease_seconds),
+            type_filter=task_types,
+        )
+    else:
+        job = q.claim(agent_id, type_filter=task_types)
+    if job is None:
+        return json.dumps(
+            {"claimed": False, "message": "No pending tasks available to claim."},
+            indent=2,
+        )
+    return json.dumps({"claimed": True, "task": _job_to_dict(job)}, indent=2)
+
+
+@_server.tool()
+def heartbeat_task(task_id: str, agent_id: str, lease_seconds: int | None = None) -> str:
+    """Renew the lease on a task this agent has claimed (multi-agent).
+
+    Call periodically while working on a long task so other agents do not
+    reclaim it.  If an agent crashes and stops sending heartbeats, the lease
+    expires and the task is automatically returned to the queue.
+
+    Args:
+        task_id: The UUID of the claimed task.
+        agent_id: The agent that holds the lease (must match the claimer).
+        lease_seconds: Optional new lease duration in seconds.
+
+    Returns:
+        JSON summary of the task with its refreshed lease.
+    """
+    q = _get_queue()
+    lease = timedelta(seconds=lease_seconds) if lease_seconds is not None else None
+    job = q.heartbeat(task_id, agent_id, lease)
+    return json.dumps(_job_to_dict(job), indent=2)
+
+
+@_server.tool()
+def release_task(task_id: str, agent_id: str, reason: str | None = None) -> str:
+    """Release a claimed task back to the queue (multi-agent).
+
+    Call this when an agent cannot make progress on a task it claimed, or is
+    shutting down gracefully.  The task returns to ``pending`` so another
+    agent can claim it immediately.  Only the agent holding the lease may
+    release the task.
+
+    Args:
+        task_id: The UUID of the claimed task.
+        agent_id: The agent that holds the lease (must match the claimer).
+        reason: Optional free-form note on why the task was released
+                (stored in the audit trail).
+
+    Returns:
+        JSON summary of the released task.
+    """
+    q = _get_queue()
+    job = q.release(task_id, agent_id, reason)
+    return json.dumps(_job_to_dict(job), indent=2)
+
+
+@_server.tool()
+def register_agent(
+    agent_id: str,
+    capabilities: list[str] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> str:
+    """Register this agent with the queue so others can see it is online.
+
+    Call once when an agent starts up.  Re-registering is safe (upsert) and
+    brings the agent back online.  Declare which task types the agent can
+    handle via ``capabilities`` so the fleet view shows who can do what.
+
+    Args:
+        agent_id: A stable identifier for this agent (reused across restarts).
+        capabilities: Optional list of task types this agent can handle.
+        metadata: Optional free-form info (hostname, pid, version, model).
+
+    Returns:
+        JSON summary of the registered agent.
+    """
+    q = _get_queue()
+    agent = q.register_agent(agent_id, capabilities, metadata)
+    return json.dumps(_agent_to_dict(agent), indent=2)
+
+
+@_server.tool()
+def agent_heartbeat(agent_id: str) -> str:
+    """Send a liveness ping so the queue knows this agent is still alive.
+
+    Call periodically (e.g. every 30s).  Agents that stop heartbeating are
+    automatically marked offline so the fleet view reflects who is really
+    available.  A heartbeat from a reaped agent brings it back online.
+
+    Args:
+        agent_id: The agent identifier used at registration.
+
+    Returns:
+        JSON summary of the agent with its refreshed heartbeat.
+    """
+    q = _get_queue()
+    agent = q.agent_heartbeat(agent_id)
+    return json.dumps(_agent_to_dict(agent), indent=2)
+
+
+@_server.tool()
+def list_agents(status: str | None = None) -> str:
+    """List registered agents and their liveness — the cross-agent fleet view.
+
+    Stale agents (no recent heartbeat) are reaped to offline before the list
+    is returned, so the result reflects who is actually available right now.
+
+    Args:
+        status: Optional filter, e.g. ``"online"`` or ``"offline"``.
+
+    Returns:
+        JSON object with the reaped count and the list of agents.
+    """
+    q = _get_queue()
+    reaped = q.reap_stale_agents()
+    agents = q.list_agents(status)
+    return json.dumps(
+        {
+            "reaped": [a.id for a in reaped],
+            "count": len(agents),
+            "agents": [_agent_to_dict(a) for a in agents],
+        },
+        indent=2,
+    )
+
+
+@_server.tool()
 def list_tasks(
     correlation_id: str,
     status_filter: str | None = None,
@@ -248,7 +441,7 @@ def list_tasks(
     results: list[dict[str, Any]] = []
 
     # Use a direct query for correlation_id filtering
-    repo = q._repository
+    repo: Any = q._repository
     if hasattr(repo, "_connection"):
         conn = repo._connection
         with repo._lock:
@@ -286,7 +479,7 @@ def resume_session(correlation_id: str) -> str:
         JSON with incomplete tasks and a summary.
     """
     q = _get_queue()
-    repo = q._repository
+    repo: Any = q._repository
 
     incomplete_statuses = ("pending", "running", "retry_scheduled")
 
@@ -367,7 +560,7 @@ def audit_log(
         audit_log(correlation_id="c:/my/workspace") # scoped to one workspace
     """
     q = _get_queue()
-    repo = q._repository
+    repo: Any = q._repository
     if not hasattr(repo, "_connection"):
         return json.dumps({"error": "audit_log requires SQLite backend"})
 

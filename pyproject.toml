@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "djobs"
-version = "0.3.0"
-description = "Crash-proof task memory for AI coding agents — your agent's multi-file work survives IDE crashes."
+version = "0.5.0"
+description = "Durable workflow control for AI coding agents — inspectable, resumable, controllable multi-file work that survives context loss."
 requires-python = ">=3.11"
 license = "MIT"
 readme = "README.md"
@@ -34,6 +34,7 @@ Issues = "https://github.com/jhuang-tw/djobs/issues"
 dev = [
     "pytest>=8.0",
     "ruff>=0.4",
+    "mypy>=1.10",
 ]
 pg = [
     "psycopg[binary]>=3.1",
@@ -66,3 +67,10 @@ select = [
     "SIM", # flake8-simplify
     "RUF", # ruff-specific
 ]
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src/djobs"]
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true

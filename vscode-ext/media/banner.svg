@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="200" viewBox="0 0 720 200" fill="none" role="img" aria-label="djobs — crash-proof task memory for AI agents">
+  <defs>
+    <linearGradient id="loop" x1="40" y1="48" x2="160" y2="160" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8aadf4"/>
+      <stop offset="1" stop-color="#c6a0f6"/>
+    </linearGradient>
+  </defs>
+
+  <!-- mark -->
+  <g transform="translate(40 36) scale(0.5)">
+    <rect x="8" y="8" width="240" height="240" rx="52" fill="#303446"/>
+    <rect x="8.5" y="8.5" width="239" height="239" rx="51.5" stroke="#494d64" stroke-opacity="0.6"/>
+    <path d="M186 92 A70 70 0 1 0 198 134" fill="none" stroke="url(#loop)" stroke-width="20" stroke-linecap="round"/>
+    <path d="M168 70 L190 96 L160 104 Z" fill="#c6a0f6"/>
+    <path d="M96 130 L120 156 L168 100" fill="none" stroke="#a6da95" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- wordmark -->
+  <text x="190" y="104" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="72" font-weight="700" fill="#cad3f5">djobs</text>
+
+  <!-- tagline -->
+  <text x="192" y="146" font-family="'Segoe UI', 'Helvetica Neue', Arial, sans-serif" font-size="24" font-weight="400" fill="#a5adce">Crash-proof task memory for AI coding agents</text>
+</svg>

@@ -5,6 +5,7 @@ Commands::
     djobs serve              Start the background daemon
     djobs serve --db my.db   Use a custom database path
     djobs serve --workers 8  Set max concurrent workers
+    djobs dashboard          Serve the read-only cross-agent web dashboard
     djobs install-mcp        Print an mcp.json snippet for VS Code
     djobs audit              Query the audit trail from the terminal
 """
@@ -91,6 +92,178 @@ def _cmd_serve(args: argparse.Namespace) -> None:
     )
 
     daemon.run()
+
+
+# ---------------------------------------------------------------------------
+# dashboard command
+# ---------------------------------------------------------------------------
+
+
+def _cmd_dashboard(args: argparse.Namespace) -> None:
+    """Serve the read-only cross-agent web dashboard."""
+    from djobs.dashboard import serve_dashboard
+
+    print(
+        f"djobs dashboard starting\n"
+        f"  db:    {args.db}\n"
+        f"  url:   http://{args.host}:{args.port}\n"
+        f"  (read-only cross-agent view — Ctrl+C to stop)\n"
+    )
+    serve_dashboard(
+        args.db,
+        host=args.host,
+        port=args.port,
+        refresh_seconds=args.refresh,
+    )
+
+
+# ---------------------------------------------------------------------------
+# status command
+# ---------------------------------------------------------------------------
+
+
+def _cmd_status(args: argparse.Namespace) -> None:
+    """JSON snapshot for the VS Code extension."""
+    import json
+    from datetime import UTC, datetime
+
+    from djobs.storage.sqlite import SQLiteJobRepository
+
+    repo = SQLiteJobRepository.from_path(args.db)
+    q_module = __import__("djobs.queue.service", fromlist=["QueueService"])
+    queue = q_module.QueueService(repo)
+
+    health_data = queue.health()
+
+    evidence_by_job: dict[str, str | None] = {}
+    with repo._lock:
+        event_rows = repo._connection.execute(
+            """
+            SELECT job_id, message
+            FROM job_events
+            WHERE event_type = 'job_succeeded'
+            ORDER BY created_at DESC
+            """
+        ).fetchall()
+    for row in event_rows:
+        evidence_by_job.setdefault(row["job_id"], row["message"])
+
+    tasks: list[dict[str, Any]] = []
+    with repo._lock:
+        if args.correlation_id:
+            rows = repo._connection.execute(
+                "SELECT id, type, status, payload_json, correlation_id, "
+                "created_at, updated_at, attempt, max_attempts, last_error "
+                "FROM jobs WHERE correlation_id = ? AND status != ? ORDER BY created_at",
+                (args.correlation_id, "archived"),
+            ).fetchall()
+        else:
+            rows = repo._connection.execute(
+                "SELECT id, type, status, payload_json, correlation_id, "
+                "created_at, updated_at, attempt, max_attempts, last_error "
+                "FROM jobs WHERE status != ? ORDER BY created_at",
+                ("archived",),
+            ).fetchall()
+    for row in rows:
+        item = dict(row)
+        item["evidence"] = evidence_by_job.get(item["id"])
+        tasks.append(item)
+
+    result = {
+        "timestamp": datetime.now(UTC).isoformat(),
+        "health": health_data,
+        "tasks": tasks,
+    }
+    print(json.dumps(result, indent=2, default=str))
+
+
+def _cmd_skip(args: argparse.Namespace) -> None:
+    """Mark a task as intentionally skipped/accepted without editing it."""
+    import json
+
+    from djobs.queue.service import QueueService
+    from djobs.storage.sqlite import SQLiteJobRepository
+
+    repo = SQLiteJobRepository.from_path(args.db)
+    queue = QueueService(repo)
+    evidence = args.evidence or "Skipped by user/operator"
+    job = queue.complete(args.job_id, evidence=evidence)
+    print(json.dumps({"id": job.id, "status": job.status.value, "evidence": evidence}, indent=2))
+
+
+def _cmd_accept_before(args: argparse.Namespace) -> None:
+    """Mark all earlier tasks in a workflow as accepted so resume can start later."""
+    import json
+
+    from djobs.queue.service import QueueService
+    from djobs.storage.sqlite import SQLiteJobRepository
+
+    repo = SQLiteJobRepository.from_path(args.db)
+    queue = QueueService(repo)
+
+    with repo._lock:
+        target = repo._connection.execute(
+            "SELECT correlation_id, created_at FROM jobs WHERE id = ?",
+            (args.job_id,),
+        ).fetchone()
+        if target is None:
+            raise SystemExit(f"Job not found: {args.job_id}")
+        rows = repo._connection.execute(
+            """
+            SELECT id, status FROM jobs
+            WHERE correlation_id = ?
+              AND created_at < ?
+            ORDER BY created_at ASC
+            """,
+            (target["correlation_id"], target["created_at"]),
+        ).fetchall()
+
+    accepted_ids: list[str] = []
+    for row in rows:
+        if row["status"] in {"succeeded", "archived"}:
+            continue
+        queue.complete(row["id"], evidence=args.evidence or f"Accepted before {args.job_id}")
+        accepted_ids.append(row["id"])
+
+    print(json.dumps({"accepted": accepted_ids, "count": len(accepted_ids)}, indent=2))
+
+
+def _cmd_archive_workflow(args: argparse.Namespace) -> None:
+    """Archive all non-terminal tasks in a workflow/session."""
+    import json
+
+    from djobs.queue.service import QueueService
+    from djobs.storage.sqlite import SQLiteJobRepository
+
+    repo = SQLiteJobRepository.from_path(args.db)
+    queue = QueueService(repo)
+
+    with repo._lock:
+        if args.correlation_id:
+            rows = repo._connection.execute(
+                "SELECT id, status FROM jobs WHERE correlation_id = ? ORDER BY created_at ASC",
+                (args.correlation_id,),
+            ).fetchall()
+        else:
+            rows = repo._connection.execute(
+                "SELECT id, status FROM jobs ORDER BY created_at ASC"
+            ).fetchall()
+
+    archived: list[str] = []
+    skipped_terminal: list[str] = []
+    for row in rows:
+        if row["status"] in {"succeeded", "archived"}:
+            skipped_terminal.append(row["id"])
+            continue
+        queue.archive(row["id"], reason=args.reason or "Archived by user/operator")
+        archived.append(row["id"])
+
+    print(
+        json.dumps(
+            {"archived": archived, "skipped": skipped_terminal, "count": len(archived)},
+            indent=2,
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -297,6 +470,106 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     serve_parser.set_defaults(func=_cmd_serve)
+
+    # --- dashboard ---
+    dashboard_parser = subparsers.add_parser(
+        "dashboard",
+        help="Serve the read-only cross-agent web dashboard",
+    )
+    dashboard_parser.add_argument(
+        "--db",
+        default="djobs_mcp.db",
+        help="SQLite database path (default: djobs_mcp.db — same as MCP server)",
+    )
+    dashboard_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help=(
+            "Host/interface to bind (default: 127.0.0.1). The dashboard has NO "
+            "authentication; only bind to a non-loopback address (e.g. 0.0.0.0) "
+            "on a trusted network."
+        ),
+    )
+    dashboard_parser.add_argument(
+        "--port",
+        type=int,
+        default=8787,
+        help="Port to listen on (default: 8787)",
+    )
+    dashboard_parser.add_argument(
+        "--refresh",
+        type=int,
+        default=5,
+        help="Auto-refresh interval in seconds (default: 5)",
+    )
+    dashboard_parser.set_defaults(func=_cmd_dashboard)
+
+    # --- status (JSON) ---
+    status_parser = subparsers.add_parser(
+        "status",
+        help="JSON snapshot of queue health + tasks (for VS Code extension)",
+    )
+    status_parser.add_argument(
+        "--db",
+        default="djobs_mcp.db",
+        help="SQLite database path (default: djobs_mcp.db)",
+    )
+    status_parser.add_argument(
+        "--correlation-id",
+        default=None,
+        help="Filter tasks by correlation_id",
+    )
+    status_parser.set_defaults(func=_cmd_status)
+
+    # --- skip ---
+    skip_parser = subparsers.add_parser(
+        "skip",
+        help="Mark a task as intentionally skipped/accepted",
+    )
+    skip_parser.add_argument("job_id", help="Task/job ID to mark as skipped")
+    skip_parser.add_argument("--db", default="djobs_mcp.db", help="SQLite database path")
+    skip_parser.add_argument(
+        "--evidence",
+        default="Skipped by user/operator",
+        help="Evidence/note stored on the completed task",
+    )
+    skip_parser.set_defaults(func=_cmd_skip)
+
+    # --- accept-before ---
+    accept_before_parser = subparsers.add_parser(
+        "accept-before",
+        help="Mark all earlier tasks in the same workflow as accepted",
+    )
+    accept_before_parser.add_argument("job_id", help="Start task/job ID")
+    accept_before_parser.add_argument("--db", default="djobs_mcp.db", help="SQLite database path")
+    accept_before_parser.add_argument(
+        "--evidence",
+        default=None,
+        help="Evidence/note stored on accepted tasks",
+    )
+    accept_before_parser.set_defaults(func=_cmd_accept_before)
+
+    # --- archive-workflow ---
+    archive_workflow_parser = subparsers.add_parser(
+        "archive-workflow",
+        help="Archive all non-terminal tasks in a workflow/session",
+    )
+    archive_workflow_parser.add_argument(
+        "--db",
+        default="djobs_mcp.db",
+        help="SQLite database path",
+    )
+    archive_workflow_parser.add_argument(
+        "--correlation-id",
+        default=None,
+        help="Workflow/session correlation_id to archive (omit to archive all non-terminal tasks)",
+    )
+    archive_workflow_parser.add_argument(
+        "--reason",
+        default="Archived by user/operator",
+        help="Reason recorded in the audit log",
+    )
+    archive_workflow_parser.set_defaults(func=_cmd_archive_workflow)
 
     # --- install-mcp ---
     mcp_parser = subparsers.add_parser(

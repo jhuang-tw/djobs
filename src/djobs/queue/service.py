@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
+import json
+import os
 from datetime import datetime, timedelta
 from typing import Any, Protocol
 
-from djobs.core.errors import JobNotFoundError
-from djobs.core.models import Job
+from djobs.core.errors import JobNotFoundError, PayloadTooLargeError
+from djobs.core.models import Agent, Job
 from djobs.core.retry import RetryPolicy
 from djobs.observability.inspect import inspect_job
 from djobs.storage.sqlite import JobEvent
+
+# Default maximum serialized payload size (256 KiB). A job payload is metadata
+# describing work to do, not a blob store; oversized payloads bloat the DB,
+# slow down claim scans, and can be used to exhaust memory. Override via the
+# DJOBS_MAX_PAYLOAD_BYTES environment variable (set to 0 to disable the check).
+DEFAULT_MAX_PAYLOAD_BYTES = 256 * 1024
 
 
 class JobRepository(Protocol):
@@ -27,6 +35,8 @@ class JobRepository(Protocol):
     def mark_failed(self, job_id: str, error: str) -> Job: ...
     def mark_retry_scheduled(self, job_id: str, error: str, run_after: datetime) -> Job: ...
     def mark_dead_lettered(self, job_id: str, error: str) -> Job: ...
+    def mark_archived(self, job_id: str, reason: str | None = None) -> Job: ...
+    def release_job(self, job_id: str, worker_id: str, reason: str | None = None) -> Job: ...
     def promote_due_retries(self, now: datetime | None = None) -> list[Job]: ...
     def heartbeat(self, job_id: str, worker_id: str, lease_duration: timedelta = ...) -> Job: ...
     def recover_expired_leases(self, now: datetime | None = None) -> list[Job]: ...
@@ -35,14 +45,48 @@ class JobRepository(Protocol):
     def list_by_status(self, status: str, limit: int = 100) -> list[Job]: ...
     def list_events(self, job_id: str | None = None) -> list[JobEvent]: ...
     def count_stuck_running(self, now: datetime | None = None) -> int: ...
+    def register_agent(
+        self,
+        agent_id: str,
+        capabilities: list[str] | None = ...,
+        metadata: dict[str, Any] | None = ...,
+    ) -> Agent: ...
+    def agent_heartbeat(self, agent_id: str) -> Agent: ...
+    def get_agent(self, agent_id: str) -> Agent | None: ...
+    def list_agents(self, status: str | None = ...) -> list[Agent]: ...
+    def mark_stale_agents_offline(
+        self, timeout: timedelta = ..., now: datetime | None = ...
+    ) -> list[Agent]: ...
 
 
 class QueueService:
     """Coordinates job submission, retry, and lifecycle transitions."""
 
-    def __init__(self, repository: JobRepository, retry_policy: RetryPolicy | None = None) -> None:
+    def __init__(
+        self,
+        repository: JobRepository,
+        retry_policy: RetryPolicy | None = None,
+        max_payload_bytes: int | None = None,
+    ) -> None:
         self._repository = repository
         self._retry_policy = retry_policy or RetryPolicy()
+        if max_payload_bytes is None:
+            max_payload_bytes = int(
+                os.getenv("DJOBS_MAX_PAYLOAD_BYTES", str(DEFAULT_MAX_PAYLOAD_BYTES))
+            )
+        self._max_payload_bytes = max_payload_bytes
+
+    def _check_payload_size(self, job_type: str, payload: dict[str, Any] | None) -> None:
+        """Reject payloads whose serialized size exceeds the configured limit."""
+        if not self._max_payload_bytes or not payload:
+            return
+        size = len(json.dumps(payload, default=str).encode("utf-8"))
+        if size > self._max_payload_bytes:
+            raise PayloadTooLargeError(
+                f"Payload for job type '{job_type}' is {size} bytes, "
+                f"exceeding the limit of {self._max_payload_bytes} bytes. "
+                f"Store large data externally and pass a reference instead."
+            )
 
     def submit(
         self,
@@ -53,7 +97,10 @@ class QueueService:
         run_after: datetime | None = None,
         idempotency_key: str | None = None,
         correlation_id: str | None = None,
+        depends_on: list[str] | None = None,
+        resource_key: str | None = None,
     ) -> Job:
+        self._check_payload_size(job_type, payload)
         if idempotency_key is not None:
             existing_job = self._repository.find_active_by_idempotency_key(idempotency_key)
             if existing_job is not None:
@@ -68,6 +115,10 @@ class QueueService:
         }
         if correlation_id is not None:
             kwargs["correlation_id"] = correlation_id
+        if depends_on:
+            kwargs["depends_on"] = list(depends_on)
+        if resource_key is not None:
+            kwargs["resource_key"] = resource_key
 
         job = Job(**kwargs)
         return self._repository.create_job(job)
@@ -92,6 +143,8 @@ class QueueService:
                 run_after=spec.get("run_after"),
                 idempotency_key=spec.get("idempotency_key"),
                 correlation_id=correlation_id,
+                depends_on=spec.get("depends_on"),
+                resource_key=spec.get("resource_key"),
             )
             created.append(j)
         return created
@@ -116,6 +169,13 @@ class QueueService:
 
     def fail(self, job_id: str, error: str) -> Job:
         return self._repository.mark_failed(job_id, error)
+
+    def archive(self, job_id: str, reason: str | None = None) -> Job:
+        return self._repository.mark_archived(job_id, reason)
+
+    def release(self, job_id: str, worker_id: str, reason: str | None = None) -> Job:
+        """Release a claimed task back to the queue for another agent to take."""
+        return self._repository.release_job(job_id, worker_id, reason)
 
     def retry_or_dead_letter(
         self,
@@ -182,3 +242,36 @@ class QueueService:
     def list_by_status(self, status: str, limit: int = 100) -> list[Job]:
         """Return jobs with the given status string (e.g. 'dead_lettered')."""
         return self._repository.list_by_status(status, limit=limit)
+
+    # ------------------------------------------------------------------
+    # Agent registry (Phase M4)
+    # ------------------------------------------------------------------
+
+    def register_agent(
+        self,
+        agent_id: str,
+        capabilities: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> Agent:
+        """Register or re-register an agent; marks it online."""
+        return self._repository.register_agent(agent_id, capabilities, metadata)
+
+    def agent_heartbeat(self, agent_id: str) -> Agent:
+        """Record an agent liveness ping."""
+        return self._repository.agent_heartbeat(agent_id)
+
+    def get_agent(self, agent_id: str) -> Agent | None:
+        return self._repository.get_agent(agent_id)
+
+    def list_agents(self, status: str | None = None) -> list[Agent]:
+        return self._repository.list_agents(status)
+
+    def reap_stale_agents(
+        self,
+        timeout: timedelta | None = None,
+        now: datetime | None = None,
+    ) -> list[Agent]:
+        """Mark agents that stopped heartbeating offline; return those reaped."""
+        if timeout is not None:
+            return self._repository.mark_stale_agents_offline(timeout, now)
+        return self._repository.mark_stale_agents_offline(now=now)

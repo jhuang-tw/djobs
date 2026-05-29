@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="256" y2="256" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#303446"/>
+      <stop offset="1" stop-color="#232634"/>
+    </linearGradient>
+    <linearGradient id="loop" x1="48" y1="56" x2="208" y2="208" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8aadf4"/>
+      <stop offset="1" stop-color="#c6a0f6"/>
+    </linearGradient>
+  </defs>
+
+  <!-- rounded card background -->
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="url(#bg)"/>
+  <rect x="8.5" y="8.5" width="239" height="239" rx="51.5" stroke="#494d64" stroke-opacity="0.6"/>
+
+  <!-- durability / resume loop with an open gap and arrowhead -->
+  <path d="M186 92
+           A70 70 0 1 0 198 134"
+        fill="none" stroke="url(#loop)" stroke-width="20" stroke-linecap="round"/>
+  <path d="M168 70 L190 96 L160 104 Z" fill="#c6a0f6"/>
+
+  <!-- check mark: completed + verified task -->
+  <path d="M96 130 L120 156 L168 100"
+        fill="none" stroke="#a6da95" stroke-width="20"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

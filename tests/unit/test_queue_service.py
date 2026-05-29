@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
+from djobs.core.errors import PayloadTooLargeError
 from djobs.core.states import JobStatus
 from djobs.queue.service import QueueService
 from djobs.storage.sqlite import SQLiteJobRepository
@@ -150,3 +153,39 @@ def test_complete_without_evidence_no_metadata(tmp_path) -> None:
     assert len(succeeded_events) == 1
     assert succeeded_events[0].message is None
     assert succeeded_events[0].metadata == {}
+
+
+# ------------------------------------------------------------------
+# Payload size limit
+# ------------------------------------------------------------------
+
+
+def test_submit_rejects_oversized_payload(tmp_path) -> None:
+    queue = QueueService(
+        SQLiteJobRepository.from_path(tmp_path / "jobs.db"),
+        max_payload_bytes=1024,
+    )
+
+    big = {"blob": "x" * 2048}
+    with pytest.raises(PayloadTooLargeError):
+        queue.submit("demo.echo", big)
+
+
+def test_submit_accepts_payload_within_limit(tmp_path) -> None:
+    queue = QueueService(
+        SQLiteJobRepository.from_path(tmp_path / "jobs.db"),
+        max_payload_bytes=1024,
+    )
+
+    job = queue.submit("demo.echo", {"message": "ok"})
+    assert job.status == JobStatus.PENDING
+
+
+def test_submit_limit_disabled_when_zero(tmp_path) -> None:
+    queue = QueueService(
+        SQLiteJobRepository.from_path(tmp_path / "jobs.db"),
+        max_payload_bytes=0,
+    )
+
+    job = queue.submit("demo.echo", {"blob": "x" * 5000})
+    assert job.status == JobStatus.PENDING

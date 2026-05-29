@@ -10,15 +10,22 @@ import json
 
 import pytest
 
+from djobs.core.errors import JobNotFoundError
 from djobs.mcp_server import (
+    agent_heartbeat,
     audit_log,
     check_task,
+    claim_task,
     complete_task,
     configure,
     enqueue_task,
     fail_task,
     health,
+    heartbeat_task,
+    list_agents,
     list_tasks,
+    register_agent,
+    release_task,
     resume_session,
 )
 
@@ -292,6 +299,7 @@ class TestAuditLog:
 
         result = json.loads(audit_log())
         assert result["total_events"] > 0
+
         assert result["tasks"]["total"] == 3
         assert result["tasks"]["by_type"]["docstring"] == 2
         assert result["tasks"]["by_type"]["refactor"] == 1
@@ -372,3 +380,145 @@ class TestAuditLog:
         result = json.loads(audit_log(since="not-a-date"))
         assert "error" in result
         assert "invalid datetime format" in result["error"]
+
+
+class TestMultiAgentClaim:
+    def test_claim_returns_pending_task(self):
+        created = json.loads(enqueue_task(task_type="refactor"))
+        result = json.loads(claim_task(agent_id="agent-a"))
+        assert result["claimed"] is True
+        assert result["task"]["id"] == created["id"]
+        assert result["task"]["status"] == "running"
+        assert result["task"]["leased_by"] == "agent-a"
+
+    def test_claim_empty_queue(self):
+        result = json.loads(claim_task(agent_id="agent-a"))
+        assert result["claimed"] is False
+
+    def test_claim_respects_task_types_filter(self):
+        enqueue_task(task_type="refactor")
+        result = json.loads(claim_task(agent_id="agent-a", task_types=["lint"]))
+        assert result["claimed"] is False
+
+    def test_two_agents_never_claim_same_task(self):
+        enqueue_task(task_type="refactor")
+        first = json.loads(claim_task(agent_id="agent-a"))
+        second = json.loads(claim_task(agent_id="agent-b"))
+        assert first["claimed"] is True
+        assert second["claimed"] is False
+
+    def test_heartbeat_renews_lease(self):
+        enqueue_task(task_type="refactor")
+        claimed = json.loads(claim_task(agent_id="agent-a"))
+        task_id = claimed["task"]["id"]
+        result = json.loads(heartbeat_task(task_id, "agent-a"))
+        assert result["status"] == "running"
+        assert result["leased_by"] == "agent-a"
+
+    def test_release_returns_task_to_queue(self):
+        enqueue_task(task_type="refactor")
+        claimed = json.loads(claim_task(agent_id="agent-a"))
+        task_id = claimed["task"]["id"]
+
+        released = json.loads(release_task(task_id, "agent-a", reason="cannot proceed"))
+        assert released["status"] == "pending"
+        assert released["leased_by"] is None
+
+        reclaimed = json.loads(claim_task(agent_id="agent-b"))
+        assert reclaimed["claimed"] is True
+        assert reclaimed["task"]["id"] == task_id
+        assert reclaimed["task"]["leased_by"] == "agent-b"
+
+    def test_release_rejects_wrong_owner(self):
+        enqueue_task(task_type="refactor")
+        claimed = json.loads(claim_task(agent_id="agent-a"))
+        task_id = claimed["task"]["id"]
+        with pytest.raises(JobNotFoundError):
+            release_task(task_id, "agent-b")
+
+
+class TestTaskDependencies:
+    def test_enqueue_with_depends_on_records_dependencies(self):
+        dep = json.loads(enqueue_task(task_type="build"))
+        dependent = json.loads(enqueue_task(task_type="deploy", depends_on=[dep["id"]]))
+        assert dependent["depends_on"] == [dep["id"]]
+
+    def test_dependent_task_not_claimable_until_dependency_succeeds(self):
+        dep = json.loads(enqueue_task(task_type="build"))
+        dependent = json.loads(enqueue_task(task_type="deploy", depends_on=[dep["id"]]))
+
+        # First claim must be the dependency, not the blocked dependent.
+        first = json.loads(claim_task(agent_id="agent-a"))
+        assert first["claimed"] is True
+        assert first["task"]["id"] == dep["id"]
+
+        # Dependent is blocked while the dependency is still running.
+        blocked = json.loads(claim_task(agent_id="agent-b"))
+        assert blocked["claimed"] is False
+
+        # Complete the dependency → dependent becomes claimable.
+        complete_task(dep["id"])
+        unblocked = json.loads(claim_task(agent_id="agent-b"))
+        assert unblocked["claimed"] is True
+        assert unblocked["task"]["id"] == dependent["id"]
+
+
+class TestResourceLock:
+    def test_enqueue_records_resource_key(self):
+        task = json.loads(enqueue_task(task_type="edit", resource_key="src/foo.py"))
+        assert task["resource_key"] == "src/foo.py"
+
+    def test_same_resource_key_is_locked_while_running(self):
+        first = json.loads(enqueue_task(task_type="edit", resource_key="src/foo.py"))
+        enqueue_task(task_type="edit", resource_key="src/foo.py")
+
+        claimed = json.loads(claim_task(agent_id="agent-a"))
+        assert claimed["claimed"] is True
+        assert claimed["task"]["id"] == first["id"]
+
+        # Second task on same resource blocked while first runs.
+        blocked = json.loads(claim_task(agent_id="agent-b"))
+        assert blocked["claimed"] is False
+
+        # Completing the holder releases the lock.
+        complete_task(first["id"])
+        unblocked = json.loads(claim_task(agent_id="agent-b"))
+        assert unblocked["claimed"] is True
+        assert unblocked["task"]["resource_key"] == "src/foo.py"
+
+
+class TestAgentRegistry:
+    def test_register_agent_returns_online(self):
+        result = json.loads(
+            register_agent(
+                agent_id="agent-1",
+                capabilities=["build", "deploy"],
+                metadata={"host": "box-1"},
+            )
+        )
+        assert result["id"] == "agent-1"
+        assert result["status"] == "online"
+        assert result["capabilities"] == ["build", "deploy"]
+        assert result["metadata"] == {"host": "box-1"}
+
+    def test_agent_heartbeat_keeps_agent_online(self):
+        register_agent(agent_id="agent-1")
+        result = json.loads(agent_heartbeat(agent_id="agent-1"))
+        assert result["status"] == "online"
+
+    def test_list_agents_shows_registered_agents(self):
+        register_agent(agent_id="agent-1", capabilities=["build"])
+        register_agent(agent_id="agent-2", capabilities=["deploy"])
+
+        result = json.loads(list_agents())
+        assert result["count"] == 2
+        ids = {a["id"] for a in result["agents"]}
+        assert ids == {"agent-1", "agent-2"}
+
+    def test_list_agents_filters_by_status(self):
+        register_agent(agent_id="agent-1")
+        result = json.loads(list_agents(status="online"))
+        assert {a["id"] for a in result["agents"]} == {"agent-1"}
+
+        offline = json.loads(list_agents(status="offline"))
+        assert offline["agents"] == []

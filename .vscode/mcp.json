@@ -15,7 +15,13 @@
         "fail_task",
         "list_tasks",
         "enqueue_task",
-        "audit_log"
+        "audit_log",
+        "claim_task",
+        "heartbeat_task",
+        "release_task",
+        "register_agent",
+        "agent_heartbeat",
+        "list_agents"
       ]
     }
   }

@@ -19,6 +19,10 @@ class JobNotFoundError(DJobsError):
     """Raised when a job id cannot be found."""
 
 
+class AgentNotFoundError(DJobsError):
+    """Raised when an agent id is not registered."""
+
+
 class HandlerNotFoundError(DJobsError):
     """Raised when a worker cannot find a handler for a job type."""
 
@@ -33,3 +37,7 @@ class RetryableJobError(DJobsError):
 
 class NonRetryableJobError(DJobsError):
     """Raised by a handler when a failure should become terminal failed."""
+
+
+class PayloadTooLargeError(DJobsError):
+    """Raised when a job payload exceeds the configured size limit."""

@@ -18,6 +18,16 @@ jobs:
       - run: ruff check src/ tests/
       - run: ruff format --check src/ tests/
 
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e ".[dev,pg]"
+      - run: mypy
+
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -30,3 +40,32 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[dev]"
       - run: pytest -q --tb=short
+
+  test-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: djobs
+          POSTGRES_PASSWORD: djobs
+          POSTGRES_DB: djobs
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U djobs"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DJOBS_TEST_PG_DSN: postgresql://djobs:djobs@localhost:5432/djobs
+      DJOBS_REQUIRE_PG: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e ".[dev,pg]"
+      - name: Run tests against PostgreSQL backend
+        run: pytest -q --tb=short tests/integration/test_repository_contract.py
+

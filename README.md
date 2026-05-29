@@ -1,10 +1,15 @@
 # djobs
 
-**Crash-proof task memory for AI coding agents.** When your AI agent is halfway through editing 20 files and VS Code crashes, djobs makes sure it picks up from file 13 instead of starting over.
+**Durable workflow control for AI coding agents.** When your AI agent runs a multi-file task, djobs makes every step inspectable, resumable, and controllable — and survives IDE crashes, context loss, or session interruptions.
 
 [![CI](https://github.com/jhuang-tw/djobs/actions/workflows/ci.yml/badge.svg)](https://github.com/jhuang-tw/djobs/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/djobs.svg)](https://pypi.org/project/djobs/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+
+<p align="center">
+  <img src="docs/demo.svg" alt="djobs demo — crash recovery in action" width="700">
+</p>
 
 ---
 
@@ -55,6 +60,13 @@ djobs install-mcp
 ```
 
 Two commands. Your AI agent now has crash-proof task memory.
+
+Verify it works:
+
+```bash
+djobs health
+# {"pending": 0, "running": 0, "succeeded": 0, ...}
+```
 
 <details>
 <summary>Options and manual setup</summary>
@@ -134,11 +146,16 @@ Or add to `.vscode/mcp.json` manually:
 
 ## Making Your Agent Use djobs Automatically
 
-After installing, your agent has the MCP tools available — but it won't use them unless you tell it to. The easiest way is to copy the **Durable Coder** agent definition from this repo:
+After installing, your agent has the MCP tools available — but it won't use them unless you tell it to. The easiest way is to use the included **Durable Coder** agent definition:
 
 **Option A: Copy to your project (recommended)**
 
-Copy [`.agent.md`](.agent.md) from this repo into your project root.
+```bash
+# Copy the agent file to your project root
+cp $(python -c "import djobs, pathlib; print(pathlib.Path(djobs.__file__).parent.parent.parent / '.agent.md')") .agent.md
+```
+
+Or just copy [`.agent.md`](.agent.md) from this repo into your project root.
 
 **Option B: Use the GitHub Copilot agent picker**
 
@@ -156,12 +173,15 @@ You can also write your own `.agent.md` or add djobs tool calls to any existing 
 
 ## See It In Action
 
+The animated SVG above shows the full demo. To run it yourself:
+
 ```bash
-# Codebase migration demo — crash mid-way, resume, zero data loss
+pip install djobs
+# if you cloned the repo:
 python examples/run_migration_demo.py
 ```
 
-The demo scans 20 Python files, enqueues each as an "add-docstrings" task, completes 12, simulates an IDE crash, then calls `resume_session` and finishes the remaining 8.
+20 files enqueued → 12 completed → crash → resume → 8 remaining finished. Zero data loss.
 
 ---
 
@@ -172,6 +192,8 @@ Beyond the three core tools, djobs also provides:
 - **`audit_log`** — "What did the AI do yesterday?" Full event history across sessions.
 - **`check_task` / `list_tasks`** — Inspect individual tasks or list by workspace.
 - **`health`** — Queue depth by status at a glance.
+- **Multi-agent coordination** — Several agents share one queue: `claim_task` (atomic, exclusive), `heartbeat_task`, `release_task`, task dependencies (`depends_on`), resource locks (`resource_key`), and an agent registry (`register_agent` / `agent_heartbeat` / `list_agents`).
+- **Web dashboard** — `djobs dashboard` serves a read-only, cross-agent view of queue health, every task, and the live agent fleet at `http://127.0.0.1:8787` (stdlib only, no extra deps).
 - **Retry with backoff** — Failed tasks can retry automatically.
 - **Dead letter queue** — Tasks that exhaust all retries are preserved for review.
 
@@ -187,7 +209,7 @@ cd djobs
 python -m venv .venv && .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest -q              # 214 tests (16 skipped without Postgres)
+pytest -q              # 278 tests (18 skipped without Postgres)
 ruff check src/ tests/ # lint
 ```
 
@@ -195,15 +217,38 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ---
 
+## VS Code Extension
+
+djobs includes a VS Code sidebar extension for visual workflow control:
+
+- **Workflow dashboard** — tasks grouped by workflow and action type with progress indicators
+- **Resume from any step** — expand a workflow, pick a file, and the previous steps are auto-accepted
+- **Skip / Archive** — mark tasks done without editing, or archive stale workflows
+- **Evidence trail** — see what the agent actually changed in each completed task
+
+Install the VSIX from `vscode-ext/` or build it yourself:
+
+```bash
+cd vscode-ext && npm install && npm run package
+# Install: code --install-extension djobs-1.0.3.vsix
+```
+
+---
+
 ## Roadmap
 
-- [x] Crash-proof task memory (`enqueue` → `complete` → `resume`)
+- [x] Durable workflow state (`enqueue` → `complete` → `resume`)
 - [x] Audit trail — "what did the AI do?"
-- [x] MCP server with 8 tools
+- [x] MCP server with 14 tools
 - [x] `pip install djobs && djobs install-mcp` — two-command setup
 - [x] Published on PyPI
 - [x] `complete_task` evidence field — agent records what it changed
-- [ ] VS Code sidebar — visual task progress and one-click resume
+- [x] VS Code sidebar — workflow dashboard, resume from any step, skip/archive
+- [x] CLI workflow control — `djobs skip`, `djobs accept-before`, `djobs archive-workflow`
+- [x] Multi-agent coordination — shared-queue claim, dependencies, resource locks, agent registry
+- [x] Web dashboard — `djobs dashboard` cross-agent global view
+- [ ] Status bar badge + notification alerts
+- [ ] VS Code Marketplace publishing
 
 ---
 

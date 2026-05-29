@@ -26,8 +26,14 @@ def _sqlite_factory(tmp_path):
 
 def _pg_factory(_tmp_path):
     """Create a PostgresJobRepository, truncating tables between tests."""
-    psycopg = pytest.importorskip("psycopg")
     import os
+
+    require_pg = os.getenv("DJOBS_REQUIRE_PG") == "1"
+
+    if require_pg:
+        import psycopg
+    else:
+        psycopg = pytest.importorskip("psycopg")
 
     dsn = os.getenv(
         "DJOBS_TEST_PG_DSN",
@@ -38,6 +44,8 @@ def _pg_factory(_tmp_path):
 
         conn = psycopg.connect(dsn, row_factory=dict_row)
     except psycopg.OperationalError:
+        if require_pg:
+            raise
         pytest.skip("PostgreSQL not available")
 
     from djobs.storage.postgres import PG_SCHEMA_SQL, PostgresJobRepository
@@ -201,6 +209,48 @@ def test_type_concurrency_limits(repo) -> None:
     j2 = repo.claim_next_job("w-2", type_concurrency_limits={"email": 1})
     assert j2 is not None
     assert j2.type == "sms"
+
+
+def test_resource_key_exclusive_lock(repo) -> None:
+    repo.create_job(Job(type="edit", resource_key="file.py"))
+    repo.create_job(Job(type="edit", resource_key="file.py"))
+
+    # First claim takes the resource lock on file.py.
+    j1 = repo.claim_next_job("w-1")
+    assert j1 is not None
+    assert j1.resource_key == "file.py"
+
+    # Second job shares the same resource_key → not claimable while j1 runs.
+    j2 = repo.claim_next_job("w-2")
+    assert j2 is None
+
+    # After j1 finishes, the resource is free again.
+    repo.mark_succeeded(j1.id)
+    j3 = repo.claim_next_job("w-3")
+    assert j3 is not None
+    assert j3.resource_key == "file.py"
+
+
+def test_depends_on_blocks_until_satisfied(repo) -> None:
+    dep = Job(type="build")
+    repo.create_job(dep)
+    blocked = Job(type="test", depends_on=[dep.id])
+    repo.create_job(blocked)
+
+    # The dependent job is not claimable until its dependency succeeds.
+    # Claim the dependency first (oldest), then the dependent stays blocked.
+    j1 = repo.claim_next_job("w-1")
+    assert j1 is not None
+    assert j1.id == dep.id
+
+    # Dependency still running → dependent not claimable.
+    assert repo.claim_next_job("w-2") is None
+
+    # Dependency succeeds → dependent becomes claimable.
+    repo.mark_succeeded(dep.id)
+    j2 = repo.claim_next_job("w-3")
+    assert j2 is not None
+    assert j2.id == blocked.id
 
 
 def test_events_recorded(repo) -> None:

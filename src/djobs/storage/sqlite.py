@@ -9,12 +9,13 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from djobs.core.errors import JobNotFoundError
-from djobs.core.models import Job
-from djobs.core.states import JobStatus, validate_transition
+from djobs.core.errors import AgentNotFoundError, JobNotFoundError
+from djobs.core.models import Agent, Job
+from djobs.core.states import AgentStatus, JobStatus, validate_transition
 from djobs.storage.events import JobEvent
 
 DEFAULT_LEASE_DURATION = timedelta(seconds=30)
+DEFAULT_AGENT_TIMEOUT = timedelta(seconds=90)
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -32,6 +33,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     lease_expires_at TEXT NULL,
     heartbeat_at TEXT NULL,
     started_at TEXT NULL,
+    depends_on_json TEXT NOT NULL DEFAULT '[]',
+    resource_key TEXT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -64,6 +67,19 @@ ON job_events (job_id, created_at);
 -- Phase 9.5: index for audit_log time-range queries spanning all jobs.
 CREATE INDEX IF NOT EXISTS idx_job_events_created_at
 ON job_events (created_at);
+
+-- Phase M4: agent registry — track which agents are online and what they can do.
+CREATE TABLE IF NOT EXISTS agents (
+    id TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    capabilities_json TEXT NOT NULL DEFAULT '[]',
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    registered_at TEXT NOT NULL,
+    last_heartbeat_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_agents_status
+ON agents (status, last_heartbeat_at);
 """
 
 
@@ -83,7 +99,19 @@ def connect(path: str | Path) -> sqlite3.Connection:
 def initialize_schema(connection: sqlite3.Connection) -> None:
     """Create job tables and indexes if they do not already exist."""
     connection.executescript(SCHEMA_SQL)
+    _apply_column_migrations(connection)
     connection.commit()
+
+
+def _apply_column_migrations(connection: sqlite3.Connection) -> None:
+    """Add columns introduced after the initial schema to pre-existing DBs."""
+    existing = {row["name"] for row in connection.execute("PRAGMA table_info(jobs)").fetchall()}
+    if "depends_on_json" not in existing:
+        connection.execute(
+            "ALTER TABLE jobs ADD COLUMN depends_on_json TEXT NOT NULL DEFAULT '[]'"
+        )
+    if "resource_key" not in existing:
+        connection.execute("ALTER TABLE jobs ADD COLUMN resource_key TEXT NULL")
 
 
 class SQLiteJobRepository:
@@ -112,9 +140,9 @@ class SQLiteJobRepository:
                     id, type, payload_json, status, attempt, max_attempts,
                     run_after, idempotency_key, correlation_id, last_error,
                     leased_by, lease_expires_at, heartbeat_at,
-                    started_at, created_at, updated_at
+                    started_at, depends_on_json, resource_key, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 _job_to_params(job),
             )
@@ -203,20 +231,46 @@ class SQLiteJobRepository:
                     """
                     params = (JobStatus.PENDING.value, now_str)
 
-                rows = cursor.execute(sql, params).fetchall()
+                # Precompute global aggregates ONCE instead of re-querying them
+                # for every candidate row (avoids an N+1 query pattern):
+                #  - running counts per type, for type_concurrency_limits
+                #  - the set of resource_keys currently held by RUNNING jobs
+                # A separate cursor is used for these and the per-candidate
+                # dependency check so they don't disturb the lazy iteration of
+                # the main candidate cursor below.
+                inner = self._connection.cursor()
+                running_by_type: dict[str, int] | None = None
+                if type_concurrency_limits:
+                    running_by_type = {
+                        r["type"]: r["cnt"]
+                        for r in inner.execute(
+                            "SELECT type, COUNT(*) AS cnt FROM jobs "
+                            "WHERE status = ? GROUP BY type",
+                            (JobStatus.RUNNING.value,),
+                        ).fetchall()
+                    }
+                held_resource_keys = {
+                    r["resource_key"]
+                    for r in inner.execute(
+                        "SELECT DISTINCT resource_key FROM jobs "
+                        "WHERE status = ? AND resource_key IS NOT NULL",
+                        (JobStatus.RUNNING.value,),
+                    ).fetchall()
+                }
 
                 row = None
-                for candidate in rows:
-                    if type_concurrency_limits is not None:
+                # Iterate the cursor lazily so we stop at the first claimable row
+                # rather than loading every pending job into memory.
+                for candidate in cursor.execute(sql, params):
+                    if running_by_type is not None:
                         jtype = candidate["type"]
-                        limit = type_concurrency_limits.get(jtype)
-                        if limit is not None:
-                            running = cursor.execute(
-                                "SELECT COUNT(*) AS cnt FROM jobs WHERE status = ? AND type = ?",
-                                (JobStatus.RUNNING.value, jtype),
-                            ).fetchone()["cnt"]
-                            if running >= limit:
-                                continue
+                        limit = type_concurrency_limits.get(jtype)  # type: ignore[union-attr]
+                        if limit is not None and running_by_type.get(jtype, 0) >= limit:
+                            continue
+                    if candidate["resource_key"] in held_resource_keys:
+                        continue
+                    if not self._dependencies_satisfied(inner, candidate):
+                        continue
                     row = candidate
                     break
 
@@ -333,6 +387,49 @@ class SQLiteJobRepository:
                     "attempt": job.attempt,
                     "max_attempts": job.max_attempts,
                 },
+            )
+            self._connection.commit()
+            return self.require_job(job_id)
+
+    def mark_archived(self, job_id: str, reason: str | None = None) -> Job:
+        """Archive a job so it no longer appears as active AI workflow state."""
+        with self._lock:
+            job = self.require_job(job_id)
+            validate_transition(job.status, JobStatus.ARCHIVED)
+            self._update_status(job_id, JobStatus.ARCHIVED, last_error=None)
+            self._clear_lease(job_id)
+            self._append_event(
+                job_id,
+                "job_archived",
+                message=reason,
+                metadata={"previous_status": job.status.value},
+            )
+            self._connection.commit()
+            return self.require_job(job_id)
+
+    def release_job(self, job_id: str, worker_id: str, reason: str | None = None) -> Job:
+        """Release a claimed (RUNNING) job back to PENDING.
+
+        Used when an agent voluntarily gives up a task it has claimed (e.g.
+        it cannot make progress, or is shutting down gracefully).  The job
+        becomes available for another agent to claim immediately.
+        """
+        with self._lock:
+            job = self.require_job(job_id)
+            if job.status != JobStatus.RUNNING:
+                raise JobNotFoundError(
+                    f"Cannot release job {job_id!r} in status {job.status.value!r}"
+                )
+            if job.leased_by != worker_id:
+                raise JobNotFoundError(f"Job {job_id!r} is not leased by worker {worker_id!r}")
+            validate_transition(job.status, JobStatus.PENDING)
+            self._update_status(job_id, JobStatus.PENDING, last_error=None)
+            self._clear_lease(job_id)
+            self._append_event(
+                job_id,
+                "job_released",
+                message=reason,
+                metadata={"worker_id": worker_id},
             )
             self._connection.commit()
             return self.require_job(job_id)
@@ -524,6 +621,133 @@ class SQLiteJobRepository:
             return row["cnt"] if row else 0
 
     # ------------------------------------------------------------------
+    # Agent registry (Phase M4)
+    # ------------------------------------------------------------------
+
+    def register_agent(
+        self,
+        agent_id: str,
+        capabilities: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> Agent:
+        """Register or re-register an agent (upsert); marks it ONLINE."""
+        with self._lock:
+            now = datetime.now(UTC)
+            existing = self._connection.execute(
+                "SELECT * FROM agents WHERE id = ?", (agent_id,)
+            ).fetchone()
+            if existing is None:
+                agent = Agent(
+                    id=agent_id,
+                    status=AgentStatus.ONLINE,
+                    capabilities=list(capabilities or []),
+                    metadata=dict(metadata or {}),
+                    registered_at=now,
+                    last_heartbeat_at=now,
+                )
+                self._connection.execute(
+                    """
+                    INSERT INTO agents (
+                        id, status, capabilities_json, metadata_json,
+                        registered_at, last_heartbeat_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    _agent_to_params(agent),
+                )
+            else:
+                agent = _row_to_agent(existing)
+                agent.status = AgentStatus.ONLINE
+                if capabilities is not None:
+                    agent.capabilities = list(capabilities)
+                if metadata is not None:
+                    agent.metadata = dict(metadata)
+                agent.last_heartbeat_at = now
+                self._connection.execute(
+                    """
+                    UPDATE agents
+                    SET status = ?, capabilities_json = ?, metadata_json = ?,
+                        last_heartbeat_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        agent.status.value,
+                        json.dumps(agent.capabilities, ensure_ascii=False),
+                        json.dumps(agent.metadata, ensure_ascii=False, sort_keys=True),
+                        _serialize_datetime(agent.last_heartbeat_at),
+                        agent_id,
+                    ),
+                )
+            self._connection.commit()
+            return agent
+
+    def agent_heartbeat(self, agent_id: str) -> Agent:
+        """Record a liveness ping; brings the agent back ONLINE if reaped."""
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM agents WHERE id = ?", (agent_id,)
+            ).fetchone()
+            if row is None:
+                raise AgentNotFoundError(f"Agent {agent_id!r} is not registered")
+            now = datetime.now(UTC)
+            self._connection.execute(
+                "UPDATE agents SET status = ?, last_heartbeat_at = ? WHERE id = ?",
+                (AgentStatus.ONLINE.value, _serialize_datetime(now), agent_id),
+            )
+            self._connection.commit()
+            agent = _row_to_agent(row)
+            agent.status = AgentStatus.ONLINE
+            agent.last_heartbeat_at = now
+            return agent
+
+    def get_agent(self, agent_id: str) -> Agent | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM agents WHERE id = ?", (agent_id,)
+            ).fetchone()
+            return _row_to_agent(row) if row else None
+
+    def list_agents(self, status: str | None = None) -> list[Agent]:
+        with self._lock:
+            if status is None:
+                rows = self._connection.execute(
+                    "SELECT * FROM agents ORDER BY registered_at ASC"
+                ).fetchall()
+            else:
+                rows = self._connection.execute(
+                    "SELECT * FROM agents WHERE status = ? ORDER BY registered_at ASC",
+                    (status,),
+                ).fetchall()
+            return [_row_to_agent(row) for row in rows]
+
+    def mark_stale_agents_offline(
+        self,
+        timeout: timedelta = DEFAULT_AGENT_TIMEOUT,
+        now: datetime | None = None,
+    ) -> list[Agent]:
+        """Mark ONLINE agents whose last heartbeat is older than *timeout* OFFLINE."""
+        if now is None:
+            now = datetime.now(UTC)
+        cutoff = now - timeout
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM agents WHERE status = ? AND last_heartbeat_at < ?",
+                (AgentStatus.ONLINE.value, _serialize_datetime(cutoff)),
+            ).fetchall()
+            marked: list[Agent] = []
+            for row in rows:
+                self._connection.execute(
+                    "UPDATE agents SET status = ? WHERE id = ?",
+                    (AgentStatus.OFFLINE.value, row["id"]),
+                )
+                agent = _row_to_agent(row)
+                agent.status = AgentStatus.OFFLINE
+                marked.append(agent)
+            if marked:
+                self._connection.commit()
+            return marked
+
+    # ------------------------------------------------------------------
     # Internal helpers (called within lock)
     # ------------------------------------------------------------------
 
@@ -589,6 +813,28 @@ class SQLiteJobRepository:
             (job_id,),
         )
 
+    def _dependencies_satisfied(self, cursor: sqlite3.Cursor, row: sqlite3.Row) -> bool:
+        """Return True if every dependency of *row* has succeeded.
+
+        A job with unmet dependencies is not claimable yet.
+        """
+        raw = row["depends_on_json"]
+        if not raw:
+            return True
+        dep_ids = json.loads(raw)
+        if not dep_ids:
+            return True
+        unique_ids = set(dep_ids)
+        placeholders = ", ".join("?" * len(unique_ids))
+        satisfied = cursor.execute(
+            f"""
+            SELECT COUNT(*) AS cnt FROM jobs
+            WHERE id IN ({placeholders}) AND status = ?
+            """,
+            (*unique_ids, JobStatus.SUCCEEDED.value),
+        ).fetchone()["cnt"]
+        return satisfied == len(unique_ids)
+
 
 def _job_to_params(job: Job) -> tuple[Any, ...]:
     return (
@@ -606,6 +852,8 @@ def _job_to_params(job: Job) -> tuple[Any, ...]:
         _serialize_datetime(job.lease_expires_at),
         _serialize_datetime(job.heartbeat_at),
         _serialize_datetime(job.started_at),
+        json.dumps(job.depends_on, ensure_ascii=False),
+        job.resource_key,
         _serialize_datetime(job.created_at),
         _serialize_datetime(job.updated_at),
     )
@@ -627,8 +875,32 @@ def _row_to_job(row: sqlite3.Row) -> Job:
         lease_expires_at=_parse_datetime(row["lease_expires_at"]),
         heartbeat_at=_parse_datetime(row["heartbeat_at"]),
         started_at=_parse_datetime(row["started_at"]),
-        created_at=_parse_datetime(row["created_at"]),
-        updated_at=_parse_datetime(row["updated_at"]),
+        depends_on=json.loads(row["depends_on_json"]) if row["depends_on_json"] else [],
+        resource_key=row["resource_key"],
+        created_at=_parse_datetime_required(row["created_at"]),
+        updated_at=_parse_datetime_required(row["updated_at"]),
+    )
+
+
+def _agent_to_params(agent: Agent) -> tuple[Any, ...]:
+    return (
+        agent.id,
+        agent.status.value,
+        json.dumps(agent.capabilities, ensure_ascii=False),
+        json.dumps(agent.metadata, ensure_ascii=False, sort_keys=True),
+        _serialize_datetime(agent.registered_at),
+        _serialize_datetime(agent.last_heartbeat_at),
+    )
+
+
+def _row_to_agent(row: sqlite3.Row) -> Agent:
+    return Agent(
+        id=row["id"],
+        status=AgentStatus(row["status"]),
+        capabilities=json.loads(row["capabilities_json"]) if row["capabilities_json"] else [],
+        metadata=json.loads(row["metadata_json"]) if row["metadata_json"] else {},
+        registered_at=_parse_datetime_required(row["registered_at"]),
+        last_heartbeat_at=_parse_datetime_required(row["last_heartbeat_at"]),
     )
 
 
@@ -640,7 +912,7 @@ def _row_to_event(row: sqlite3.Row) -> JobEvent:
         event_type=row["event_type"],
         message=row["message"],
         metadata=json.loads(metadata_json) if metadata_json else {},
-        created_at=_parse_datetime(row["created_at"]),
+        created_at=_parse_datetime_required(row["created_at"]),
     )
 
 
@@ -659,3 +931,11 @@ def _parse_datetime(value: str | None) -> datetime | None:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
     return dt
+
+
+def _parse_datetime_required(value: str | None) -> datetime:
+    """Parse a NOT NULL timestamp column; raises if the value is unexpectedly NULL."""
+    parsed = _parse_datetime(value)
+    if parsed is None:
+        raise ValueError("expected a non-null timestamp")
+    return parsed

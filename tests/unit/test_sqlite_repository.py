@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import threading
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
+from djobs.core.errors import AgentNotFoundError, JobNotFoundError
 from djobs.core.models import Job
-from djobs.core.states import JobStatus
+from djobs.core.states import AgentStatus, JobStatus
 from djobs.storage.sqlite import SQLiteJobRepository
 
 
@@ -158,3 +162,251 @@ def test_mark_dead_lettered_updates_status_and_event(tmp_path) -> None:
         "job_claimed",
         "job_dead_lettered",
     ]
+
+
+def test_release_job_returns_task_to_pending(tmp_path) -> None:
+    repository = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
+    job = repository.create_job(Job(type="demo.echo"))
+    claimed_job = repository.claim_next_job("agent-a")
+
+    assert claimed_job is not None
+    released_job = repository.release_job(job.id, "agent-a", reason="cannot proceed")
+
+    assert released_job.status == JobStatus.PENDING
+    assert released_job.leased_by is None
+    assert released_job.lease_expires_at is None
+    events = repository.list_events(job.id)
+    assert [event.event_type for event in events] == [
+        "job_created",
+        "job_claimed",
+        "job_released",
+    ]
+    assert events[-1].message == "cannot proceed"
+    assert events[-1].metadata == {"worker_id": "agent-a"}
+
+
+def test_released_job_can_be_reclaimed_by_another_agent(tmp_path) -> None:
+    repository = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
+    job = repository.create_job(Job(type="demo.echo"))
+    repository.claim_next_job("agent-a")
+    repository.release_job(job.id, "agent-a")
+
+    reclaimed = repository.claim_next_job("agent-b")
+
+    assert reclaimed is not None
+    assert reclaimed.id == job.id
+    assert reclaimed.leased_by == "agent-b"
+
+
+def test_release_job_rejects_wrong_owner(tmp_path) -> None:
+    repository = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
+    job = repository.create_job(Job(type="demo.echo"))
+    repository.claim_next_job("agent-a")
+
+    with pytest.raises(JobNotFoundError):
+        repository.release_job(job.id, "agent-b")
+
+
+def test_release_job_rejects_unclaimed_task(tmp_path) -> None:
+    repository = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
+    job = repository.create_job(Job(type="demo.echo"))
+
+    with pytest.raises(JobNotFoundError):
+        repository.release_job(job.id, "agent-a")
+
+
+def test_concurrent_claims_are_mutually_exclusive(tmp_path) -> None:
+    """Two agents claiming concurrently must never receive the same task."""
+    repository = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
+    job = repository.create_job(Job(type="demo.echo"))
+
+    results: list[Job | None] = []
+    barrier = threading.Barrier(2)
+
+    def claim(agent_id: str) -> None:
+        barrier.wait()
+        results.append(repository.claim_next_job(agent_id))
+
+    threads = [
+        threading.Thread(target=claim, args=("agent-a",)),
+        threading.Thread(target=claim, args=("agent-b",)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    claimed = [r for r in results if r is not None]
+    assert len(claimed) == 1
+    assert claimed[0].id == job.id
+
+
+def test_job_with_unmet_dependency_is_not_claimed(tmp_path) -> None:
+    repository = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
+    dep = repository.create_job(Job(type="build"))
+    dependent = repository.create_job(Job(type="deploy", depends_on=[dep.id]))
+
+    # Only the dependency itself is claimable; the dependent is blocked.
+    first = repository.claim_next_job("agent-a")
+    assert first is not None
+    assert first.id == dep.id
+
+    # No other claimable job while the dependency is still running.
+    assert repository.claim_next_job("agent-b") is None
+    # The dependent task retains its declared dependencies.
+    assert repository.require_job(dependent.id).depends_on == [dep.id]
+
+
+def test_dependent_job_claimable_after_dependency_succeeds(tmp_path) -> None:
+    repository = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
+    dep = repository.create_job(Job(type="build"))
+    dependent = repository.create_job(Job(type="deploy", depends_on=[dep.id]))
+
+    claimed_dep = repository.claim_next_job("agent-a")
+    assert claimed_dep is not None
+    repository.mark_succeeded(claimed_dep.id)
+
+    # Now the dependent becomes claimable.
+    claimed_dependent = repository.claim_next_job("agent-b")
+    assert claimed_dependent is not None
+    assert claimed_dependent.id == dependent.id
+
+
+def test_job_with_multiple_dependencies_waits_for_all(tmp_path) -> None:
+    repository = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
+    dep_a = repository.create_job(Job(type="build-a"))
+    dep_b = repository.create_job(Job(type="build-b"))
+    dependent = repository.create_job(Job(type="deploy", depends_on=[dep_a.id, dep_b.id]))
+
+    # Complete only the first dependency.
+    repository.mark_succeeded(repository.claim_next_job("agent-a").id)
+    # Second dependency still pending → dependent blocked, only dep_b claimable.
+    claimed = repository.claim_next_job("agent-b")
+    assert claimed is not None
+    assert claimed.id == dep_b.id
+    repository.mark_succeeded(claimed.id)
+
+    # Both dependencies satisfied → dependent now claimable.
+    final = repository.claim_next_job("agent-c")
+    assert final is not None
+    assert final.id == dependent.id
+
+
+def test_resource_key_blocks_concurrent_claim_of_same_resource(tmp_path) -> None:
+    repository = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
+    first = repository.create_job(Job(type="edit", resource_key="src/foo.py"))
+    repository.create_job(Job(type="edit", resource_key="src/foo.py"))
+
+    claimed = repository.claim_next_job("agent-a")
+    assert claimed is not None
+    assert claimed.id == first.id
+
+    # Second task on the same resource is locked while the first is running.
+    assert repository.claim_next_job("agent-b") is None
+
+
+def test_resource_key_released_after_holder_completes(tmp_path) -> None:
+    repository = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
+    repository.create_job(Job(type="edit", resource_key="src/foo.py"))
+    second = repository.create_job(Job(type="edit", resource_key="src/foo.py"))
+
+    claimed_first = repository.claim_next_job("agent-a")
+    assert claimed_first is not None
+    repository.mark_succeeded(claimed_first.id)
+
+    # Resource lock released → second task now claimable.
+    claimed_second = repository.claim_next_job("agent-b")
+    assert claimed_second is not None
+    assert claimed_second.id == second.id
+
+
+def test_different_resource_keys_claim_concurrently(tmp_path) -> None:
+    repository = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
+    repository.create_job(Job(type="edit", resource_key="src/foo.py"))
+    repository.create_job(Job(type="edit", resource_key="src/bar.py"))
+
+    first = repository.claim_next_job("agent-a")
+    second = repository.claim_next_job("agent-b")
+
+    assert first is not None
+    assert second is not None
+    assert {first.resource_key, second.resource_key} == {"src/foo.py", "src/bar.py"}
+
+
+def test_register_agent_creates_online_agent(tmp_path) -> None:
+    repository = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
+    agent = repository.register_agent(
+        "agent-1", capabilities=["build", "deploy"], metadata={"host": "box-1"}
+    )
+
+    assert agent.id == "agent-1"
+    assert agent.status == AgentStatus.ONLINE
+    assert agent.capabilities == ["build", "deploy"]
+    assert agent.metadata == {"host": "box-1"}
+    assert repository.get_agent("agent-1").status == AgentStatus.ONLINE
+
+
+def test_register_agent_is_idempotent_upsert(tmp_path) -> None:
+    repository = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
+    repository.register_agent("agent-1", capabilities=["build"])
+    updated = repository.register_agent("agent-1", capabilities=["deploy"])
+
+    assert updated.capabilities == ["deploy"]
+    assert len(repository.list_agents()) == 1
+
+
+def test_agent_heartbeat_updates_liveness(tmp_path) -> None:
+    repository = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
+    agent = repository.register_agent("agent-1")
+    before = agent.last_heartbeat_at
+
+    refreshed = repository.agent_heartbeat("agent-1")
+    assert refreshed.status == AgentStatus.ONLINE
+    assert refreshed.last_heartbeat_at >= before
+
+
+def test_agent_heartbeat_unknown_agent_raises(tmp_path) -> None:
+    repository = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
+    with pytest.raises(AgentNotFoundError):
+        repository.agent_heartbeat("ghost")
+
+
+def test_mark_stale_agents_offline_reaps_only_stale(tmp_path) -> None:
+    repository = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
+    repository.register_agent("agent-1")
+
+    # A generous timeout evaluated at the present time leaves a fresh agent online.
+    assert repository.mark_stale_agents_offline(timeout=timedelta(hours=1)) == []
+    assert repository.get_agent("agent-1").status == AgentStatus.ONLINE
+
+    # Evaluated far in the future with a tiny timeout, the agent is now stale.
+    future = datetime.now(UTC) + timedelta(hours=1)
+    reaped = repository.mark_stale_agents_offline(timeout=timedelta(seconds=1), now=future)
+    assert {a.id for a in reaped} == {"agent-1"}
+    assert repository.get_agent("agent-1").status == AgentStatus.OFFLINE
+
+
+def test_reaped_agent_comes_back_online_on_heartbeat(tmp_path) -> None:
+    repository = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
+    repository.register_agent("agent-1")
+    future = datetime.now(UTC) + timedelta(hours=1)
+    repository.mark_stale_agents_offline(timeout=timedelta(seconds=1), now=future)
+    assert repository.get_agent("agent-1").status == AgentStatus.OFFLINE
+
+    repository.agent_heartbeat("agent-1")
+    assert repository.get_agent("agent-1").status == AgentStatus.ONLINE
+
+
+def test_list_agents_filters_by_status(tmp_path) -> None:
+    repository = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
+    repository.register_agent("online-1")
+    repository.register_agent("offline-1")
+    future = datetime.now(UTC) + timedelta(hours=1)
+    # Reap everyone, then bring one back.
+    repository.mark_stale_agents_offline(timeout=timedelta(seconds=1), now=future)
+    repository.agent_heartbeat("online-1")
+
+    online = repository.list_agents(status=AgentStatus.ONLINE.value)
+    offline = repository.list_agents(status=AgentStatus.OFFLINE.value)
+    assert {a.id for a in online} == {"online-1"}
+    assert {a.id for a in offline} == {"offline-1"}

@@ -1,0 +1,42 @@
+name: Update Demo SVG
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "examples/run_migration_demo.py"
+      - "examples/demo_workspace/**"
+      - "scripts/generate_demo_svg.py"
+      - "src/djobs/**"
+  workflow_dispatch:
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - run: pip install -e .
+
+      - run: python scripts/generate_demo_svg.py
+
+      - name: Check for changes
+        id: diff
+        run: |
+          git diff --quiet docs/demo.svg && echo "changed=false" >> "$GITHUB_OUTPUT" || echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Commit updated SVG
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/demo.svg docs/demo.cast
+          git commit -m "chore: regenerate demo SVG [skip ci]"
+          git push

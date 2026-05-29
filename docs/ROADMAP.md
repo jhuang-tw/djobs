@@ -404,7 +404,7 @@ Phase 10  Killer use case demo and README repositioning
 Phase 11  Reliability hardening for the killer workflow
 Phase 12  Community signal validation
 Phase 13  VS Code sidebar MVP, only if signal is good
-Phase 14  Multi-agent / hosted dashboard, optional future tracks
+Phase 14  Multi-agent (done, M1–M5) / hosted dashboard, optional future tracks
 ```
 
 ## Phase 10: Killer Use Case Demo And Positioning
@@ -550,27 +550,27 @@ Phase 14  Multi-agent / hosted dashboard, optional future tracks
 
 ## Phase 14: Optional Future Tracks
 
-狀態：不排期，等 Phase 12 / Phase 13 出現明確需求後再拆 phase。
+狀態：14a（multi-agent orchestration）已完成；14b（hosted dashboard）不排期。
 
 目標：保留 multi-agent orchestration 與 hosted observability 的演進方向，但不讓它們干擾近期 killer use case 驗證。
 
 ### Phase 14a: Multi-Agent Orchestration
 
-啟動條件：使用者明確需要多個 AI agent 串接，例如 Agent A 改 code、Agent B 跑測試、失敗後派回 Agent A。
+狀態：已完成（分 M1–M5 實作）。
 
-可能範圍：
+已交付：
 
-- task dependency / simplified DAG。
-- agent role metadata。
-- handoff event log。
+- **M1 共用 queue**：原子 `claim_task` 租用 + `heartbeat_task` 續租 + `release_task`，多個 agent 可安全共用同一個 DB。
+- **M2 task dependency**：`enqueue_task` 支援 `depends_on`，依賴未完成的 task 不會被 claim。
+- **M3 resource lock**：`enqueue_task` 支援 `resource_key`，同一 key 同時只跑一個 task。
+- **M4 agent registry**：`register_agent` / `agent_heartbeat` / `list_agents`，超時自動標記 OFFLINE。
+- **M5 web dashboard**：`djobs dashboard` 唯讀跨 agent fleet + queue 檢視（見 Phase 14b 後的說明）。
+
+仍未做（若有真實需求再評估）：
+
+- agent role-based routing / 自動派工 policy。
 - loop guard，避免 agent 互相反覆派工。
-- policy：哪些 task 可以自動觸發，哪些需要人工確認。
-
-暫不做原因：
-
-- 會大幅增加 product surface。
-- 需要先解決 trust、audit、failure handling。
-- 沒有真實使用者前，很容易做成展示漂亮但沒人用的 workflow engine。
+- 完整 DAG authoring UI。
 
 ### Phase 14b: Hosted Audit Dashboard
 

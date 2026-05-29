@@ -41,4 +41,4 @@ def test_import(module_name: str) -> None:
 def test_version() -> None:
     import djobs
 
-    assert djobs.__version__ == "0.3.0"
+    assert djobs.__version__ == "0.4.0"

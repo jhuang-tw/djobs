@@ -102,6 +102,39 @@ def test_tick_does_not_recover_active_lease(tmp_path) -> None:
 
 
 # ------------------------------------------------------------------
+# tick() — reap_stale_agents
+# ------------------------------------------------------------------
+
+
+def test_tick_reaps_stale_agent(tmp_path) -> None:
+    queue, scheduler = _make(tmp_path)
+
+    queue.register_agent("agent-1")
+
+    # Advance time well past the stale timeout so the agent is reaped.
+    far_future = datetime.now(UTC) + timedelta(hours=1)
+    result = scheduler.tick(now=far_future)
+
+    assert result.reaped == 1
+    assert result.errors == []
+
+    agent = queue.get_agent("agent-1")
+    assert agent is not None
+    assert agent.status.value == "offline"
+
+
+def test_tick_does_not_reap_fresh_agent(tmp_path) -> None:
+    queue, scheduler = _make(tmp_path)
+
+    queue.register_agent("agent-1")
+
+    result = scheduler.tick(now=datetime.now(UTC))
+
+    assert result.reaped == 0
+    assert result.errors == []
+
+
+# ------------------------------------------------------------------
 # tick() — combined
 # ------------------------------------------------------------------
 
@@ -178,9 +211,10 @@ def test_tick_continues_after_promote_error(tmp_path) -> None:
 
 
 def test_tick_result_repr() -> None:
-    r = TickResult(promoted=2, recovered=1, errors=[RuntimeError("x")])
+    r = TickResult(promoted=2, recovered=1, reaped=3, errors=[RuntimeError("x")])
     assert "promoted=2" in repr(r)
     assert "recovered=1" in repr(r)
+    assert "reaped=3" in repr(r)
     assert "errors=1" in repr(r)
 
 

@@ -1,17 +1,17 @@
-"""Phase 10 demo: Codebase Migration - crash-proof multi-file refactor.
+"""Phase 10 demo: Codebase Migration — crash-proof multi-file refactor.
 
 Simulates the real-world scenario that makes djobs valuable:
 
     "Add docstrings to 20 files in my project.
      VS Code crashed after file 12.
-     When I reopen, the agent picks up from file 13 - no work lost."
+     When I reopen, the agent picks up from file 13 — no work lost."
 
 This demo:
   1. Scans examples/demo_workspace/ for Python files.
   2. Enqueues each file as an add-docstrings task via MCP tools.
   3. Processes 12 files, then simulates an IDE crash.
   4. Restarts, calls resume_session to discover the remaining 8 files.
-  5. Finishes all 20 - zero data loss.
+  5. Finishes all 20 — zero data loss.
 
 Run:
     python examples/run_migration_demo.py
@@ -45,8 +45,10 @@ CRASH_AFTER = 12
 
 def discover_python_files() -> list[Path]:
     """Find all .py files in the demo workspace (excluding __init__.py)."""
-    files = sorted(p for p in DEMO_WORKSPACE.rglob("*.py") if p.name != "__init__.py")
-    return files[:20]
+    files = sorted(
+        p for p in DEMO_WORKSPACE.rglob("*.py") if p.name != "__init__.py"
+    )
+    return files
 
 
 def simulate_docstring_edit(filepath: Path) -> str:
@@ -58,7 +60,7 @@ def simulate_docstring_edit(filepath: Path) -> str:
     """
     first_line = filepath.read_text(encoding="utf-8").split("\n", 1)[0]
     time.sleep(0.05)  # simulate LLM latency
-    return f"Added docstrings - first line was: {first_line[:60]}"
+    return f"Added docstrings — first line was: {first_line[:60]}"
 
 
 def main() -> None:
@@ -72,7 +74,7 @@ def main() -> None:
     files = discover_python_files()
 
     print("=" * 64)
-    print("  djobs - Crash-Proof Codebase Migration Demo")
+    print("  djobs — Crash-Proof Codebase Migration Demo")
     print("=" * 64)
     print()
     print(f"  Workspace : {DEMO_WORKSPACE}")
@@ -81,22 +83,22 @@ def main() -> None:
     print()
 
     # ==================================================================
-    # STEP 1 - Agent starts a new chat: "Add docstrings to all files"
+    # STEP 1 — Agent starts a new chat: "Add docstrings to all files"
     # ==================================================================
-    print("-" * 64)
-    print("STEP 1 | Check for prior work (first session)")
-    print("-" * 64)
+    print("─" * 64)
+    print("STEP 1 │ Check for prior work (first session)")
+    print("─" * 64)
 
     result = json.loads(resume_session(CORRELATION_ID))
-    print(f"  -> {result['message']}")
+    print(f"  → {result['message']}")
     print()
 
     # ==================================================================
-    # STEP 2 - Enqueue every file as a durable task
+    # STEP 2 — Enqueue every file as a durable task
     # ==================================================================
-    print("-" * 64)
-    print("STEP 2 | Enqueue one task per file")
-    print("-" * 64)
+    print("─" * 64)
+    print("STEP 2 │ Enqueue one task per file")
+    print("─" * 64)
 
     task_ids: list[str] = []
     for f in files:
@@ -110,22 +112,18 @@ def main() -> None:
         )
         task = json.loads(result_json)
         task_ids.append(task["id"])
-        print(f"  [task] Enqueued: {relative}")
+        print(f"  📋 Enqueued: {relative}")
 
     h = json.loads(health())
-    depth = h.get("queue_depth", {})
-    print(
-        f"\n  Queue: {depth.get('pending', 0)} pending, "
-        f"{h.get('total_jobs', len(task_ids))} total"
-    )
+    print(f"\n  Queue: {h.get('pending', 0)} pending, {h.get('total', len(task_ids))} total")
     print()
 
     # ==================================================================
-    # STEP 3 - Process files one by one, then CRASH
+    # STEP 3 — Process files one by one… then CRASH
     # ==================================================================
-    print("-" * 64)
-    print(f"STEP 3 | Process files (crash after #{CRASH_AFTER})")
-    print("-" * 64)
+    print("─" * 64)
+    print(f"STEP 3 │ Process files (crash after #{CRASH_AFTER})")
+    print("─" * 64)
 
     for i, (tid, f) in enumerate(zip(task_ids, files, strict=False), 1):
         if i > CRASH_AFTER:
@@ -134,42 +132,42 @@ def main() -> None:
         relative = f.relative_to(DEMO_WORKSPACE)
         simulate_docstring_edit(f)
         complete_task(tid)
-        print(f"  [ok] [{i:2d}/{len(files)}] {relative}")
+        print(f"  ✅ [{i:2d}/{len(files)}] {relative}")
 
     remaining = len(files) - CRASH_AFTER
     print()
-    print(f"  !! IDE CRASHED - {remaining} files still incomplete!")
+    print(f"  💥 IDE CRASHED — {remaining} files still incomplete!")
     print("     (In real life: VS Code closes, chat history gone)")
     print()
 
     # ==================================================================
-    # STEP 4 - User reopens IDE, agent calls resume_session
+    # STEP 4 — User reopens IDE, agent calls resume_session
     # ==================================================================
-    print("-" * 64)
-    print("STEP 4 | New session - resume_session finds unfinished work")
-    print("-" * 64)
+    print("─" * 64)
+    print("STEP 4 │ New session — resume_session finds unfinished work")
+    print("─" * 64)
 
     # Simulate a fresh process: re-configure from the same DB
     configure(db_path)
 
     result = json.loads(resume_session(CORRELATION_ID))
-    print(f"  -> {result['message']}")
+    print(f"  → {result['message']}")
     print()
 
     incomplete_tasks = result["tasks"]
     for t in incomplete_tasks:
         payload = t.get("payload", {})
         fname = payload.get("file", "?")
-        print(f"  [todo] {fname:30s}  status={t['status']}")
+        print(f"  ⏳ {fname:30s}  status={t['status']}")
 
     print()
 
     # ==================================================================
-    # STEP 5 - Resume processing from where we left off
+    # STEP 5 — Resume processing from where we left off
     # ==================================================================
-    print("-" * 64)
-    print("STEP 5 | Resume - finish remaining files")
-    print("-" * 64)
+    print("─" * 64)
+    print("STEP 5 │ Resume — finish remaining files")
+    print("─" * 64)
 
     completed_before = CRASH_AFTER
     for i, t in enumerate(incomplete_tasks, 1):
@@ -182,16 +180,16 @@ def main() -> None:
 
         complete_task(t["id"])
         seq = completed_before + i
-        print(f"  [ok] [{seq:2d}/{len(files)}] {fname}")
+        print(f"  ✅ [{seq:2d}/{len(files)}] {fname}")
 
     print()
 
     # ==================================================================
-    # FINAL - Verify everything completed
+    # FINAL — Verify everything completed
     # ==================================================================
-    print("-" * 64)
-    print("RESULT | Final status")
-    print("-" * 64)
+    print("─" * 64)
+    print("RESULT │ Final status")
+    print("─" * 64)
 
     all_ok = True
     succeeded = 0
@@ -209,9 +207,9 @@ def main() -> None:
     print()
 
     if all_ok:
-        print("  [ok] ALL FILES COMPLETED - zero data loss after crash")
+        print("  ✅ ALL FILES COMPLETED — zero data loss after crash")
     else:
-        print("  [fail] Some files still incomplete")
+        print("  ❌ Some files still incomplete")
 
     print()
     print("  This is what djobs does: your AI agent's multi-file work")

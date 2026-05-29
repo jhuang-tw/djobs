@@ -40,6 +40,11 @@ coverage.xml
 *.whl
 *.tar.gz
 
+# VS Code extension build artifacts
+vscode-ext/node_modules/
+vscode-ext/out/
+vscode-ext/*.vsix
+
 # Internal docs (Chinese, not for public repo)
 docs/ROADMAP.md
 docs/HANDOFF.md

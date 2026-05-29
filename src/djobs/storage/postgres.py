@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from djobs.core.errors import JobNotFoundError
-from djobs.core.models import Job
-from djobs.core.states import JobStatus, validate_transition
+from djobs.core.errors import AgentNotFoundError, JobNotFoundError
+from djobs.core.models import Agent, Job
+from djobs.core.states import AgentStatus, JobStatus, validate_transition
 from djobs.storage.events import JobEvent
 
 try:
@@ -23,7 +23,12 @@ except ImportError as _exc:
         "psycopg is required for PostgreSQL support. Install it with: pip install 'djobs[pg]'"
     ) from _exc
 
+if TYPE_CHECKING:
+    DictConnection = psycopg.Connection[dict[str, Any]]
+    DictCursor = psycopg.Cursor[dict[str, Any]]
+
 DEFAULT_LEASE_DURATION = timedelta(seconds=30)
+DEFAULT_AGENT_TIMEOUT = timedelta(seconds=90)
 
 PG_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -41,6 +46,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     lease_expires_at TIMESTAMPTZ NULL,
     heartbeat_at TIMESTAMPTZ NULL,
     started_at TIMESTAMPTZ NULL,
+    depends_on_json TEXT NOT NULL DEFAULT '[]',
+    resource_key TEXT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
 );
@@ -65,6 +72,19 @@ CREATE TABLE IF NOT EXISTS job_events (
 
 CREATE INDEX IF NOT EXISTS idx_job_events_job_created
 ON job_events (job_id, created_at);
+
+-- Phase M4: agent registry.
+CREATE TABLE IF NOT EXISTS agents (
+    id TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    capabilities_json TEXT NOT NULL DEFAULT '[]',
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    registered_at TIMESTAMPTZ NOT NULL,
+    last_heartbeat_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_agents_status
+ON agents (status, last_heartbeat_at);
 """
 
 
@@ -90,6 +110,14 @@ def _parse_dt(value: Any) -> datetime | None:
     return dt
 
 
+def _parse_dt_required(value: Any) -> datetime:
+    """Parse a NOT NULL timestamp; raises if the value is unexpectedly NULL."""
+    parsed = _parse_dt(value)
+    if parsed is None:
+        raise ValueError("expected a non-null timestamp")
+    return parsed
+
+
 def _row_to_job(row: dict[str, Any]) -> Job:
     return Job(
         id=row["id"],
@@ -106,8 +134,10 @@ def _row_to_job(row: dict[str, Any]) -> Job:
         lease_expires_at=_parse_dt(row["lease_expires_at"]),
         heartbeat_at=_parse_dt(row["heartbeat_at"]),
         started_at=_parse_dt(row["started_at"]),
-        created_at=_parse_dt(row["created_at"]),
-        updated_at=_parse_dt(row["updated_at"]),
+        depends_on=json.loads(row["depends_on_json"]) if row.get("depends_on_json") else [],
+        resource_key=row.get("resource_key"),
+        created_at=_parse_dt_required(row["created_at"]),
+        updated_at=_parse_dt_required(row["updated_at"]),
     )
 
 
@@ -119,7 +149,18 @@ def _row_to_event(row: dict[str, Any]) -> JobEvent:
         event_type=row["event_type"],
         message=row["message"],
         metadata=json.loads(meta) if meta else {},
-        created_at=_parse_dt(row["created_at"]),
+        created_at=_parse_dt_required(row["created_at"]),
+    )
+
+
+def _row_to_agent(row: dict[str, Any]) -> Agent:
+    return Agent(
+        id=row["id"],
+        status=AgentStatus(row["status"]),
+        capabilities=json.loads(row["capabilities_json"]) if row.get("capabilities_json") else [],
+        metadata=json.loads(row["metadata_json"]) if row.get("metadata_json") else {},
+        registered_at=_parse_dt_required(row["registered_at"]),
+        last_heartbeat_at=_parse_dt_required(row["last_heartbeat_at"]),
     )
 
 
@@ -129,7 +170,7 @@ class PostgresJobRepository:
     Uses ``SELECT ... FOR UPDATE SKIP LOCKED`` for contention-free claiming.
     """
 
-    def __init__(self, conn: psycopg.Connection) -> None:
+    def __init__(self, conn: DictConnection) -> None:
         self._conn = conn
 
     @classmethod
@@ -139,9 +180,14 @@ class PostgresJobRepository:
         return cls(conn)
 
     @staticmethod
-    def _initialize_schema(conn: psycopg.Connection) -> None:
+    def _initialize_schema(conn: DictConnection) -> None:
         with conn.cursor() as cur:
             cur.execute(PG_SCHEMA_SQL)
+            cur.execute(
+                "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS "
+                "depends_on_json TEXT NOT NULL DEFAULT '[]'"
+            )
+            cur.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS resource_key TEXT NULL")
         conn.commit()
 
     # ------------------------------------------------------------------
@@ -150,7 +196,7 @@ class PostgresJobRepository:
 
     def _append_event(
         self,
-        cur: psycopg.Cursor,
+        cur: DictCursor,
         job_id: str,
         event_type: str,
         message: str | None = None,
@@ -178,18 +224,35 @@ class PostgresJobRepository:
         )
         return event
 
-    def _get_job(self, cur: psycopg.Cursor, job_id: str) -> Job | None:
+    def _get_job(self, cur: DictCursor, job_id: str) -> Job | None:
         cur.execute("SELECT * FROM jobs WHERE id = %s", (job_id,))
         row = cur.fetchone()
         if row is None:
             return None
         return _row_to_job(row)
 
-    def _require_job(self, cur: psycopg.Cursor, job_id: str) -> Job:
+    def _require_job(self, cur: DictCursor, job_id: str) -> Job:
         job = self._get_job(cur, job_id)
         if job is None:
             raise JobNotFoundError(f"Job {job_id!r} was not found")
         return job
+
+    def _dependencies_satisfied(self, cur: DictCursor, row: dict[str, Any]) -> bool:
+        """Return True if every dependency of *row* has succeeded."""
+        raw = row.get("depends_on_json")
+        if not raw:
+            return True
+        dep_ids = json.loads(raw)
+        if not dep_ids:
+            return True
+        unique_ids = list(set(dep_ids))
+        placeholders = ", ".join(["%s"] * len(unique_ids))
+        cur.execute(
+            f"SELECT COUNT(*) AS cnt FROM jobs WHERE id IN ({placeholders}) AND status = %s",
+            (*unique_ids, JobStatus.SUCCEEDED.value),
+        )
+        row_count = cur.fetchone()
+        return row_count is not None and row_count["cnt"] == len(unique_ids)
 
     # ------------------------------------------------------------------
     # CRUD
@@ -203,9 +266,9 @@ class PostgresJobRepository:
                     id, type, payload_json, status, attempt, max_attempts,
                     run_after, idempotency_key, correlation_id, last_error,
                     leased_by, lease_expires_at, heartbeat_at,
-                    started_at, created_at, updated_at
+                    started_at, depends_on_json, resource_key, created_at, updated_at
                 )
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 """,
                 (
                     job.id,
@@ -222,6 +285,8 @@ class PostgresJobRepository:
                     _serialize_dt(job.lease_expires_at),
                     _serialize_dt(job.heartbeat_at),
                     _serialize_dt(job.started_at),
+                    json.dumps(job.depends_on, ensure_ascii=False),
+                    job.resource_key,
                     _serialize_dt(job.created_at),
                     _serialize_dt(job.updated_at),
                 ),
@@ -280,45 +345,47 @@ class PostgresJobRepository:
         lease_expires = _serialize_dt(now + lease_duration)
 
         with self._conn.cursor() as cur:
+            # Precompute global aggregates ONCE rather than issuing a subquery
+            # per candidate row (avoids an N+1 query pattern):
+            #  - running counts per type, for type_concurrency_limits
+            #  - the set of resource_keys currently held by RUNNING jobs
+            running_by_type: dict[str, int] = {}
             if type_concurrency_limits:
-                # Fetch candidates without LIMIT 1 so we can filter by type
                 cur.execute(
-                    """
-                    SELECT * FROM jobs
-                    WHERE status = %s
-                      AND (run_after IS NULL OR run_after <= %s)
-                    ORDER BY created_at ASC
-                    FOR UPDATE SKIP LOCKED
-                    """,
-                    (JobStatus.PENDING.value, now_str),
+                    "SELECT type, COUNT(*) AS cnt FROM jobs WHERE status = %s GROUP BY type",
+                    (JobStatus.RUNNING.value,),
                 )
-                row = None
-                for candidate in cur.fetchall():
+                running_by_type = {r["type"]: r["cnt"] for r in cur.fetchall()}
+            cur.execute(
+                "SELECT DISTINCT resource_key FROM jobs "
+                "WHERE status = %s AND resource_key IS NOT NULL",
+                (JobStatus.RUNNING.value,),
+            )
+            held_resource_keys = {r["resource_key"] for r in cur.fetchall()}
+
+            cur.execute(
+                """
+                SELECT * FROM jobs
+                WHERE status = %s
+                  AND (run_after IS NULL OR run_after <= %s)
+                ORDER BY created_at ASC
+                FOR UPDATE SKIP LOCKED
+                """,
+                (JobStatus.PENDING.value, now_str),
+            )
+            row = None
+            for candidate in cur.fetchall():
+                if type_concurrency_limits:
                     jtype = candidate["type"]
                     limit = type_concurrency_limits.get(jtype)
-                    if limit is not None:
-                        cur.execute(
-                            "SELECT COUNT(*) AS cnt FROM jobs WHERE status = %s AND type = %s",
-                            (JobStatus.RUNNING.value, jtype),
-                        )
-                        running = cur.fetchone()["cnt"]
-                        if running >= limit:
-                            continue
-                    row = candidate
-                    break
-            else:
-                cur.execute(
-                    """
-                    SELECT * FROM jobs
-                    WHERE status = %s
-                      AND (run_after IS NULL OR run_after <= %s)
-                    ORDER BY created_at ASC
-                    LIMIT 1
-                    FOR UPDATE SKIP LOCKED
-                    """,
-                    (JobStatus.PENDING.value, now_str),
-                )
-                row = cur.fetchone()
+                    if limit is not None and running_by_type.get(jtype, 0) >= limit:
+                        continue
+                if candidate["resource_key"] in held_resource_keys:
+                    continue
+                if not self._dependencies_satisfied(cur, candidate):
+                    continue
+                row = candidate
+                break
 
             if row is None:
                 self._conn.commit()
@@ -466,6 +533,42 @@ class PostgresJobRepository:
                 "job_dead_lettered",
                 message=error,
                 metadata={"attempt": job.attempt, "max_attempts": job.max_attempts},
+            )
+        self._conn.commit()
+        return self.require_job(job_id)
+
+    def release_job(self, job_id: str, worker_id: str, reason: str | None = None) -> Job:
+        """Release a claimed (RUNNING) job back to PENDING.
+
+        Used when an agent voluntarily gives up a task it has claimed (e.g.
+        it cannot make progress, or is shutting down gracefully).  The job
+        becomes available for another agent to claim immediately.
+        """
+        with self._conn.cursor() as cur:
+            job = self._require_job(cur, job_id)
+            if job.status != JobStatus.RUNNING:
+                raise JobNotFoundError(
+                    f"Cannot release job {job_id!r} in status {job.status.value!r}"
+                )
+            if job.leased_by != worker_id:
+                raise JobNotFoundError(f"Job {job_id!r} is not leased by worker {worker_id!r}")
+            validate_transition(job.status, JobStatus.PENDING)
+            cur.execute(
+                """
+                UPDATE jobs
+                SET status = %s, last_error = NULL,
+                    leased_by = NULL, lease_expires_at = NULL, heartbeat_at = NULL,
+                    updated_at = %s
+                WHERE id = %s
+                """,
+                (JobStatus.PENDING.value, _serialize_dt(datetime.now(UTC)), job_id),
+            )
+            self._append_event(
+                cur,
+                job_id,
+                "job_released",
+                message=reason,
+                metadata={"worker_id": worker_id},
             )
         self._conn.commit()
         return self.require_job(job_id)
@@ -631,6 +734,138 @@ class PostgresJobRepository:
             )
             row = cur.fetchone()
             return row["cnt"] if row else 0
+
+    # ------------------------------------------------------------------
+    # Agent registry (Phase M4)
+    # ------------------------------------------------------------------
+
+    def register_agent(
+        self,
+        agent_id: str,
+        capabilities: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> Agent:
+        """Register or re-register an agent (upsert); marks it ONLINE."""
+        now = datetime.now(UTC)
+        caps_json = json.dumps(list(capabilities or []), ensure_ascii=False)
+        meta_json = json.dumps(dict(metadata or {}), ensure_ascii=False, sort_keys=True)
+        with self._conn.cursor() as cur:
+            cur.execute("SELECT * FROM agents WHERE id = %s", (agent_id,))
+            existing = cur.fetchone()
+            if existing is None:
+                cur.execute(
+                    """
+                    INSERT INTO agents (
+                        id, status, capabilities_json, metadata_json,
+                        registered_at, last_heartbeat_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        agent_id,
+                        AgentStatus.ONLINE.value,
+                        caps_json,
+                        meta_json,
+                        _serialize_dt(now),
+                        _serialize_dt(now),
+                    ),
+                )
+                agent = Agent(
+                    id=agent_id,
+                    status=AgentStatus.ONLINE,
+                    capabilities=list(capabilities or []),
+                    metadata=dict(metadata or {}),
+                    registered_at=now,
+                    last_heartbeat_at=now,
+                )
+            else:
+                agent = _row_to_agent(existing)
+                agent.status = AgentStatus.ONLINE
+                if capabilities is not None:
+                    agent.capabilities = list(capabilities)
+                if metadata is not None:
+                    agent.metadata = dict(metadata)
+                agent.last_heartbeat_at = now
+                cur.execute(
+                    """
+                    UPDATE agents
+                    SET status = %s, capabilities_json = %s, metadata_json = %s,
+                        last_heartbeat_at = %s
+                    WHERE id = %s
+                    """,
+                    (
+                        agent.status.value,
+                        json.dumps(agent.capabilities, ensure_ascii=False),
+                        json.dumps(agent.metadata, ensure_ascii=False, sort_keys=True),
+                        _serialize_dt(agent.last_heartbeat_at),
+                        agent_id,
+                    ),
+                )
+        self._conn.commit()
+        return agent
+
+    def agent_heartbeat(self, agent_id: str) -> Agent:
+        """Record a liveness ping; brings the agent back ONLINE if reaped."""
+        now = datetime.now(UTC)
+        with self._conn.cursor() as cur:
+            cur.execute("SELECT * FROM agents WHERE id = %s", (agent_id,))
+            row = cur.fetchone()
+            if row is None:
+                raise AgentNotFoundError(f"Agent {agent_id!r} is not registered")
+            cur.execute(
+                "UPDATE agents SET status = %s, last_heartbeat_at = %s WHERE id = %s",
+                (AgentStatus.ONLINE.value, _serialize_dt(now), agent_id),
+            )
+        self._conn.commit()
+        agent = _row_to_agent(row)
+        agent.status = AgentStatus.ONLINE
+        agent.last_heartbeat_at = now
+        return agent
+
+    def get_agent(self, agent_id: str) -> Agent | None:
+        with self._conn.cursor() as cur:
+            cur.execute("SELECT * FROM agents WHERE id = %s", (agent_id,))
+            row = cur.fetchone()
+            return _row_to_agent(row) if row else None
+
+    def list_agents(self, status: str | None = None) -> list[Agent]:
+        with self._conn.cursor() as cur:
+            if status is None:
+                cur.execute("SELECT * FROM agents ORDER BY registered_at ASC")
+            else:
+                cur.execute(
+                    "SELECT * FROM agents WHERE status = %s ORDER BY registered_at ASC",
+                    (status,),
+                )
+            return [_row_to_agent(row) for row in cur.fetchall()]
+
+    def mark_stale_agents_offline(
+        self,
+        timeout: timedelta = DEFAULT_AGENT_TIMEOUT,
+        now: datetime | None = None,
+    ) -> list[Agent]:
+        """Mark ONLINE agents whose last heartbeat is older than *timeout* OFFLINE."""
+        if now is None:
+            now = datetime.now(UTC)
+        cutoff = now - timeout
+        with self._conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM agents WHERE status = %s AND last_heartbeat_at < %s",
+                (AgentStatus.ONLINE.value, _serialize_dt(cutoff)),
+            )
+            rows = cur.fetchall()
+            marked: list[Agent] = []
+            for row in rows:
+                cur.execute(
+                    "UPDATE agents SET status = %s WHERE id = %s",
+                    (AgentStatus.OFFLINE.value, row["id"]),
+                )
+                agent = _row_to_agent(row)
+                agent.status = AgentStatus.OFFLINE
+                marked.append(agent)
+        if marked:
+            self._conn.commit()
+        return marked
 
     # ------------------------------------------------------------------
     # Events

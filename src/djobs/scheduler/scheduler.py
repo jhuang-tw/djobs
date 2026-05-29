@@ -23,22 +23,25 @@ logger = logging.getLogger(__name__)
 class TickResult:
     """Outcome of a single scheduler tick."""
 
-    __slots__ = ("errors", "promoted", "recovered")
+    __slots__ = ("errors", "promoted", "reaped", "recovered")
 
     def __init__(
         self,
         promoted: int = 0,
         recovered: int = 0,
+        reaped: int = 0,
         errors: list[Exception] | None = None,
     ) -> None:
         self.promoted = promoted
         self.recovered = recovered
+        self.reaped = reaped
         self.errors: list[Exception] = errors if errors is not None else []
 
     def __repr__(self) -> str:
         return (
             f"TickResult(promoted={self.promoted}, "
-            f"recovered={self.recovered}, errors={len(self.errors)})"
+            f"recovered={self.recovered}, reaped={self.reaped}, "
+            f"errors={len(self.errors)})"
         )
 
 
@@ -64,6 +67,7 @@ class SchedulerLoop:
 
         1. Promote retry-scheduled jobs whose ``run_after`` has passed.
         2. Recover jobs with expired leases (worker crash recovery).
+        3. Reap agents that stopped heartbeating (mark them offline).
 
         Returns a :class:`TickResult` summarising what happened.
         """
@@ -94,6 +98,19 @@ class SchedulerLoop:
                 )
         except Exception as exc:
             logger.exception("Error during recover_expired_leases")
+            result.errors.append(exc)
+
+        try:
+            reaped = self._queue.reap_stale_agents(now=now)
+            result.reaped = len(reaped)
+            if reaped:
+                logger.info(
+                    "Reaped %d stale agents",
+                    len(reaped),
+                    extra={"reaped_ids": [a.id for a in reaped]},
+                )
+        except Exception as exc:
+            logger.exception("Error during reap_stale_agents")
             result.errors.append(exc)
 
         return result

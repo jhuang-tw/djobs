@@ -36,7 +36,7 @@ Job 應該包含：
 - time: `created_at`、`updated_at`、`run_after`。
 - safety: `idempotency_key`。
 - execution: `leased_by`、`lease_expires_at`，Phase 3 開始需要。
-
+- coordination: `depends_on`（依賴的 job id 列表，全部 succeeded 後才可被 claim）、`resource_key`（同一 key 同時只跑一個 task），multi-agent（M2 / M3）開始。
 ### Handler
 
 Handler 是真正執行 job 的 function 或 class。
@@ -104,6 +104,29 @@ Phase 1 先建立 minimal event log，只記錄核心 lifecycle 事件。Phase 2
 
 Event log 不一定是 event sourcing。初版可以只是 audit trail。
 
+### Agent（multi-agent，已實作）
+
+Agent 代表一個共用同一個 queue 的工作者（通常是一個 AI coding agent）。
+
+Agent registry 負責：
+
+- `register_agent`：註冊 / 更新 agent（capabilities + metadata），標記 ONLINE。
+- `agent_heartbeat`：維持 agent ONLINE。
+- `list_agents`：列出 agent，可依狀態過濾。
+- 超時未 heartbeat 的 agent 會被標記為 OFFLINE：`SchedulerLoop.tick()` 每個週期主動呼叫 `reap_stale_agents`（不再只在 `list_agents` / dashboard 讀取時才 lazy 回收）。
+
+搭配 Job 的 `leased_by` / `lease_expires_at`，多個 agent 可以安全共用同一個 DB：`claim` 透過原子租用確保同一個 task 不會被兩個 agent 同時領取。
+
+### Dashboard（已實作，唯讀）
+
+Dashboard 是給人看的 local-first 唯讀檢視，不參與排程決策。
+
+- `djobs dashboard` 啟動 stdlib HTTP server（預設 http://127.0.0.1:8787）。
+- 顯示 queue health、agent fleet（ONLINE / OFFLINE）、active tasks 與其 lease holder。
+- `GET /api/state` 提供 JSON snapshot。
+- 無新依賴；agent 不會自己啟動 dashboard。
+- **安全性**：dashboard 沒有任何驗證機制，預設只綁定 `127.0.0.1`。請勿綁定到 `0.0.0.0` 或對外網路；遠端存取請改用 SSH tunnel。綁到非 loopback 位址時會印出警告。
+
 ## Module Boundaries
 
 ### `src/djobs/core`
@@ -117,6 +140,7 @@ Event log 不一定是 event sourcing。初版可以只是 audit trail。
 - state transition validator。
 - retry policy dataclass。
 - domain exceptions。
+- `Agent` dataclass 與 `AgentStatus` enum（multi-agent）。
 
 不應包含：
 

@@ -9,6 +9,7 @@ import time
 import pytest
 
 from djobs.cli import BUILTIN_HANDLERS, _echo_handler, _load_handlers_module, main
+from djobs.core.models import Job
 from djobs.daemon import Daemon
 from djobs.queue.service import QueueService
 from djobs.storage.sqlite import SQLiteJobRepository
@@ -266,6 +267,100 @@ class TestCLI:
         with pytest.raises(SystemExit) as exc_info:
             main([])
         assert exc_info.value.code == 1
+
+    def test_status_outputs_json_for_workspace(self, tmp_path, capsys):
+        """status command returns queue health and correlation-scoped tasks."""
+        db_path = tmp_path / "jobs.db"
+        repository = SQLiteJobRepository.from_path(db_path)
+        repository.create_job(
+            Job(
+                type="add-docstrings",
+                payload={"file": "src/example.py"},
+                correlation_id="workspace-a",
+            )
+        )
+        repository.create_job(
+            Job(
+                type="other-task",
+                payload={"file": "src/other.py"},
+                correlation_id="workspace-b",
+            )
+        )
+
+        main(["status", "--db", str(db_path), "--correlation-id", "workspace-a"])
+
+        output = json.loads(capsys.readouterr().out)
+        assert "timestamp" in output
+        assert output["health"]["status"] == "ok"
+        assert len(output["tasks"]) == 1
+        assert output["tasks"][0]["type"] == "add-docstrings"
+        assert output["tasks"][0]["correlation_id"] == "workspace-a"
+        assert json.loads(output["tasks"][0]["payload_json"]) == {"file": "src/example.py"}
+
+    def test_status_includes_latest_evidence(self, tmp_path, capsys):
+        db_path = tmp_path / "jobs.db"
+        repository = SQLiteJobRepository.from_path(db_path)
+        queue = QueueService(repository)
+        job = queue.submit(
+            "add-docstrings",
+            {"file": "src/example.py"},
+            correlation_id="workspace-a",
+        )
+        queue.complete(job.id, evidence="Added 3 function docstrings")
+
+        main(["status", "--db", str(db_path), "--correlation-id", "workspace-a"])
+
+        output = json.loads(capsys.readouterr().out)
+        assert output["tasks"][0]["evidence"] == "Added 3 function docstrings"
+
+    def test_skip_marks_task_succeeded_with_evidence(self, tmp_path, capsys):
+        db_path = tmp_path / "jobs.db"
+        repository = SQLiteJobRepository.from_path(db_path)
+        job = repository.create_job(
+            Job(
+                type="add-docstrings",
+                payload={"file": "src/example.py"},
+                correlation_id="workspace-a",
+            )
+        )
+
+        main(["skip", job.id, "--db", str(db_path), "--evidence", "Reviewed manually"])
+
+        output = json.loads(capsys.readouterr().out)
+        stored = repository.require_job(job.id)
+        assert output["status"] == "succeeded"
+        assert stored.status.value == "succeeded"
+        assert repository.list_events(job.id)[-1].message == "Reviewed manually"
+
+    def test_accept_before_marks_earlier_tasks_succeeded(self, tmp_path, capsys):
+        db_path = tmp_path / "jobs.db"
+        repository = SQLiteJobRepository.from_path(db_path)
+        first = repository.create_job(Job(type="a", correlation_id="workflow-a"))
+        second = repository.create_job(Job(type="b", correlation_id="workflow-a"))
+        third = repository.create_job(Job(type="c", correlation_id="workflow-a"))
+
+        main(["accept-before", third.id, "--db", str(db_path), "--evidence", "Accepted in bulk"])
+
+        output = json.loads(capsys.readouterr().out)
+        assert output["count"] == 2
+        assert repository.require_job(first.id).status.value == "succeeded"
+        assert repository.require_job(second.id).status.value == "succeeded"
+        assert repository.require_job(third.id).status.value == "pending"
+
+    def test_archive_workflow_archives_only_non_terminal_tasks(self, tmp_path, capsys):
+        db_path = tmp_path / "jobs.db"
+        repository = SQLiteJobRepository.from_path(db_path)
+        queue = QueueService(repository)
+        active = queue.submit("a", correlation_id="workflow-a")
+        done = queue.submit("b", correlation_id="workflow-a")
+        queue.complete(done.id, evidence="done")
+
+        main(["archive-workflow", "--db", str(db_path), "--correlation-id", "workflow-a"])
+
+        output = json.loads(capsys.readouterr().out)
+        assert output["count"] == 1
+        assert repository.require_job(active.id).status.value == "archived"
+        assert repository.require_job(done.id).status.value == "succeeded"
 
 
 # ---------------------------------------------------------------------------

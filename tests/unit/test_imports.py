@@ -39,6 +39,10 @@ def test_import(module_name: str) -> None:
 
 
 def test_version() -> None:
+    import re
+
     import djobs
 
-    assert djobs.__version__ == "0.4.0"
+    # Version is sourced solely from src/djobs/__init__.py (__version__);
+    # assert shape only so releases never require editing this test.
+    assert re.fullmatch(r"\d+\.\d+\.\d+", djobs.__version__)

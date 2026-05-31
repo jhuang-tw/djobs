@@ -13,74 +13,14 @@ from djobs.core.errors import AgentNotFoundError, JobNotFoundError
 from djobs.core.models import Agent, Job
 from djobs.core.states import AgentStatus, JobStatus, validate_transition
 from djobs.storage.events import JobEvent
+from djobs.storage.schema import SQLITE_SCHEMA_SQL, apply_sqlite_column_migrations
 
 DEFAULT_LEASE_DURATION = timedelta(seconds=30)
 DEFAULT_AGENT_TIMEOUT = timedelta(seconds=90)
 
-SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS jobs (
-    id TEXT PRIMARY KEY,
-    type TEXT NOT NULL,
-    payload_json TEXT NOT NULL,
-    status TEXT NOT NULL,
-    attempt INTEGER NOT NULL DEFAULT 0,
-    max_attempts INTEGER NOT NULL DEFAULT 1,
-    run_after TEXT NULL,
-    idempotency_key TEXT NULL,
-    correlation_id TEXT NOT NULL,
-    last_error TEXT NULL,
-    leased_by TEXT NULL,
-    lease_expires_at TEXT NULL,
-    heartbeat_at TEXT NULL,
-    started_at TEXT NULL,
-    depends_on_json TEXT NOT NULL DEFAULT '[]',
-    resource_key TEXT NULL,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_jobs_claimable
-ON jobs (status, run_after, created_at);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_active_idempotency_key
-ON jobs (idempotency_key)
-WHERE idempotency_key IS NOT NULL
-    AND status IN ('pending', 'running', 'retry_scheduled');
-
--- Phase 9.5: index for audit_log / list_tasks / resume_session correlation_id lookups.
-CREATE INDEX IF NOT EXISTS idx_jobs_correlation_id
-ON jobs (correlation_id);
-
-CREATE TABLE IF NOT EXISTS job_events (
-    id TEXT PRIMARY KEY,
-    job_id TEXT NOT NULL,
-    event_type TEXT NOT NULL,
-    message TEXT NULL,
-    metadata_json TEXT NULL,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (job_id) REFERENCES jobs(id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_job_events_job_created
-ON job_events (job_id, created_at);
-
--- Phase 9.5: index for audit_log time-range queries spanning all jobs.
-CREATE INDEX IF NOT EXISTS idx_job_events_created_at
-ON job_events (created_at);
-
--- Phase M4: agent registry — track which agents are online and what they can do.
-CREATE TABLE IF NOT EXISTS agents (
-    id TEXT PRIMARY KEY,
-    status TEXT NOT NULL,
-    capabilities_json TEXT NOT NULL DEFAULT '[]',
-    metadata_json TEXT NOT NULL DEFAULT '{}',
-    registered_at TEXT NOT NULL,
-    last_heartbeat_at TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_agents_status
-ON agents (status, last_heartbeat_at);
-"""
+# Authoritative schema lives in djobs.storage.schema. Re-exported under the
+# historical name for backward compatibility.
+SCHEMA_SQL = SQLITE_SCHEMA_SQL
 
 
 # JobEvent is re-exported from storage.events for backward compatibility.
@@ -102,19 +42,8 @@ def connect(path: str | Path) -> sqlite3.Connection:
 def initialize_schema(connection: sqlite3.Connection) -> None:
     """Create job tables and indexes if they do not already exist."""
     connection.executescript(SCHEMA_SQL)
-    _apply_column_migrations(connection)
+    apply_sqlite_column_migrations(connection)
     connection.commit()
-
-
-def _apply_column_migrations(connection: sqlite3.Connection) -> None:
-    """Add columns introduced after the initial schema to pre-existing DBs."""
-    existing = {row["name"] for row in connection.execute("PRAGMA table_info(jobs)").fetchall()}
-    if "depends_on_json" not in existing:
-        connection.execute(
-            "ALTER TABLE jobs ADD COLUMN depends_on_json TEXT NOT NULL DEFAULT '[]'"
-        )
-    if "resource_key" not in existing:
-        connection.execute("ALTER TABLE jobs ADD COLUMN resource_key TEXT NULL")
 
 
 class SQLiteJobRepository:

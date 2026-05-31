@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import threading
+from collections import Counter
+
 from djobs.queue.service import QueueService
 from djobs.storage.sqlite import SQLiteJobRepository
 
@@ -133,3 +136,106 @@ def test_claim_type_not_in_limits_is_unrestricted(tmp_path) -> None:
     j2 = queue.claim("w-2", type_concurrency_limits=limits)
     assert j1 is not None
     assert j2 is not None
+
+
+# ------------------------------------------------------------------
+# atomic claim under concurrency — no job may be claimed twice
+# ------------------------------------------------------------------
+
+
+def _drain_claims(
+    claim_fn,
+    claimed: list[str],
+    lock: threading.Lock,
+    start: threading.Event,
+) -> None:
+    """Worker loop: claim jobs until the queue is empty, recording each id."""
+    start.wait()
+    while True:
+        job = claim_fn()
+        if job is None:
+            return
+        with lock:
+            claimed.append(job.id)
+
+
+def test_concurrent_claim_shared_repo_no_double_claim(tmp_path) -> None:
+    """Many threads on ONE repo (single connection + RLock) never double-claim."""
+    repo = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
+    queue = QueueService(repo)
+
+    job_count = 200
+    for _ in range(job_count):
+        queue.submit("work")
+
+    claimed: list[str] = []
+    lock = threading.Lock()
+    start = threading.Event()
+
+    worker_count = 8
+    threads = [
+        threading.Thread(
+            target=_drain_claims,
+            args=(lambda i=i: queue.claim(f"w-{i}"), claimed, lock, start),
+        )
+        for i in range(worker_count)
+    ]
+    for t in threads:
+        t.start()
+    start.set()  # release all workers at once to maximize contention
+    for t in threads:
+        t.join()
+
+    # Every job claimed exactly once; none lost, none duplicated.
+    assert len(claimed) == job_count
+    counts = Counter(claimed)
+    duplicates = {jid: n for jid, n in counts.items() if n > 1}
+    assert not duplicates, f"jobs claimed more than once: {duplicates}"
+    assert len(counts) == job_count
+    assert repo.count_by_status().get("running") == job_count
+
+
+def test_concurrent_claim_separate_connections_no_double_claim(tmp_path) -> None:
+    """Threads with SEPARATE connections rely on BEGIN IMMEDIATE for atomicity.
+
+    Each thread opens its own SQLiteJobRepository on the same file, so the
+    in-process RLock does NOT protect them — only the database-level write
+    lock (``BEGIN IMMEDIATE`` + ``busy_timeout``) prevents double-claiming.
+    """
+    db_path = tmp_path / "jobs.db"
+    seed_repo = SQLiteJobRepository.from_path(db_path)
+    seed_queue = QueueService(seed_repo)
+
+    job_count = 120
+    for _ in range(job_count):
+        seed_queue.submit("work")
+
+    claimed: list[str] = []
+    lock = threading.Lock()
+    start = threading.Event()
+
+    def worker(worker_id: str) -> None:
+        repo = SQLiteJobRepository.from_path(db_path)
+        queue = QueueService(repo)
+        start.wait()
+        while True:
+            job = queue.claim(worker_id)
+            if job is None:
+                return
+            with lock:
+                claimed.append(job.id)
+
+    worker_count = 6
+    threads = [threading.Thread(target=worker, args=(f"w-{i}",)) for i in range(worker_count)]
+    for t in threads:
+        t.start()
+    start.set()
+    for t in threads:
+        t.join()
+
+    assert len(claimed) == job_count
+    counts = Counter(claimed)
+    duplicates = {jid: n for jid, n in counts.items() if n > 1}
+    assert not duplicates, f"jobs claimed more than once: {duplicates}"
+    assert len(counts) == job_count
+    assert seed_repo.count_by_status().get("running") == job_count

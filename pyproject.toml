@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "djobs"
-version = "0.5.0"
+dynamic = ["version"]
 description = "Durable workflow control for AI coding agents — inspectable, resumable, controllable multi-file work that survives context loss."
 requires-python = ">=3.11"
 license = "MIT"
@@ -42,6 +42,9 @@ pg = [
 
 [project.scripts]
 djobs = "djobs.cli:main"
+
+[tool.hatch.version]
+path = "src/djobs/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/djobs"]

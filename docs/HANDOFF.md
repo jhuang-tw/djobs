@@ -117,6 +117,13 @@ MCP server 目前共暴露 **14 個 tool**（核心 8 個 + multi-agent 6 個）
 
 最新驗證：`python -m ruff check .` 通過，`python -m pytest` 271 passed + 16 skipped。
 
+## Storage / Schema 收斂（0.6.0，已完成）
+
+- **schema 單一權威**：新增 `src/djobs/storage/schema.py`，成為兩個 backend 的 runtime schema 真相來源。`SQLITE_SCHEMA_SQL` 與 `POSTGRES_SCHEMA_SQL` 並排放置，欄位升級由單一 `JOBS_COLUMN_MIGRATIONS` 清單（`apply_sqlite_column_migrations` / `apply_postgres_column_migrations`）驅動。`sqlite.py`、`postgres.py` 不再各自內嵌 DDL，改為 import 並保留舊名 `SCHEMA_SQL` / `PG_SCHEMA_SQL`（向後相容）。
+- **`migrations/*.sql` 定位釐清**：它們是**歷史 / 手動**遷移紀錄，供 operator 對既有 DB 手動套用，**不是** runtime migration runner；新資料庫一律由 `schema.py` 建立。
+- **drift guard 測試**：`tests/unit/test_schema.py` 保證 SQLite / PostgreSQL schema 邏輯欄位一致、舊 DB 可升級且冪等。`tests/unit/test_concurrency.py` 補上原子 claim 並發測試（不重複 claim、不遺失）。
+- **儲存策略**：維持 raw SQL（queue 正確性需要精準掌握 locking / claim 語意），不引入 ORM / SQLAlchemy。SQLite 為預設，PostgreSQL 為 optional（`pip install "djobs[pg]"`）。
+
 ## Next AI Should Do First
 
 Phase 0–9 與 multi-agent M1–M5 已全部完成。剩餘可選方向：

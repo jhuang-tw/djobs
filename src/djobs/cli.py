@@ -221,19 +221,21 @@ def _cmd_accept_before(args: argparse.Namespace) -> None:
 
     with repo._lock:
         target = repo._connection.execute(
-            "SELECT correlation_id, created_at FROM jobs WHERE id = ?",
+            "SELECT rowid, correlation_id FROM jobs WHERE id = ?",
             (args.job_id,),
         ).fetchone()
         if target is None:
             raise SystemExit(f"Job not found: {args.job_id}")
+        # Use the monotonic rowid (strict insertion order) rather than created_at,
+        # which can collide for jobs created within the same clock tick.
         rows = repo._connection.execute(
             """
             SELECT id, status FROM jobs
             WHERE correlation_id = ?
-              AND created_at < ?
-            ORDER BY created_at ASC
+              AND rowid < ?
+            ORDER BY rowid ASC
             """,
-            (target["correlation_id"], target["created_at"]),
+            (target["correlation_id"], target["rowid"]),
         ).fetchall()
 
     accepted_ids: list[str] = []
@@ -287,6 +289,70 @@ def _cmd_archive_workflow(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 # install-mcp command
 # ---------------------------------------------------------------------------
+
+
+_DJOBS_INSTRUCTIONS_START = "<!-- djobs:start -->"
+_DJOBS_INSTRUCTIONS_END = "<!-- djobs:end -->"
+
+_DJOBS_INSTRUCTIONS_BODY = """\
+## djobs — durable job queue (auto-managed)
+
+This workspace has the djobs MCP server wired in. Use it proactively so work
+survives crashes, IDE reloads, and interrupted sessions. Do NOT wait to be
+told — these are part of normal good behaviour here.
+
+- **Resume first.** At the start of a session that continues prior work, call
+  `resume_session` (with the session/correlation_id) to recover any unfinished
+  tasks before starting something new.
+- **Enqueue long or risky work.** When a request is long-running, multi-step,
+  or could be interrupted (large refactors, batch edits, migrations, builds,
+  data processing), submit it with `enqueue_task` and a stable `correlation_id`
+  so progress is durable and visible in the djobs sidebar. Mark each unit done
+  with `complete_task` / `fail_task`.
+- **Don't over-use it.** Short answers, single-file edits, quick questions, and
+  trivial one-step tasks do NOT need the queue. Keep the chat fast.
+- **Inspect when asked about progress.** Use `check_task`, `list_tasks`, and
+  `audit_log` to report what was done and what remains.
+"""
+
+
+def _write_instructions_block() -> None:
+    """Append/update the djobs managed block in .github/copilot-instructions.md.
+
+    Uses sentinel markers so re-running only updates the djobs block and never
+    touches the user's other instructions.
+    """
+    from pathlib import Path
+
+    target = Path(".github/copilot-instructions.md")
+    block = f"{_DJOBS_INSTRUCTIONS_START}\n{_DJOBS_INSTRUCTIONS_BODY}{_DJOBS_INSTRUCTIONS_END}\n"
+
+    if target.exists():
+        existing = target.read_text(encoding="utf-8")
+        start = existing.find(_DJOBS_INSTRUCTIONS_START)
+        end = existing.find(_DJOBS_INSTRUCTIONS_END)
+        if start != -1 and end != -1 and end > start:
+            # Replace the existing managed block in place.
+            end_full = end + len(_DJOBS_INSTRUCTIONS_END)
+            # Swallow a single trailing newline after the end marker if present.
+            if end_full < len(existing) and existing[end_full] == "\n":
+                end_full += 1
+            new_content = existing[:start] + block + existing[end_full:]
+            if new_content != existing:
+                target.write_text(new_content, encoding="utf-8")
+                print(f"Updated djobs guidance in {target}")
+            else:
+                print(f"djobs guidance already up to date in {target}")
+            return
+        # No managed block yet — append, ensuring a blank line separator.
+        sep = "" if existing.endswith("\n\n") else ("\n" if existing.endswith("\n") else "\n\n")
+        target.write_text(existing + sep + block, encoding="utf-8")
+        print(f"Added djobs guidance to {target}")
+        return
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(block, encoding="utf-8")
+    print(f"Created {target} with djobs guidance")
 
 
 def _cmd_install_mcp(args: argparse.Namespace) -> None:
@@ -348,6 +414,9 @@ def _cmd_install_mcp(args: argparse.Namespace) -> None:
             "Tip: rerun with --full-approve to include write tools "
             "(enqueue_task, complete_task, fail_task)."
         )
+
+    if getattr(args, "write_instructions", True):
+        _write_instructions_block()
 
 
 # ---------------------------------------------------------------------------
@@ -634,7 +703,16 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Use the shared global queue at ~/.djobs/global.db (sets --db for you).",
     )
-    mcp_parser.set_defaults(func=_cmd_install_mcp)
+    mcp_parser.add_argument(
+        "--no-instructions",
+        dest="write_instructions",
+        action="store_false",
+        help=(
+            "Do NOT add the djobs guidance block to .github/copilot-instructions.md. "
+            "By default a managed block is appended so the AI agent uses djobs proactively."
+        ),
+    )
+    mcp_parser.set_defaults(func=_cmd_install_mcp, write_instructions=True)
 
     # --- audit ---
     audit_parser = subparsers.add_parser(

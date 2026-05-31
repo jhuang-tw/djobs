@@ -49,7 +49,7 @@ pending ──────► running ──────► succeeded
 |--------|---------------|
 | `djobs.core` | Job model, state machine, domain errors |
 | `djobs.queue` | Submit, claim, complete, fail, retry logic |
-| `djobs.storage` | SQLite & PostgreSQL repositories, event log |
+| `djobs.storage` | SQLite & PostgreSQL repositories, event log; `schema.py` holds the authoritative DDL for both backends |
 | `djobs.worker` | Handler registry, WorkerPool, WorkerRunner |
 | `djobs.scheduler` | Retry promotion, expired lease recovery |
 | `djobs.daemon` | Composes WorkerPool + Scheduler into one process |
@@ -134,7 +134,7 @@ tasks does not turn each claim into an O(n) scan with per-row subqueries.
 | **Web dashboard** | Read-only cross-agent fleet + queue view via `djobs dashboard` (stdlib HTTP server, no extra deps) |
 | **SQLite first** | No Redis, RabbitMQ, Docker, or Postgres required for local use |
 | **Postgres path** | Same `JobRepository` protocol implemented on top of `SELECT ... FOR UPDATE SKIP LOCKED` for multi-worker setups |
-| **Test coverage** | 271 passing tests (16 skipped without Postgres), strict ruff lint |
+| **Test coverage** | 291 passing tests (18 skipped without Postgres), strict ruff lint, mypy-clean |
 
 ---
 
@@ -165,6 +165,27 @@ The value is opaque — djobs does not interpret it. Pick any stable string that
 
 SQLite uses file-level locking. On Windows, only one process can write at a time (journal mode is WAL by default, which helps with read concurrency). For single-developer laptop use this is fine. If you need multi-process writes, use the PostgreSQL backend (`pip install "djobs[pg]"`).
 
+### Storage Strategy
+
+djobs deliberately uses **raw SQL** via the standard-library `sqlite3` driver
+(and `psycopg` for PostgreSQL) rather than an ORM. The queue's correctness
+depends on precise control of locking and claim semantics — `BEGIN IMMEDIATE`
+on SQLite and `SELECT ... FOR UPDATE SKIP LOCKED` on PostgreSQL — which is
+clearest and safest expressed directly in SQL. There is no plan to introduce
+SQLAlchemy or an ORM for the queue tables.
+
+**Schema authority.** `src/djobs/storage/schema.py` is the single runtime source
+of truth for the schema. It holds `SQLITE_SCHEMA_SQL` and `POSTGRES_SCHEMA_SQL`
+side by side (so dialect drift is visible in review) plus one
+`JOBS_COLUMN_MIGRATIONS` list that upgrades pre-existing databases. Fresh
+databases — SQLite or PostgreSQL — are created from this module.
+
+The numbered files under `migrations/` are a **historical / manual** record of
+how the schema evolved, intended for operators applying changes to an existing
+production database by hand. They are **not** run by a runtime migration
+runner. A schema-drift guard test (`tests/unit/test_schema.py`) keeps the two
+backend schemas in lockstep.
+
 ### PostgreSQL Backend
 
 For multi-worker or team setups:
@@ -173,7 +194,10 @@ For multi-worker or team setups:
 pip install "djobs[pg]"
 ```
 
-The PostgreSQL backend uses `SELECT ... FOR UPDATE SKIP LOCKED` for atomic job claims. See `migrations/005_postgres_schema.sql` and `src/djobs/storage/postgres.py` for details.
+The PostgreSQL backend uses `SELECT ... FOR UPDATE SKIP LOCKED` for atomic job
+claims. Its schema is defined as `POSTGRES_SCHEMA_SQL` in
+`src/djobs/storage/schema.py`; see also `src/djobs/storage/postgres.py` for the
+repository implementation.
 
 ### Dead-Lettered Tasks
 

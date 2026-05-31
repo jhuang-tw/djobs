@@ -20,6 +20,37 @@ artifact.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-30
+
+### Changed
+- `[core]` **Schema authority consolidated** into a single module
+  `src/djobs/storage/schema.py`. It is now the runtime source of truth for both
+  backends: `SQLITE_SCHEMA_SQL` and `POSTGRES_SCHEMA_SQL` live side by side, and
+  the post-initial column upgrades are driven by one `JOBS_COLUMN_MIGRATIONS`
+  list via `apply_sqlite_column_migrations` / `apply_postgres_column_migrations`.
+  `sqlite.py` and `postgres.py` no longer embed their own DDL; they import from
+  `schema.py` and re-export the historical names `SCHEMA_SQL` / `PG_SCHEMA_SQL`
+  for backward compatibility.
+- `[core]` Clarified that `migrations/*.sql` are a **historical / manual**
+  migration record for operators applying changes to a pre-existing database by
+  hand — they are **not** executed by a runtime migration runner. Fresh
+  databases are created from `schema.py`.
+
+### Added
+- `[core]` **Backend schema drift guard** — `tests/unit/test_schema.py` asserts
+  that the SQLite and PostgreSQL schemas declare the same logical columns, that
+  every migrated column already exists in the current schema, and that the
+  SQLite column-migration path upgrades a pre-existing database idempotently.
+- `[core]` **Atomic-claim concurrency tests** — `tests/unit/test_concurrency.py`
+  proves no task is ever double-claimed or lost under contention, both with a
+  shared repository (single connection + lock) and with separate connections
+  (exercising the database-level `BEGIN IMMEDIATE` write lock).
+
+### Notes
+- Raw SQL remains the intentional storage strategy for queue correctness; no
+  ORM / SQLAlchemy is introduced. SQLite is the first-class default, with the
+  PostgreSQL backend optional via `pip install "djobs[pg]"`.
+
 ## [0.5.0] - 2026-05-29
 
 ### Added

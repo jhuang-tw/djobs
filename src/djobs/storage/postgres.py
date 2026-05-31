@@ -14,6 +14,7 @@ from djobs.core.errors import AgentNotFoundError, JobNotFoundError
 from djobs.core.models import Agent, Job
 from djobs.core.states import AgentStatus, JobStatus, validate_transition
 from djobs.storage.events import JobEvent
+from djobs.storage.schema import POSTGRES_SCHEMA_SQL, apply_postgres_column_migrations
 
 try:
     import psycopg
@@ -30,62 +31,9 @@ if TYPE_CHECKING:
 DEFAULT_LEASE_DURATION = timedelta(seconds=30)
 DEFAULT_AGENT_TIMEOUT = timedelta(seconds=90)
 
-PG_SCHEMA_SQL = """
-CREATE TABLE IF NOT EXISTS jobs (
-    id TEXT PRIMARY KEY,
-    type TEXT NOT NULL,
-    payload_json TEXT NOT NULL,
-    status TEXT NOT NULL,
-    attempt INTEGER NOT NULL DEFAULT 0,
-    max_attempts INTEGER NOT NULL DEFAULT 1,
-    run_after TIMESTAMPTZ NULL,
-    idempotency_key TEXT NULL,
-    correlation_id TEXT NOT NULL,
-    last_error TEXT NULL,
-    leased_by TEXT NULL,
-    lease_expires_at TIMESTAMPTZ NULL,
-    heartbeat_at TIMESTAMPTZ NULL,
-    started_at TIMESTAMPTZ NULL,
-    depends_on_json TEXT NOT NULL DEFAULT '[]',
-    resource_key TEXT NULL,
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_jobs_claimable
-ON jobs (status, run_after, created_at);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_active_idempotency_key
-ON jobs (idempotency_key)
-WHERE idempotency_key IS NOT NULL
-    AND status IN ('pending', 'running', 'retry_scheduled');
-
-CREATE TABLE IF NOT EXISTS job_events (
-    id TEXT PRIMARY KEY,
-    job_id TEXT NOT NULL,
-    event_type TEXT NOT NULL,
-    message TEXT NULL,
-    metadata_json TEXT NULL,
-    created_at TIMESTAMPTZ NOT NULL,
-    FOREIGN KEY (job_id) REFERENCES jobs(id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_job_events_job_created
-ON job_events (job_id, created_at);
-
--- Phase M4: agent registry.
-CREATE TABLE IF NOT EXISTS agents (
-    id TEXT PRIMARY KEY,
-    status TEXT NOT NULL,
-    capabilities_json TEXT NOT NULL DEFAULT '[]',
-    metadata_json TEXT NOT NULL DEFAULT '{}',
-    registered_at TIMESTAMPTZ NOT NULL,
-    last_heartbeat_at TIMESTAMPTZ NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_agents_status
-ON agents (status, last_heartbeat_at);
-"""
+# Authoritative schema lives in djobs.storage.schema. Re-exported under the
+# historical name for backward compatibility (tests import PG_SCHEMA_SQL).
+PG_SCHEMA_SQL = POSTGRES_SCHEMA_SQL
 
 
 def _serialize_dt(value: datetime | None) -> str | None:
@@ -183,11 +131,7 @@ class PostgresJobRepository:
     def _initialize_schema(conn: DictConnection) -> None:
         with conn.cursor() as cur:
             cur.execute(PG_SCHEMA_SQL)
-            cur.execute(
-                "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS "
-                "depends_on_json TEXT NOT NULL DEFAULT '[]'"
-            )
-            cur.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS resource_key TEXT NULL")
+            apply_postgres_column_migrations(cur)
         conn.commit()
 
     # ------------------------------------------------------------------

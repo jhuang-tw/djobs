@@ -50,6 +50,15 @@ You reopen VS Code, start a new chat: "hi"
 
 Everything is stored in a local SQLite file. No Redis, no Docker, no cloud service.
 
+> **How is this different from Celery / RQ / Dramatiq?** Those are general-purpose task queues
+> built for backend workers and high throughput. djobs is purpose-built for **AI coding agents**:
+> it speaks MCP natively, optimizes for crash-recovery and human-inspectable audit trails over raw
+> throughput, and runs with zero infrastructure — one local SQLite file, no broker, no daemon.
+
+> **Maturity — early but tested.** 291 passing tests, CI across Python 3.11–3.13, SQLite and optional
+> PostgreSQL backends. Marked Alpha while the public API stabilizes; the core enqueue → complete →
+> resume flow is stable and used daily.
+
 ---
 
 ## Quick Start
@@ -193,7 +202,7 @@ Beyond the three core tools, djobs also provides:
 - **`check_task` / `list_tasks`** — Inspect individual tasks or list by workspace.
 - **`health`** — Queue depth by status at a glance.
 - **Multi-agent coordination** — Several agents share one queue: `claim_task` (atomic, exclusive), `heartbeat_task`, `release_task`, task dependencies (`depends_on`), resource locks (`resource_key`), and an agent registry (`register_agent` / `agent_heartbeat` / `list_agents`).
-- **Web dashboard** — `djobs dashboard` serves a read-only, cross-agent view of queue health, every task, and the live agent fleet at `http://127.0.0.1:8787` (stdlib only, no extra deps).
+- **Web dashboard** — `djobs dashboard` serves a read-only, cross-agent view of queue health, every task, and the live agent fleet at `http://127.0.0.1:8787` (stdlib only, no extra deps). **Local-only by design:** no authentication, binds to `127.0.0.1`; for remote access use an SSH tunnel rather than exposing a public interface.
 - **Retry with backoff** — Failed tasks can retry automatically.
 - **Dead letter queue** — Tasks that exhaust all retries are preserved for review.
 
@@ -209,7 +218,7 @@ cd djobs
 python -m venv .venv && .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest -q              # 278 tests (18 skipped without Postgres)
+pytest -q              # 291 tests (18 skipped without Postgres)
 ruff check src/ tests/ # lint
 ```
 
@@ -230,7 +239,7 @@ Install the VSIX from `vscode-ext/` or build it yourself:
 
 ```bash
 cd vscode-ext && npm install && npm run package
-# Install: code --install-extension djobs-1.0.3.vsix
+# Install: code --install-extension djobs-0.6.0.vsix
 ```
 
 ---
@@ -247,8 +256,8 @@ cd vscode-ext && npm install && npm run package
 - [x] CLI workflow control — `djobs skip`, `djobs accept-before`, `djobs archive-workflow`
 - [x] Multi-agent coordination — shared-queue claim, dependencies, resource locks, agent registry
 - [x] Web dashboard — `djobs dashboard` cross-agent global view
+- [x] Published on VS Code Marketplace
 - [ ] Status bar badge + notification alerts
-- [ ] VS Code Marketplace publishing
 
 ---
 

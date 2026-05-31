@@ -14,10 +14,13 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Environment :: Console",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development :: Quality Assurance",
     "Topic :: System :: Distributed Computing",
 ]
 
@@ -28,6 +31,7 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/jhuang-tw/djobs"
 Repository = "https://github.com/jhuang-tw/djobs"
+Documentation = "https://github.com/jhuang-tw/djobs#readme"
 Issues = "https://github.com/jhuang-tw/djobs/issues"
 
 [project.optional-dependencies]

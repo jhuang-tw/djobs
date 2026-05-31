@@ -4,13 +4,35 @@ Thanks for your interest! Here's how to get started.
 
 ## Development Setup
 
+**Windows quickstart:** double-click `install.bat` (or run it from a terminal).
+It creates `.venv`, installs everything, and enables the pre-push gate in one
+step — nothing else to remember. The manual steps below do the same thing.
+
 ```bash
 git clone https://github.com/jhuang-tw/djobs.git
 cd djobs
 python -m venv .venv
-.venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -e ".[dev]"
+.venv/bin/activate            # Windows: .venv\Scripts\activate
+pip install -e ".[dev,pg]"    # tools + pre-commit + psycopg
+pre-commit install           # one-time: enable the local pre-push gate
 ```
+
+### Pre-push checks (catch CI failures locally)
+
+`pre-commit install` wires up a **pre-push** hook that runs the exact same
+gates as CI (`ruff check`, `ruff format --check`, `mypy`, `pytest`) before a
+push leaves your machine — so you never wait for a red CI run to find a break.
+The shared config lives in [.pre-commit-config.yaml](.pre-commit-config.yaml),
+so local and CI never drift.
+
+```bash
+pre-commit run --all-files   # run the gates manually anytime
+git push --no-verify         # bypass in an emergency (rare)
+```
+
+If you previously enabled the zero-dependency fallback hook
+(`git config core.hooksPath scripts/githooks`), unset it first so pre-commit
+can manage the hooks: `git config --unset core.hooksPath`.
 
 ## Running Tests
 

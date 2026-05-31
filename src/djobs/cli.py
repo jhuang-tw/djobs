@@ -171,20 +171,24 @@ def _cmd_status(args: argparse.Namespace) -> None:
         if args.correlation_id:
             rows = repo._connection.execute(
                 "SELECT id, type, status, payload_json, correlation_id, "
-                "created_at, updated_at, attempt, max_attempts, last_error "
+                "created_at, updated_at, attempt, max_attempts, last_error, "
+                "depends_on_json "
                 "FROM jobs WHERE correlation_id = ? AND status != ? ORDER BY created_at",
                 (args.correlation_id, "archived"),
             ).fetchall()
         else:
             rows = repo._connection.execute(
                 "SELECT id, type, status, payload_json, correlation_id, "
-                "created_at, updated_at, attempt, max_attempts, last_error "
+                "created_at, updated_at, attempt, max_attempts, last_error, "
+                "depends_on_json "
                 "FROM jobs WHERE status != ? ORDER BY created_at",
                 ("archived",),
             ).fetchall()
     for row in rows:
         item = dict(row)
         item["evidence"] = evidence_by_job.get(item["id"])
+        raw_depends = item.pop("depends_on_json", None)
+        item["depends_on"] = json.loads(raw_depends) if raw_depends else []
         tasks.append(item)
 
     result = {
@@ -301,6 +305,11 @@ This workspace has the djobs MCP server wired in. Use it proactively so work
 survives crashes, IDE reloads, and interrupted sessions. Do NOT wait to be
 told — these are part of normal good behaviour here.
 
+**Why this saves tokens:** persisting task state to djobs lets you recover work
+with a single `resume_session` call instead of re-reading files and re-planning
+from scratch after a crash or context reset. It also keeps progress out of the
+chat context, so long multi-step tasks stay cheap and avoid context overflow.
+
 - **Resume first.** At the start of a session that continues prior work, call
   `resume_session` (with the session/correlation_id) to recover any unfinished
   tasks before starting something new.
@@ -309,6 +318,14 @@ told — these are part of normal good behaviour here.
   data processing), submit it with `enqueue_task` and a stable `correlation_id`
   so progress is durable and visible in the djobs sidebar. Mark each unit done
   with `complete_task` / `fail_task`.
+- **Make every task self-explanatory.** The sidebar shows the task `type` and a
+  one-line summary — never make a human guess what an opaque id means. In each
+  `enqueue_task` payload include human-readable fields:
+  `summary` (what this step does, in plain language), `why` (why it is needed),
+  and `condition` (what must be true before it can run, if it waits on data or
+  state). Use a clear, descriptive `task_type` too. Example payload:
+  `{"summary": "Wait for >=30 settled samples", "why": "3-axis judgment needs
+  enough data to be statistically valid", "condition": "settled_count >= 30"}`.
 - **Don't over-use it.** Short answers, single-file edits, quick questions, and
   trivial one-step tasks do NOT need the queue. Keep the chat fast.
 - **Inspect when asked about progress.** Use `check_task`, `list_tasks`, and

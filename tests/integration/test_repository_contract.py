@@ -24,8 +24,18 @@ def _sqlite_factory(tmp_path):
     return SQLiteJobRepository.from_path(tmp_path / "contract.db")
 
 
+# Cache the Postgres availability check for the whole test session. Without
+# this, every parametrised [pg] variant would each wait out the full
+# connect_timeout against an unreachable server — ~5s x N tests of pure idle
+# waiting. We probe once: the first failure marks PG unavailable so all
+# remaining pg variants skip instantly.
+_PG_UNAVAILABLE_REASON: str | None = None
+_PG_PROBED = False
+
+
 def _pg_factory(_tmp_path):
     """Create a PostgresJobRepository, truncating tables between tests."""
+    global _PG_PROBED, _PG_UNAVAILABLE_REASON
     import os
 
     require_pg = os.getenv("DJOBS_REQUIRE_PG") == "1"
@@ -35,6 +45,10 @@ def _pg_factory(_tmp_path):
     else:
         psycopg = pytest.importorskip("psycopg")
 
+    # Fast path: a previous test in this session already found PG unreachable.
+    if not require_pg and _PG_PROBED and _PG_UNAVAILABLE_REASON is not None:
+        pytest.skip(_PG_UNAVAILABLE_REASON)
+
     dsn = os.getenv(
         "DJOBS_TEST_PG_DSN",
         "postgresql://djobs:djobs@localhost:5432/djobs",
@@ -42,11 +56,18 @@ def _pg_factory(_tmp_path):
     try:
         from psycopg.rows import dict_row
 
-        conn = psycopg.connect(dsn, row_factory=dict_row)
-    except psycopg.OperationalError:
+        # connect_timeout bounds the wait so a missing/unreachable server fails
+        # fast (and skips) instead of hanging the whole suite. CI's test-postgres
+        # job sets DJOBS_REQUIRE_PG=1 and provides a real server.
+        conn = psycopg.connect(dsn, row_factory=dict_row, connect_timeout=5)
+    except psycopg.OperationalError as exc:
+        _PG_PROBED = True
         if require_pg:
             raise
-        pytest.skip("PostgreSQL not available")
+        _PG_UNAVAILABLE_REASON = f"PostgreSQL not available: {exc}"
+        pytest.skip(_PG_UNAVAILABLE_REASON)
+
+    _PG_PROBED = True
 
     from djobs.storage.postgres import PG_SCHEMA_SQL, PostgresJobRepository
 

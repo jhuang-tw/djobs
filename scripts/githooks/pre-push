@@ -1,0 +1,38 @@
+#!/bin/sh
+#
+# djobs pre-push hook — mirrors the GitHub Actions CI gates so a push that
+# would fail CI is blocked locally first.
+#
+# NOTE: The PRIMARY, recommended gate is the `pre-commit` framework (see
+# .pre-commit-config.yaml and CONTRIBUTING.md). This shell hook is a
+# ZERO-DEPENDENCY FALLBACK for environments that don't want to install
+# pre-commit. Use ONE or the other, not both (they both drive `git push`).
+#
+# Install this fallback (run once, from the repo root):
+#     git config core.hooksPath scripts/githooks
+#
+# This runs CHECK-ONLY steps (it never rewrites your files). If formatting
+# fails, run ./scripts/preflight.ps1 to auto-fix, then push again.
+#
+# Bypass in an emergency with:  git push --no-verify
+
+set -e
+
+# Use "python -m <tool>" so every check runs under the SAME interpreter that
+# resolves "python" here. Bare "ruff"/"mypy"/"pytest" can resolve to a
+# different (or broken) install when a venv is renamed or PATH drifts.
+PYTHON="${PYTHON:-python}"
+
+echo "pre-push: ruff check"
+"$PYTHON" -m ruff check src/ tests/
+
+echo "pre-push: ruff format --check"
+"$PYTHON" -m ruff format --check src/ tests/
+
+echo "pre-push: mypy"
+"$PYTHON" -m mypy
+
+echo "pre-push: pytest"
+"$PYTHON" -m pytest -q --tb=short
+
+echo "pre-push: all checks passed"

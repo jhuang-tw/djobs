@@ -1,0 +1,54 @@
+# pre-commit — runs the same gates as CI before a push ever leaves your
+# machine, so you never wait for a red CI run to find a lint/type/test break.
+# This file is the single source of truth shared by local hooks and CI
+# (.github/workflows/ci.yml).
+#
+# One-time setup per clone (from the repo root):
+#     pip install -e ".[dev,pg]"     # installs pre-commit + tools + psycopg
+#     pre-commit install             # wires up the pre-push hook
+#
+# If you previously enabled the fallback shell hook, unset it first so
+# pre-commit can manage the hooks:
+#     git config --unset core.hooksPath
+#
+# Run on demand:   pre-commit run --all-files
+# Bypass (rare):   git push --no-verify
+
+# Installing only wires up the pre-push hook, so the gates run on `git push`
+# (not on every commit). Hooks are left stage-unrestricted so you can also run
+# them manually with `pre-commit run --all-files`.
+default_install_hook_types: [pre-push]
+
+repos:
+  # Lint + format — pinned, isolated environment so the tool version never
+  # drifts from CI regardless of what is installed in your local venv. This
+  # is what fixes the "ruff 3.10 vs 3.13" class of problems.
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.14
+    hooks:
+      - id: ruff-check
+        args: [--config, pyproject.toml]
+        files: ^(src|tests)/
+      - id: ruff-format
+        args: [--check, --config, pyproject.toml]
+        files: ^(src|tests)/
+
+  # Type check + tests — run in the project's own environment so psycopg and
+  # mcp types resolve. These reuse whatever "python -m" resolves to, exactly
+  # like CI (which does `pip install -e ".[dev,pg]"`).
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        entry: python -m mypy
+        language: system
+        types: [python]
+        pass_filenames: false
+        files: ^src/djobs/
+
+      - id: pytest
+        name: pytest
+        entry: python -m pytest -q --tb=short
+        language: system
+        pass_filenames: false
+        always_run: true

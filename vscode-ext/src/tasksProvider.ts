@@ -89,8 +89,17 @@ export class DjobsTasksProvider implements vscode.TreeDataProvider<DashItem> {
 
 // ── root builder ────────────────────────────────────────────────────
 
+// Lookup of every task in the current snapshot, rebuilt each render so the
+// tooltip can resolve depends_on ids to readable labels and block state.
+const taskById = new Map<string, DjobsTask>();
+
 function buildRootLevel(tasks: DjobsTask[]): DashItem[] {
   const items: DashItem[] = [];
+
+  taskById.clear();
+  for (const t of tasks) {
+    taskById.set(t.id, t);
+  }
 
   // Group by workflow (correlation_id)
   const workflows = groupByCorrelation(tasks);
@@ -266,22 +275,74 @@ function taskDescription(task: DjobsTask): string {
   if (task.evidence) {
     return `✓ ${truncate(task.evidence, 40)}`;
   }
+  if (isBlocked(task)) {
+    return `⛔ blocked by ${dependencyLabel(blockingDeps(task)[0])}`;
+  }
   return task.created_at ? relativeTime(task.created_at) : '';
+}
+
+// A task is blocked when it is not yet terminal and at least one dependency
+// has not succeeded.
+function isBlocked(task: DjobsTask): boolean {
+  return !isTerminal(task.status) && blockingDeps(task).length > 0;
+}
+
+function blockingDeps(task: DjobsTask): string[] {
+  const deps = task.depends_on;
+  if (!deps || deps.length === 0) {
+    return [];
+  }
+  return deps.filter((id) => {
+    const dep = taskById.get(id);
+    return !dep || dep.status !== 'succeeded';
+  });
 }
 
 function taskTooltip(task: DjobsTask): string {
   const payload = parsePayload(task.payload_json);
   const file = typeof payload.file === 'string' ? payload.file : undefined;
+  const summary = firstString(payload, ['summary', 'title', 'name', 'description']);
+  const why = firstString(payload, ['why', 'reason', 'rationale']);
+  const condition = firstString(payload, ['condition', 'when', 'requires']);
   const action = friendlyAction(task.type);
+  const blockedBy = blockedByLine(task);
   return [
-    `What: ${action}${file ? ' on ' + file : ''}`,
+    summary ? `What: ${summary}` : `What: ${action}${file ? ' on ' + file : ''}`,
+    why ? `Why: ${why}` : undefined,
+    condition ? `Condition: ${condition}` : undefined,
+    blockedBy,
     `Status: ${task.status}`,
+    `Type: ${task.type}`,
     `Task ID: ${task.id}`,
     task.correlation_id ? `Workflow: ${task.correlation_id}` : undefined,
     `Attempt: ${task.attempt ?? 0}/${task.max_attempts ?? 0}`,
     task.evidence ? `Evidence: ${task.evidence}` : undefined,
     task.last_error ? `Error: ${task.last_error}` : undefined,
   ].filter((l) => l !== undefined).join('\n');
+}
+
+// Build a 'Blocked by' / 'Depends on' tooltip line from depends_on ids,
+// resolving each id to a readable label and flagging unfinished blockers.
+function blockedByLine(task: DjobsTask): string | undefined {
+  const deps = task.depends_on;
+  if (!deps || deps.length === 0) {
+    return undefined;
+  }
+  const pending = blockingDeps(task);
+  if (pending.length > 0) {
+    return `Blocked by: ${pending.map(dependencyLabel).join(', ')}`;
+  }
+  return `Depends on: ${deps.map(dependencyLabel).join(', ')} (all done)`;
+}
+
+function dependencyLabel(id: string): string {
+  const dep = taskById.get(id);
+  if (!dep) {
+    return id.slice(0, 8);
+  }
+  const payload = parsePayload(dep.payload_json);
+  const summary = firstString(payload, ['summary', 'title', 'name', 'description']);
+  return summary ? truncate(summary, 40) : friendlyAction(dep.type);
 }
 
 function shortLabel(task: DjobsTask, commonPrefix: string): string {
@@ -295,13 +356,28 @@ function shortLabel(task: DjobsTask, commonPrefix: string): string {
   }
   // No file path — fall back to a human-readable payload field before
   // resorting to the opaque task id.
-  for (const key of ['summary', 'title', 'name', 'description']) {
-    const value = payload[key];
-    if (typeof value === 'string' && value.trim()) {
-      return truncate(value.trim(), 60);
-    }
+  const summary = firstString(payload, ['summary', 'title', 'name', 'description']);
+  if (summary) {
+    return truncate(summary, 60);
+  }
+  // Still nothing — humanize the task type rather than show a bare id.
+  if (task.type) {
+    return `${friendlyAction(task.type)} (${task.id.slice(0, 8)})`;
   }
   return `task ${task.id.slice(0, 8)}`;
+}
+
+function firstString(
+  payload: Record<string, unknown>,
+  keys: string[],
+): string | undefined {
+  for (const key of keys) {
+    const value = payload[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  return undefined;
 }
 
 function friendlyWorkflow(cid: string): string {
@@ -325,7 +401,13 @@ function friendlyAction(taskType: string): string {
     'roadmap': 'Roadmap',
     'docs': 'Docs',
   };
-  return map[taskType] ?? taskType;
+  return map[taskType] ?? humanizeType(taskType);
+}
+
+function humanizeType(taskType: string): string {
+  if (!taskType) { return taskType; }
+  const words = taskType.replace(/[-_]+/g, ' ').trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 function truncate(s: string, max: number): string {

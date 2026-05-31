@@ -19,6 +19,7 @@ export interface DjobsTask {
   attempt?: number;
   max_attempts?: number;
   last_error?: string | null;
+  depends_on?: string[];
 }
 
 export interface DjobsStatus {

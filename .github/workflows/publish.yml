@@ -11,15 +11,70 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      models: read
     outputs:
       upload_url: ${{ steps.create_release.outputs.upload_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Collect commits since previous tag
+        id: commits
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          prev="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
+          if [ -n "$prev" ]; then
+            range="${prev}..${GITHUB_REF_NAME}"
+          else
+            range="${GITHUB_REF_NAME}"
+          fi
+          echo "Version: $version  Range: $range"
+          {
+            echo "log<<COMMITS_EOF"
+            git log "$range" --no-merges --pretty=format:'- %s%n%b'
+            echo ""
+            echo "COMMITS_EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Generate user-facing release notes
+        id: ai
+        uses: actions/ai-inference@v1
+        with:
+          model: openai/gpt-4o
+          system-prompt: |
+            You are a release-notes writer for "djobs", a durable job-queue
+            Python package with a companion VS Code extension. Write concise,
+            user-facing Markdown release notes from the raw commit log.
+            Rules:
+            - Audience is END USERS who install the package/extension, NOT
+              contributors. Focus on new features, behavior changes, and bug
+              fixes that affect users.
+            - OMIT internal/maintenance noise: CI config, linters, pre-commit,
+              test-only changes, refactors, formatting, release plumbing.
+            - Group under short headings like "### New", "### Fixed",
+              "### Changed". Skip empty sections.
+            - Use plain language, one bullet per change. No preamble, no
+              "as an AI", no commit hashes. If nothing is user-facing, output a
+              single line summarizing the release at a high level.
+          prompt: |
+            Version: ${{ steps.commits.outputs.version }}
+
+            Raw commit log:
+            ${{ steps.commits.outputs.log }}
+
+      - name: Prepare release body
+        run: |
+          cp "${{ steps.ai.outputs.response-file }}" release_body.md
+          echo "Generated release notes:"
+          cat release_body.md
 
       - name: Create GitHub Release
         id: create_release
         uses: softprops/action-gh-release@v2
         with:
+          body_path: release_body.md
           generate_release_notes: true
 
   publish:

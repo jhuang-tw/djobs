@@ -20,6 +20,53 @@ artifact.
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-05-31
+
+### Changed
+- `[core]` **Release notes are now written automatically.** When a `v*` tag is
+  pushed, CI summarizes the changes since the previous release into concise,
+  user-facing notes and uses them as the GitHub Release body — internal and
+  test-only changes are filtered out.
+
+## [0.6.3] - 2026-05-31
+
+### Added
+- `[core]` **Fully automated, tag-driven release pipeline.** Pushing a `v*`
+  tag now creates the GitHub Release (with notes extracted from this
+  changelog), publishes the Python package to PyPI via trusted publishing, and
+  publishes the VS Code extension to the Marketplace — all in one workflow,
+  with no manual steps.
+
+### Changed
+- `[ext]` Marketplace publishing moved into CI (`vsce publish` with a
+  `VSCE_PAT` secret), so `core` and `ext` ship together from a single tag.
+
+## [0.6.2] - 2026-05-31
+
+### Added
+- **`install.bat`** — one-click Windows dev setup: creates `.venv`, installs
+  all dependencies, and enables the pre-push gate.
+- **`pre-commit` gate** — replaced the custom shell hook with the
+  industry-standard `pre-commit` framework. The `ruff` version is pinned, so
+  lint results never drift between machines or between local and CI.
+- `[core]` Python 3.14 added to the CI test matrix and package classifiers.
+
+### Changed
+- CI lint job now runs the same pinned `ruff` version as the local hook, driven
+  by `.pre-commit-config.yaml` as the single source of truth.
+
+### Fixed
+- Postgres integration tests now probe the connection once at module level
+  (`connect_timeout=5`), cutting skip latency from ~20 s to under 1 s when
+  Postgres is unavailable.
+
+## [0.6.1] - 2026-05-30
+
+### Changed
+- `[core]` CLI agent-guidance improvements and `depends_on` serialization so
+  task dependencies round-trip cleanly through the CLI and sidebar.
+- `[ext]` Sidebar refinements, including `depends_on` display.
+
 ## [0.6.0] - 2026-05-30
 
 ### Changed

@@ -55,6 +55,20 @@ path = "src/djobs/__init__.py"
 [tool.hatch.build.targets.wheel]
 packages = ["src/djobs"]
 
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/djobs",
+    "migrations",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "pyproject.toml",
+]
+exclude = [
+    "vscode-ext",
+    ".gitignore",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

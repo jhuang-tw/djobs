@@ -155,28 +155,20 @@ Or add to `.vscode/mcp.json` manually:
 
 ## Making Your Agent Use djobs Automatically
 
-After installing, your agent has the MCP tools available — but it won't use them unless you tell it to. The easiest way is to use the included **Durable Coder** agent definition:
+After installing, your agent has the MCP tools available — but it won't use them unless you tell it to. Add the following to your agent instructions (e.g. `.github/copilot-instructions.md` or any `.agent.md`):
 
-**Option A: Copy to your project (recommended)**
-
-```bash
-# Copy the agent file to your project root
-cp $(python -c "import djobs, pathlib; print(pathlib.Path(djobs.__file__).parent.parent.parent / '.agent.md')") .agent.md
+```
+At the start of every session, call resume_session to find unfinished work.
+For multi-file tasks, enqueue each file as a durable task and call complete_task after each edit.
 ```
 
-Or just copy [`.agent.md`](.agent.md) from this repo into your project root.
-
-**Option B: Use the GitHub Copilot agent picker**
-
-If you cloned this repo, the agent is already at `.github/agents/durable-coder.agent.md`. In VS Code, select "Durable Coder" from the agent picker in Copilot Chat.
-
-**What the agent does:**
-- On every new chat, silently calls `resume_session` to find unfinished work
-- For multi-file tasks (>3 files), automatically enqueues each file as a durable task
-- After editing each file, calls `complete_task` to record progress
+**What this gives you:**
+- On every new chat, unfinished work is automatically surfaced
+- For multi-file tasks (>3 files), each file is tracked as a durable task
+- After editing each file, progress is recorded
 - If a session crashes, the next chat auto-resumes from where it stopped — no questions asked
 
-You can also write your own `.agent.md` or add djobs tool calls to any existing agent instructions.
+You can also use the `djobs install-instructions` CLI command to add the guidance block automatically.
 
 ---
 

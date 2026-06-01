@@ -20,6 +20,14 @@ artifact.
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-05-31
+
+### Fixed
+- `[core]` **Source distribution no longer bundles internal files.** The PyPI
+  sdist now contains only the package source, database migrations, and the
+  standard README/CHANGELOG/LICENSE — previously it also shipped development-only
+  files (editor configs, examples, tests, scratch notes).
+
 ## [0.6.4] - 2026-05-31
 
 ### Changed

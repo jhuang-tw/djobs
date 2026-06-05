@@ -20,6 +20,18 @@ artifact.
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-06-05
+
+### Fixed
+- `[ext]` **Auto-update a stale djobs before wiring.** On activation the
+  extension now checks the djobs version in the *exact* interpreter it runs
+  (the project `.venv`, a configured interpreter, or a global install) and
+  offers to update it *before* running any wiring command. This fixes a
+  confusing `unrecognized arguments: --global` error that appeared when the
+  extension was newer than the installed Python package. Version detection no
+  longer depends on the `doctor` command, so it works against older djobs too,
+  and the update now upgrades the interpreter the sidebar actually uses.
+
 ## [0.7.0] - 2026-06-05
 
 ### Added

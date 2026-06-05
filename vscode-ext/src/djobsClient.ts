@@ -226,8 +226,28 @@ export class DjobsClient {
     return JSON.parse(output) as DjobsDoctorReport;
   }
 
-  /** The installed djobs Python package version, or undefined when unavailable. */
+  /**
+   * The installed djobs Python package version, or undefined when unavailable.
+   *
+   * Probes ``djobs.__version__`` through the launcher's interpreter, which works
+   * on EVERY djobs version (older ones lack the ``doctor`` command, so we must
+   * not rely on it here). Falls back to ``doctor --json`` only for console-script
+   * launchers where no Python ``-c`` is available.
+   */
   async installedVersion(): Promise<string | undefined> {
+    const launcher = this.resolveLauncher();
+    if (launcher.prefix.includes('-m')) {
+      try {
+        const out = await this.execFile(
+          launcher.exe,
+          ['-c', 'import djobs, sys; sys.stdout.write(getattr(djobs, "__version__", ""))'],
+          this.workspaceRoot,
+        );
+        return out.trim() || undefined;
+      } catch {
+        return undefined;
+      }
+    }
     try {
       const report = await this.doctor();
       return report.version ?? undefined;
@@ -237,28 +257,34 @@ export class DjobsClient {
   }
 
   /**
-   * Upgrade the djobs package to the latest release. Mirrors installPackage:
-   * prefers pipx, otherwise pip --upgrade into the project venv or a Python on
-   * PATH.
+   * Upgrade djobs in the SAME interpreter the launcher uses, so a project that
+   * runs its own ``.venv`` djobs is actually updated (not some other global
+   * install). For console-script launchers, prefer ``pipx upgrade``.
    */
   async updatePackage(): Promise<void> {
-    const pipx = this.which('pipx');
-    if (pipx) {
-      await this.execFile(pipx, ['upgrade', 'djobs'], this.workspaceRoot, 180000);
+    const launcher = this.resolveLauncher();
+    if (launcher.prefix.includes('-m')) {
+      await this.execFile(
+        launcher.exe,
+        ['-m', 'pip', 'install', '--upgrade', 'djobs'],
+        this.workspaceRoot,
+        180000,
+      );
       this.resetLauncher();
       return;
     }
-    const venvPython = process.platform === 'win32'
-      ? path.join(this.workspaceRoot, '.venv', 'Scripts', 'python.exe')
-      : path.join(this.workspaceRoot, '.venv', 'bin', 'python');
-    const fallback = process.platform === 'win32' ? 'python' : 'python3';
-    const exe = fs.existsSync(venvPython) ? venvPython : fallback;
-    await this.execFile(
-      exe,
-      ['-m', 'pip', 'install', '--upgrade', 'djobs'],
-      this.workspaceRoot,
-      180000,
-    );
+    const pipx = this.which('pipx');
+    if (pipx) {
+      await this.execFile(pipx, ['upgrade', 'djobs'], this.workspaceRoot, 180000);
+    } else {
+      const fallback = process.platform === 'win32' ? 'python' : 'python3';
+      await this.execFile(
+        fallback,
+        ['-m', 'pip', 'install', '--upgrade', 'djobs'],
+        this.workspaceRoot,
+        180000,
+      );
+    }
     this.resetLauncher();
   }
 

@@ -250,9 +250,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   await provider.refresh();
-  await maybeOfferSetup(context, client, provider);
-  await maybeOfferReWire(context, client, provider);
-  await maybeOfferUpdate(context, client);
+  // Update the Python package FIRST, against whichever interpreter the sidebar
+  // runs. A stale djobs (predating --global / doctor) would otherwise make the
+  // wiring commands below fail. Only wire when the CLI is current.
+  const cliReady = await maybeOfferUpdate(context, client);
+  if (cliReady) {
+    await maybeOfferSetup(context, client, provider);
+    await maybeOfferReWire(context, client, provider);
+  }
 }
 
 export function deactivate(): void {}
@@ -427,56 +432,66 @@ export function isOlderVersion(a: string, b: string): boolean {
 async function maybeOfferUpdate(
   context: vscode.ExtensionContext,
   client: DjobsClient,
-): Promise<void> {
+): Promise<boolean> {
   const extVersion = context.extension.packageJSON.version as string | undefined;
-  if (!extVersion) {
-    return;
-  }
   const installed = await client.installedVersion();
-  if (!installed || !isOlderVersion(installed, extVersion)) {
-    return;
+  // Not installed yet — let the setup flow install it; nothing to gate here.
+  if (!installed) {
+    return true;
   }
-
-  const dismissKey = `djobs.updateDismissed.${installed}`;
-  if (context.globalState.get<boolean>(dismissKey)) {
-    return;
+  // Already current (or newer) — safe to run the wiring commands.
+  if (!extVersion || !isOlderVersion(installed, extVersion)) {
+    return true;
   }
 
   const update = 'Update djobs';
   const dontAsk = "Don't ask again";
-  const selected = await vscode.window.showInformationMessage(
+  const dismissKey = `djobs.updateDismissed.${installed}`;
+  if (context.globalState.get<boolean>(dismissKey)) {
+    // User opted out for this version: don't nag, and don't run new-CLI commands
+    // that this stale package would reject.
+    return false;
+  }
+
+  const selected = await vscode.window.showWarningMessage(
     `The djobs package (v${installed}) is older than the djobs extension `
-      + `(v${extVersion}). Update it so new features work?`,
+      + `(v${extVersion}). Update it so the sidebar and agent work correctly?`,
     update,
     dontAsk,
   );
 
   if (selected === dontAsk) {
     await context.globalState.update(dismissKey, true);
-    return;
+    return false;
   }
   if (selected !== update) {
-    return;
+    return false;
   }
 
   try {
-    await vscode.window.withProgress(
+    const now = await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: 'Updating djobs…' },
-      () => client.updatePackage(),
+      async () => {
+        await client.updatePackage();
+        return client.installedVersion();
+      },
     );
-    const now = await client.installedVersion();
     vscode.window.showInformationMessage(
-      now ? `djobs updated to v${now}.` : 'djobs updated.',
+      now ? `djobs updated to v${now}. Reload the window if the MCP server was already running.`
+        : 'djobs updated.',
     );
+    // Updated successfully — the CLI is now current, so wiring is safe.
+    return !!now && !isOlderVersion(now, extVersion);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     const diagnose = 'Diagnose Setup';
     const choice = await vscode.window.showErrorMessage(
-      `djobs update failed: ${detail}. Update manually with "pipx upgrade djobs".`,
+      `djobs update failed: ${detail}. Update manually with "pip install -U djobs".`,
       diagnose,
     );
     if (choice === diagnose) {
       await vscode.commands.executeCommand('djobs.diagnose');
     }
+    return false;
   }
 }

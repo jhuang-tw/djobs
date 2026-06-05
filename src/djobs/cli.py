@@ -7,6 +7,7 @@ Commands::
     djobs serve --workers 8  Set max concurrent workers
     djobs dashboard          Serve the read-only cross-agent web dashboard
     djobs install-mcp        Print an mcp.json snippet for VS Code
+    djobs doctor             Diagnose setup (interpreter, wiring, db)
     djobs audit              Query the audit trail from the terminal
 """
 
@@ -372,10 +373,49 @@ def _write_instructions_block() -> None:
     print(f"Created {target} with djobs guidance")
 
 
+def _resolve_mcp_command(args: argparse.Namespace) -> tuple[str, list[str]]:
+    """Resolve the launch ``(command, args)`` for the MCP server.
+
+    The goal is a wiring that *just works* in any project, even one without a
+    workspace-local ``.venv``. Resolution order (first match wins):
+
+    1. ``--command`` — use the given string verbatim as the launch command.
+    2. ``--python`` — launch ``<python> -m djobs.mcp_server``.
+    3. ``--portable`` — emit the relocatable ``${workspaceFolder}/.venv``
+       interpreter hint (legacy behaviour). Useful when committing mcp.json to
+       a shared repo whose collaborators each have a project-local venv with
+       djobs installed.
+    4. Default — prefer the installed ``djobs-mcp`` console script if it is on
+       PATH (the case after ``pipx install djobs`` / ``pip install djobs``);
+       otherwise fall back to the *absolute* path of the current interpreter
+       (``sys.executable``), which is guaranteed to have djobs importable
+       because that is exactly what is running this command.
+    """
+    import shutil
+
+    command = getattr(args, "command", None)
+    if command:
+        return command, []
+
+    python = getattr(args, "python", None)
+    if python:
+        return python, ["-m", "djobs.mcp_server"]
+
+    if getattr(args, "portable", False):
+        if os.name == "nt":
+            return "${workspaceFolder}/.venv/Scripts/python", ["-m", "djobs.mcp_server"]
+        return "${workspaceFolder}/.venv/bin/python", ["-m", "djobs.mcp_server"]
+
+    console = shutil.which("djobs-mcp")
+    if console:
+        return console, []
+
+    return sys.executable, ["-m", "djobs.mcp_server"]
+
+
 def _cmd_install_mcp(args: argparse.Namespace) -> None:
     """Write .vscode/mcp.json (or print to stdout with --print)."""
     import json
-    import os
     from pathlib import Path
 
     read_only = [
@@ -388,16 +428,12 @@ def _cmd_install_mcp(args: argparse.Namespace) -> None:
     write_tools = ["enqueue_task", "complete_task", "fail_task"]
     approve_list = read_only + write_tools if args.full_approve else read_only
 
-    # Detect OS-appropriate python path hint
-    if os.name == "nt":
-        cmd = "${workspaceFolder}/.venv/Scripts/python"
-    else:
-        cmd = "${workspaceFolder}/.venv/bin/python"
+    cmd, cmd_args = _resolve_mcp_command(args)
 
     server: dict[str, Any] = {
         "type": "stdio",
         "command": cmd,
-        "args": ["-m", "djobs.mcp_server"],
+        "args": cmd_args,
         "autoApprove": approve_list,
     }
 
@@ -434,6 +470,151 @@ def _cmd_install_mcp(args: argparse.Namespace) -> None:
 
     if getattr(args, "write_instructions", True):
         _write_instructions_block()
+
+
+# ---------------------------------------------------------------------------
+# doctor command
+# ---------------------------------------------------------------------------
+
+
+def _probe_command(cmd: str) -> tuple[bool, str]:
+    """Check whether an mcp.json launch command can actually be resolved."""
+    import shutil
+    from pathlib import Path
+
+    if not cmd:
+        return False, "empty command"
+    if "${workspaceFolder}" in cmd:
+        return True, "relocatable ${workspaceFolder} hint (resolved by VS Code at launch)"
+    path = Path(cmd)
+    if path.is_absolute():
+        if path.exists():
+            return True, "found"
+        return False, "MISSING — interpreter/script not found"
+    found = shutil.which(cmd)
+    return (found is not None, found or "not found on PATH")
+
+
+def _probe_db_writable(db_path: os.PathLike[str] | str) -> tuple[bool, str]:
+    """Check whether the queue database can be opened/created without writing it."""
+    import os as _os
+    import sqlite3
+    from pathlib import Path
+
+    p = Path(db_path)
+    try:
+        if p.exists():
+            con = sqlite3.connect(str(p))
+            con.execute("PRAGMA user_version")
+            con.close()
+            return True, "exists, writable"
+        parent = p.parent
+        parent.mkdir(parents=True, exist_ok=True)
+        if _os.access(parent, _os.W_OK):
+            return True, "will be created on first use (parent writable)"
+        return False, "parent directory not writable"
+    except Exception as exc:
+        return False, f"NOT usable: {exc}"
+
+
+def _cmd_doctor(args: argparse.Namespace) -> None:
+    """Diagnose the djobs setup and print a pass/fail checklist.
+
+    Human mode exits non-zero when a critical check fails (useful in scripts);
+    ``--json`` always exits 0 so callers can inspect the per-check flags.
+    """
+    import json
+    import shutil
+    from pathlib import Path
+
+    checks: list[tuple[str, bool, str]] = []
+    pkg_version: str | None = None
+
+    # 1. djobs package importable
+    try:
+        import djobs as _djobs
+
+        ver = getattr(_djobs, "__version__", "?")
+        pkg_version = ver if ver != "?" else None
+        file_attr = _djobs.__file__
+        loc = Path(file_attr).resolve().parent if file_attr else "?"
+        pkg_ok = True
+        checks.append(("djobs package", True, f"v{ver} at {loc}"))
+    except Exception as exc:
+        pkg_ok = False
+        checks.append(("djobs package", False, f"import failed: {exc}"))
+
+    # 2. djobs-mcp console script on PATH (the global-tool wiring target)
+    mcp_script = shutil.which("djobs-mcp")
+    checks.append(
+        (
+            "djobs-mcp on PATH",
+            mcp_script is not None,
+            mcp_script or "not found — wiring falls back to the current interpreter (still works)",
+        )
+    )
+
+    # 3. current interpreter (always informational)
+    checks.append(("python interpreter", True, sys.executable))
+
+    # 4. queue database location + writability
+    env_db = os.environ.get("DJOBS_DB")
+    db_path = Path(env_db).expanduser() if env_db else Path.home() / ".djobs" / "global.db"
+    db_ok, db_detail = _probe_db_writable(db_path)
+    db_label = f"queue db ({'DJOBS_DB' if env_db else 'global default'})"
+    checks.append((db_label, db_ok, f"{db_path} — {db_detail}"))
+
+    # 5. .vscode/mcp.json wiring in the current workspace
+    mcp_json = Path(".vscode/mcp.json")
+    if mcp_json.exists():
+        try:
+            data = json.loads(mcp_json.read_text(encoding="utf-8"))
+            server = data.get("servers", {}).get("djobs", {})
+            cmd = server.get("command", "")
+            cmd_ok, cmd_detail = _probe_command(cmd)
+            checks.append(("mcp.json wiring", cmd_ok, f"command={cmd!r} — {cmd_detail}"))
+        except Exception as exc:
+            checks.append(("mcp.json wiring", False, f"parse error: {exc}"))
+    else:
+        checks.append(
+            ("mcp.json wiring", False, f"{mcp_json} not found — run 'djobs install-mcp'")
+        )
+
+    # 6. agent guidance block
+    instr = Path(".github/copilot-instructions.md")
+    has_block = False
+    if instr.exists():
+        has_block = _DJOBS_INSTRUCTIONS_START in instr.read_text(encoding="utf-8")
+    checks.append(
+        (
+            "agent guidance block",
+            has_block,
+            "present" if has_block else "missing — agent may not use djobs proactively",
+        )
+    )
+
+    if getattr(args, "as_json", False):
+        print(
+            json.dumps(
+                {
+                    "version": pkg_version,
+                    "checks": [{"name": n, "ok": o, "detail": d} for n, o, d in checks],
+                },
+                indent=2,
+            )
+        )
+        return
+
+    print("djobs doctor — setup diagnostics\n")
+    for name, ok, detail in checks:
+        mark = "OK  " if ok else "FAIL"
+        print(f"  [{mark}] {name}: {detail}")
+    print()
+
+    # Critical = djobs importable AND the queue db is usable.
+    if not (pkg_ok and db_ok):
+        print("One or more critical checks failed. See the FAIL lines above.")
+        sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
@@ -707,6 +888,32 @@ def main(argv: list[str] | None = None) -> None:
         help="Output path (default: .vscode/mcp.json)",
     )
     mcp_parser.add_argument(
+        "--python",
+        default=None,
+        help=(
+            "Python interpreter the MCP server runs under "
+            "(launches '<python> -m djobs.mcp_server'). Default: the 'djobs-mcp' "
+            "console script if on PATH, otherwise the current interpreter."
+        ),
+    )
+    mcp_parser.add_argument(
+        "--command",
+        default=None,
+        help=(
+            "Exact launch command for the MCP server (e.g. 'djobs-mcp'). "
+            "Overrides --python and --portable."
+        ),
+    )
+    mcp_parser.add_argument(
+        "--portable",
+        action="store_true",
+        help=(
+            "Emit a relocatable '${workspaceFolder}/.venv' interpreter hint "
+            "instead of an absolute path. Use when committing mcp.json to a repo "
+            "whose collaborators each keep djobs in a project-local venv."
+        ),
+    )
+    mcp_parser.add_argument(
         "--db",
         default=None,
         help=(
@@ -730,6 +937,19 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     mcp_parser.set_defaults(func=_cmd_install_mcp, write_instructions=True)
+
+    # --- doctor ---
+    doctor_parser = subparsers.add_parser(
+        "doctor",
+        help="Diagnose djobs setup (interpreter, wiring, db) and print a checklist",
+    )
+    doctor_parser.add_argument(
+        "--json",
+        dest="as_json",
+        action="store_true",
+        help="Machine-readable JSON output (always exits 0; inspect per-check 'ok' flags)",
+    )
+    doctor_parser.set_defaults(func=_cmd_doctor)
 
     # --- audit ---
     audit_parser = subparsers.add_parser(

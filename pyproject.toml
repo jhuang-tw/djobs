@@ -48,6 +48,7 @@ pg = [
 
 [project.scripts]
 djobs = "djobs.cli:main"
+djobs-mcp = "djobs.mcp_server:main"
 
 [tool.hatch.version]
 path = "src/djobs/__init__.py"

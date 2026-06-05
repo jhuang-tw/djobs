@@ -19,6 +19,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   statusBarItem.tooltip = 'Open djobs sidebar';
   context.subscriptions.push(statusBarItem);
 
+  const doctorChannel = vscode.window.createOutputChannel('djobs');
+  context.subscriptions.push(doctorChannel);
+
   function updateStatusBar(): void {
     const count = provider.getIncompleteCount();
     if (count > 0) {
@@ -173,14 +176,47 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         wireUp,
       );
       if (selected === wireUp) {
-        const terminal = vscode.window.createTerminal('djobs');
-        terminal.show();
-        terminal.sendText('python -m djobs.cli install-mcp --global --force');
+        try {
+          await client.wireGlobalMcp();
+          vscode.window.showInformationMessage(
+            'djobs agent wired to the global queue. Reload the window if the MCP server was already running.',
+          );
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          vscode.window.showErrorMessage(
+            `djobs: could not wire the global queue. ${detail} Try "djobs: Diagnose Setup".`,
+          );
+        }
       }
     } else {
       vscode.window.showInformationMessage('djobs now uses the per-workspace queue (djobs_mcp.db).');
     }
     await provider.refresh();
+  });
+
+  const diagnose = vscode.commands.registerCommand('djobs.diagnose', async () => {
+    doctorChannel.clear();
+    doctorChannel.show(true);
+    doctorChannel.appendLine('Running djobs setup diagnostics…\n');
+    try {
+      const report = await client.doctor();
+      let allOk = true;
+      for (const check of report.checks) {
+        if (!check.ok) {
+          allOk = false;
+        }
+        doctorChannel.appendLine(`  [${check.ok ? 'OK  ' : 'FAIL'}] ${check.name}: ${check.detail}`);
+      }
+      doctorChannel.appendLine('');
+      doctorChannel.appendLine(
+        allOk ? 'All checks passed.' : 'Some checks failed — see the FAIL lines above.',
+      );
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      doctorChannel.appendLine(`Could not run diagnostics: ${detail}`);
+      doctorChannel.appendLine('');
+      doctorChannel.appendLine('djobs may not be installed. Install it with:  pipx install djobs');
+    }
   });
 
   const configWatcher = vscode.workspace.onDidChangeConfiguration(async (event) => {
@@ -208,103 +244,148 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     resumeWorkflow,
     toggleScope,
     toggleQueueLocation,
+    diagnose,
     configWatcher,
     { dispose: () => clearInterval(timer) },
   );
 
   await provider.refresh();
-  await maybeOfferPackageInstall(context, client, provider);
-  await maybeOfferGlobalWiring(context, client, provider);
+  await maybeOfferSetup(context, client, provider);
+  await maybeOfferReWire(context, client, provider);
+  await maybeOfferUpdate(context, client);
 }
 
 export function deactivate(): void {}
 
 /**
- * When the djobs Python package is missing from the detected interpreter,
- * offer a one-click `pip install djobs` so the sidebar and agent can work.
+ * On activation, if djobs isn't usable yet (tool missing, or the shared global
+ * queue isn't wired for this project), offer a single one-click setup: install
+ * djobs (isolated, via pipx when available) and wire the agent's write side.
  * Skips silently once the user opts out per workspace.
  */
-async function maybeOfferPackageInstall(
+async function maybeOfferSetup(
   context: vscode.ExtensionContext,
   client: DjobsClient,
   provider: DjobsTasksProvider,
 ): Promise<void> {
-  if (await client.isPackageInstalled()) {
+  const installed = await client.isPackageInstalled();
+  const needsWiring = client.isGlobalQueue() && !client.isGlobalMcpWired();
+  if (installed && !needsWiring) {
     return;
   }
-  const dismissKey = 'djobs.packageInstall.dismissed';
+
+  const dismissKey = 'djobs.setup.dismissed';
   if (context.workspaceState.get<boolean>(dismissKey)) {
     return;
   }
 
-  const install = 'Install (pip)';
+  const setUp = 'Set up djobs';
   const dontAsk = "Don't ask again";
-  const selected = await vscode.window.showInformationMessage(
-    'The djobs Python package is not installed for this project\'s interpreter. '
-      + 'Install it so the sidebar and agent can run?',
-    install,
-    dontAsk,
-  );
+  const message = !installed
+    ? 'djobs isn\'t installed yet. Set it up (isolated global install) so the '
+      + 'sidebar and your AI agent get crash-proof task memory?'
+    : 'djobs uses a shared global queue. Wire this project\'s agent to it so '
+      + 'tasks it creates show up everywhere?';
+  const selected = await vscode.window.showInformationMessage(message, setUp, dontAsk);
 
-  if (selected === install) {
-    try {
-      await vscode.window.withProgress(
-        { location: vscode.ProgressLocation.Notification, title: 'Installing djobs…' },
-        () => client.installPackage(),
-      );
-      vscode.window.showInformationMessage('djobs installed.');
-      await provider.refresh();
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      vscode.window.showErrorMessage(
-        `djobs: pip install failed. Install it manually with "pip install djobs". ${detail}`,
-      );
-    }
-  } else if (selected === dontAsk) {
+  if (selected === dontAsk) {
     await context.workspaceState.update(dismissKey, true);
+    return;
+  }
+  if (selected !== setUp) {
+    return;
+  }
+
+  try {
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: 'Setting up djobs…' },
+      async (progress) => {
+        if (!installed) {
+          progress.report({ message: 'Installing djobs…' });
+          await client.installPackage();
+        }
+        if (client.isGlobalQueue() && !client.isGlobalMcpWired()) {
+          progress.report({ message: 'Wiring the agent…' });
+          await client.wireGlobalMcp();
+        }
+      },
+    );
+    vscode.window.showInformationMessage(
+      'djobs is set up. Reload the window if the MCP server was already running.',
+    );
+    await provider.refresh();
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    const diagnose = 'Diagnose Setup';
+    const choice = await vscode.window.showErrorMessage(
+      `djobs setup failed: ${detail}. If pipx is missing, install it first (pip install pipx).`,
+      diagnose,
+    );
+    if (choice === diagnose) {
+      await vscode.commands.executeCommand('djobs.diagnose');
+    }
   }
 }
 
 /**
- * When the shared global queue is active but this workspace's agent (MCP
- * server) is not yet wired to it, offer a one-click setup so reads and writes
- * share the same queue. Skips silently once the user opts out per workspace.
+ * When .vscode/mcp.json points the djobs agent at an interpreter that no longer
+ * exists (e.g. a project `.venv` was deleted, or djobs is now only installed
+ * globally), offer to re-wire it to the working runtime so the agent's tools
+ * keep functioning. Skips silently once the user opts out per workspace.
  */
-async function maybeOfferGlobalWiring(
+async function maybeOfferReWire(
   context: vscode.ExtensionContext,
   client: DjobsClient,
   provider: DjobsTasksProvider,
 ): Promise<void> {
-  if (!client.isGlobalQueue() || client.isGlobalMcpWired()) {
+  const deadCommand = client.detectDeadMcpInterpreter();
+  if (!deadCommand) {
     return;
   }
-  const dismissKey = 'djobs.globalWiring.dismissed';
+  // Only re-wire when djobs is actually usable now; otherwise the setup flow
+  // (which installs it) is the right prompt, not this one.
+  if (!(await client.isPackageInstalled())) {
+    return;
+  }
+
+  const dismissKey = 'djobs.rewire.dismissed';
   if (context.workspaceState.get<boolean>(dismissKey)) {
     return;
   }
 
-  const wireUp = 'Set up now';
+  const reWire = 'Re-wire';
   const dontAsk = "Don't ask again";
-  const selected = await vscode.window.showInformationMessage(
-    'djobs uses a shared global queue. Wire this project\'s agent to it so '
-      + 'tasks it creates show up everywhere?',
-    wireUp,
+  const selected = await vscode.window.showWarningMessage(
+    `djobs' agent is wired to a missing interpreter (${deadCommand}). `
+      + 'Re-wire it to the working djobs install?',
+    reWire,
     dontAsk,
   );
 
-  if (selected === wireUp) {
-    try {
-      await client.wireGlobalMcp();
-      vscode.window.showInformationMessage(
-        'djobs agent wired to the global queue. Reload the window if the MCP server was already running.',
-      );
-      await provider.refresh();
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      vscode.window.showErrorMessage(`djobs: could not wire the global queue. ${detail}`);
-    }
-  } else if (selected === dontAsk) {
+  if (selected === dontAsk) {
     await context.workspaceState.update(dismissKey, true);
+    return;
+  }
+  if (selected !== reWire) {
+    return;
+  }
+
+  try {
+    await client.reWireMcp();
+    vscode.window.showInformationMessage(
+      'djobs agent re-wired. Reload the window if the MCP server was already running.',
+    );
+    await provider.refresh();
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    const diagnose = 'Diagnose Setup';
+    const choice = await vscode.window.showErrorMessage(
+      `djobs: could not re-wire the agent. ${detail}`,
+      diagnose,
+    );
+    if (choice === diagnose) {
+      await vscode.commands.executeCommand('djobs.diagnose');
+    }
   }
 }
 
@@ -313,5 +394,89 @@ async function openChatWithPrompt(prompt: string): Promise<void> {
     await vscode.commands.executeCommand('workbench.action.chat.open', { query: prompt });
   } catch {
     await vscode.commands.executeCommand('workbench.action.chat.open');
+  }
+}
+
+/**
+ * Compare two dotted version strings. Returns true when `a` is strictly older
+ * than `b`. Non-numeric/suffix parts are ignored; missing parts count as 0.
+ */
+export function isOlderVersion(a: string, b: string): boolean {
+  const parse = (v: string): number[] =>
+    v.split('.').map((p) => parseInt(p, 10)).map((n) => (Number.isNaN(n) ? 0 : n));
+  const av = parse(a);
+  const bv = parse(b);
+  const len = Math.max(av.length, bv.length);
+  for (let i = 0; i < len; i++) {
+    const ai = av[i] ?? 0;
+    const bi = bv[i] ?? 0;
+    if (ai !== bi) {
+      return ai < bi;
+    }
+  }
+  return false;
+}
+
+/**
+ * The VS Code extension auto-updates via the Marketplace, but the djobs Python
+ * package (which provides the CLI/MCP server the extension drives) does not. If
+ * the installed package is older than this extension, offer a one-click upgrade
+ * so new commands the extension relies on actually exist. Opt-out is remembered
+ * per installed version so a new release can prompt again.
+ */
+async function maybeOfferUpdate(
+  context: vscode.ExtensionContext,
+  client: DjobsClient,
+): Promise<void> {
+  const extVersion = context.extension.packageJSON.version as string | undefined;
+  if (!extVersion) {
+    return;
+  }
+  const installed = await client.installedVersion();
+  if (!installed || !isOlderVersion(installed, extVersion)) {
+    return;
+  }
+
+  const dismissKey = `djobs.updateDismissed.${installed}`;
+  if (context.globalState.get<boolean>(dismissKey)) {
+    return;
+  }
+
+  const update = 'Update djobs';
+  const dontAsk = "Don't ask again";
+  const selected = await vscode.window.showInformationMessage(
+    `The djobs package (v${installed}) is older than the djobs extension `
+      + `(v${extVersion}). Update it so new features work?`,
+    update,
+    dontAsk,
+  );
+
+  if (selected === dontAsk) {
+    await context.globalState.update(dismissKey, true);
+    return;
+  }
+  if (selected !== update) {
+    return;
+  }
+
+  try {
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: 'Updating djobs…' },
+      () => client.updatePackage(),
+    );
+    const now = await client.installedVersion();
+    vscode.window.showInformationMessage(
+      now ? `djobs updated to v${now}.` : 'djobs updated.',
+    );
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    const diagnose = 'Diagnose Setup';
+    const choice = await vscode.window.showErrorMessage(
+      `djobs update failed: ${detail}. Update manually with "pipx upgrade djobs".`,
+      diagnose,
+    );
+    if (choice === diagnose) {
+      await vscode.commands.executeCommand('djobs.diagnose');
+    }
   }
 }

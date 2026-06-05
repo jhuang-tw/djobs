@@ -20,6 +20,44 @@ artifact.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-06-05
+
+### Added
+- `[core]` **`djobs-mcp` console entry point.** After a global install the MCP
+  server can be launched directly as `djobs-mcp`, with no per-project Python
+  environment required.
+- `[core]` **`djobs doctor` command.** Prints a pass/fail checklist of the setup
+  (djobs importable, `djobs-mcp` on PATH, queue DB writable, `.vscode/mcp.json`
+  wiring, agent guidance block). Use `--json` for machine-readable output.
+- `[core]` **`install-mcp` interpreter flags.** New `--python`, `--command`, and
+  `--portable` options control how the MCP server is launched in the generated
+  `mcp.json`.
+- `[ext]` **One-click "Set up djobs"** on activation now installs djobs in an
+  isolated way (pipx when available) and wires the agent in a single step, and a
+  new **"djobs: Diagnose Setup"** command runs `djobs doctor` in an output panel.
+- `[ext]` **Self-healing wiring.** When `.vscode/mcp.json` points the agent at an
+  interpreter that no longer exists (e.g. a deleted `.venv`), the extension
+  offers to re-wire it to the working djobs install.
+- `[ext]` **Update reminder.** The extension auto-updates from the Marketplace,
+  but the djobs Python package does not — so when the installed package is older
+  than the extension, it now offers a one-click upgrade (`pipx upgrade djobs`).
+  `djobs doctor --json` gained a top-level `version` field to support this.
+
+### Changed
+- `[core]` **`install-mcp` works in any project — even without a `.venv`.** It
+  now wires the agent to the `djobs-mcp` console script when it is on PATH,
+  otherwise to the absolute path of the current interpreter (which is guaranteed
+  to have djobs), instead of always emitting a relative `${workspaceFolder}/.venv`
+  path that breaks in projects with no local virtual environment. Use
+  `install-mcp --portable` for the previous relocatable behaviour.
+- `[ext]` **The sidebar finds a global djobs install.** Command resolution now
+  prefers an explicit interpreter, then a project `.venv`, then the `djobs`
+  console script on PATH, so the extension keeps working across projects with no
+  Python environment.
+- `[core]` **`install.bat user`** installs djobs as a global tool (pipx, or
+  `pip --user` fallback) for people who just want to use it; the default
+  (no argument) still sets up the full contributor environment.
+
 ## [0.6.5] - 2026-05-31
 
 ### Fixed

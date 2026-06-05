@@ -3,26 +3,20 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { DjobsCommandOptions, DjobsScope, DjobsStatus, DjobsTask } from './types';
+import { DjobsCommandOptions, DjobsDoctorReport, DjobsScope, DjobsStatus, DjobsTask } from './types';
 
 export class DjobsClient {
   constructor(private readonly workspaceRoot: string) {}
 
   async status(): Promise<DjobsStatus> {
     const options = this.getOptions();
-    const args = [
-      '-m',
-      'djobs.cli',
-      'status',
-      '--db',
-      options.dbPath,
-    ];
+    const args = ['status', '--db', options.dbPath];
 
     if (options.scope === 'currentWorkspace') {
-      args.push('--correlation-id', options.workspaceRoot);
+      args.push('--correlation-id', this.workspaceRoot);
     }
 
-    const output = await this.execPython(options.pythonPath, args, options.workspaceRoot);
+    const output = await this.run(args);
     return JSON.parse(output) as DjobsStatus;
   }
 
@@ -78,20 +72,20 @@ export class DjobsClient {
 
   async skipTask(task: DjobsTask, evidence?: string): Promise<void> {
     const options = this.getOptions();
-    const args = ['-m', 'djobs.cli', 'skip', task.id, '--db', options.dbPath];
+    const args = ['skip', task.id, '--db', options.dbPath];
     if (evidence?.trim()) {
       args.push('--evidence', evidence.trim());
     }
-    await this.execPython(options.pythonPath, args, options.workspaceRoot);
+    await this.run(args);
   }
 
   async acceptBefore(task: DjobsTask, evidence?: string): Promise<number> {
     const options = this.getOptions();
-    const args = ['-m', 'djobs.cli', 'accept-before', task.id, '--db', options.dbPath];
+    const args = ['accept-before', task.id, '--db', options.dbPath];
     if (evidence?.trim()) {
       args.push('--evidence', evidence.trim());
     }
-    const output = await this.execPython(options.pythonPath, args, options.workspaceRoot);
+    const output = await this.run(args);
     const result = JSON.parse(output) as { count?: number };
     return result.count ?? 0;
   }
@@ -103,13 +97,13 @@ export class DjobsClient {
   async archiveByCorrelation(correlationId: string, reason?: string): Promise<number> {
     const options = this.getOptions();
     const args = [
-      '-m', 'djobs.cli', 'archive-workflow', '--db', options.dbPath,
+      'archive-workflow', '--db', options.dbPath,
       '--correlation-id', correlationId,
     ];
     if (reason?.trim()) {
       args.push('--reason', reason.trim());
     }
-    const output = await this.execPython(options.pythonPath, args, options.workspaceRoot);
+    const output = await this.run(args);
     const result = JSON.parse(output) as { count?: number };
     return result.count ?? 0;
   }
@@ -141,36 +135,135 @@ export class DjobsClient {
 
   /** Wire the agent's write side to the shared global queue via the CLI. */
   async wireGlobalMcp(): Promise<void> {
-    const options = this.getOptions();
-    const args = ['-m', 'djobs.cli', 'install-mcp', '--global', '--force'];
-    await this.execPython(options.pythonPath, args, options.workspaceRoot);
+    await this.run(['install-mcp', '--global', '--force']);
   }
 
-  /** True when the djobs Python package can be imported by the detected interpreter. */
-  async isPackageInstalled(): Promise<boolean> {
-    const options = this.getOptions();
+  /**
+   * Re-generate .vscode/mcp.json so the agent launches via the currently
+   * working djobs runtime. Respects the configured queue location so a
+   * workspace-queue user is not silently switched to the global queue.
+   */
+  async reWireMcp(): Promise<void> {
+    const args = ['install-mcp', '--force'];
+    if (this.isGlobalQueue()) {
+      args.push('--global');
+    }
+    await this.run(args);
+  }
+
+  /**
+   * Inspect this workspace's .vscode/mcp.json and report the djobs MCP server's
+   * launch command when it can no longer be resolved (e.g. it points at a
+   * project `.venv` that was deleted, or a console script no longer on PATH).
+   * Returns the broken command string, or undefined when wiring is healthy or
+   * absent.
+   */
+  detectDeadMcpInterpreter(): string | undefined {
     try {
-      await this.execPython(options.pythonPath, ['-c', 'import djobs'], options.workspaceRoot);
+      const mcpPath = path.join(this.workspaceRoot, '.vscode', 'mcp.json');
+      if (!fs.existsSync(mcpPath)) {
+        return undefined;
+      }
+      const parsed = JSON.parse(fs.readFileSync(mcpPath, 'utf8')) as {
+        servers?: Record<string, { command?: string }>;
+      };
+      const command = parsed.servers?.djobs?.command;
+      if (!command) {
+        return undefined;
+      }
+      const resolved = command.replace('${workspaceFolder}', this.workspaceRoot);
+      // An absolute interpreter/script path must exist on disk.
+      if (path.isAbsolute(resolved)) {
+        return fs.existsSync(resolved) ? undefined : command;
+      }
+      // Otherwise it is a bare command name resolved via PATH.
+      return this.which(resolved) ? undefined : command;
+    } catch {
+      // A parse/read error is not a "dead interpreter"; leave it to other flows.
+      return undefined;
+    }
+  }
+
+  /** True when the djobs CLI can be launched (package importable or on PATH). */
+  async isPackageInstalled(): Promise<boolean> {
+    try {
+      await this.run(['--help']);
       return true;
     } catch {
       return false;
     }
   }
 
-  /** Install the djobs package into the detected interpreter via pip. */
+  /**
+   * Install djobs as a standalone tool. Prefers pipx for an isolated global
+   * install that works across every project; falls back to `pip install` into
+   * the project venv or a Python on PATH when pipx is unavailable.
+   */
   async installPackage(): Promise<void> {
-    const options = this.getOptions();
-    await this.execPython(
-      options.pythonPath,
+    const pipx = this.which('pipx');
+    if (pipx) {
+      await this.execFile(pipx, ['install', 'djobs'], this.workspaceRoot, 180000);
+      this.resetLauncher();
+      return;
+    }
+    const venvPython = process.platform === 'win32'
+      ? path.join(this.workspaceRoot, '.venv', 'Scripts', 'python.exe')
+      : path.join(this.workspaceRoot, '.venv', 'bin', 'python');
+    const fallback = process.platform === 'win32' ? 'python' : 'python3';
+    const exe = fs.existsSync(venvPython) ? venvPython : fallback;
+    await this.execFile(
+      exe,
       ['-m', 'pip', 'install', '--upgrade', 'djobs'],
-      options.workspaceRoot,
-      120000,
+      this.workspaceRoot,
+      180000,
     );
+    this.resetLauncher();
+  }
+
+  /** Run `djobs doctor --json` and return the parsed setup report. */
+  async doctor(): Promise<DjobsDoctorReport> {
+    const output = await this.run(['doctor', '--json']);
+    return JSON.parse(output) as DjobsDoctorReport;
+  }
+
+  /** The installed djobs Python package version, or undefined when unavailable. */
+  async installedVersion(): Promise<string | undefined> {
+    try {
+      const report = await this.doctor();
+      return report.version ?? undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Upgrade the djobs package to the latest release. Mirrors installPackage:
+   * prefers pipx, otherwise pip --upgrade into the project venv or a Python on
+   * PATH.
+   */
+  async updatePackage(): Promise<void> {
+    const pipx = this.which('pipx');
+    if (pipx) {
+      await this.execFile(pipx, ['upgrade', 'djobs'], this.workspaceRoot, 180000);
+      this.resetLauncher();
+      return;
+    }
+    const venvPython = process.platform === 'win32'
+      ? path.join(this.workspaceRoot, '.venv', 'Scripts', 'python.exe')
+      : path.join(this.workspaceRoot, '.venv', 'bin', 'python');
+    const fallback = process.platform === 'win32' ? 'python' : 'python3';
+    const exe = fs.existsSync(venvPython) ? venvPython : fallback;
+    await this.execFile(
+      exe,
+      ['-m', 'pip', 'install', '--upgrade', 'djobs'],
+      this.workspaceRoot,
+      180000,
+    );
+    this.resetLauncher();
   }
 
   private getOptions(): DjobsCommandOptions {
     const config = vscode.workspace.getConfiguration('djobs');
-    const configuredPython = config.get<string>('pythonPath')?.trim();
     const configuredDb = config.get<string>('dbPath')?.trim() || 'djobs_mcp.db';
     const configuredScope = config.get<DjobsScope>('scope') ?? 'allWorkspaces';
     const showCompleted = config.get<boolean>('showCompleted') ?? false;
@@ -178,7 +271,6 @@ export class DjobsClient {
 
     return {
       workspaceRoot: this.workspaceRoot,
-      pythonPath: configuredPython || this.detectPython(),
       dbPath: this.resolveDbPath(queueLocation, configuredDb, config),
       scope: configuredScope,
       showCompleted,
@@ -201,33 +293,89 @@ export class DjobsClient {
       : path.join(this.workspaceRoot, configuredDb);
   }
 
-  private detectPython(): string {
-    const candidates = process.platform === 'win32'
-      ? [
-        path.join(this.workspaceRoot, '.venv', 'Scripts', 'python.exe'),
-        'python',
-        'py',
-      ]
-      : [
-        path.join(this.workspaceRoot, '.venv', 'bin', 'python'),
-        'python3',
-        'python',
-      ];
+  private launcher?: { exe: string; prefix: string[] };
 
-    return candidates.find((candidate) => path.isAbsolute(candidate) && fs.existsSync(candidate))
-      ?? candidates[candidates.length - 1];
+  /**
+   * Resolve how to launch the djobs CLI. djobs is a standalone tool, so it may
+   * live in (in priority order): an explicit interpreter (djobs.pythonPath), a
+   * project-local .venv, or — most commonly for cross-project use — a global
+   * install whose `djobs` console script is on PATH (pipx / pip --user). The
+   * result is cached so we do not rescan PATH on every sidebar refresh.
+   */
+  private resolveLauncher(): { exe: string; prefix: string[] } {
+    if (this.launcher) {
+      return this.launcher;
+    }
+    const configured = vscode.workspace.getConfiguration('djobs').get<string>('pythonPath')?.trim();
+    if (configured) {
+      this.launcher = { exe: configured, prefix: ['-m', 'djobs.cli'] };
+      return this.launcher;
+    }
+    const venvPython = process.platform === 'win32'
+      ? path.join(this.workspaceRoot, '.venv', 'Scripts', 'python.exe')
+      : path.join(this.workspaceRoot, '.venv', 'bin', 'python');
+    if (fs.existsSync(venvPython)) {
+      this.launcher = { exe: venvPython, prefix: ['-m', 'djobs.cli'] };
+      return this.launcher;
+    }
+    const consoleScript = this.which('djobs');
+    if (consoleScript) {
+      this.launcher = { exe: consoleScript, prefix: [] };
+      return this.launcher;
+    }
+    const fallback = process.platform === 'win32' ? 'python' : 'python3';
+    this.launcher = { exe: fallback, prefix: ['-m', 'djobs.cli'] };
+    return this.launcher;
   }
 
-  private execPython(pythonPath: string, args: string[], cwd: string, timeout = 15000): Promise<string> {
+  /** Forget the cached launcher so the next call re-detects (e.g. after install). */
+  resetLauncher(): void {
+    this.launcher = undefined;
+  }
+
+  /** Minimal cross-platform `which`, scanning PATH (+ PATHEXT on Windows). */
+  private which(command: string): string | undefined {
+    const envPath = process.env.PATH ?? '';
+    const dirs = envPath.split(path.delimiter).filter(Boolean);
+    const exts = process.platform === 'win32'
+      ? (process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)
+      : [''];
+    for (const dir of dirs) {
+      for (const ext of exts) {
+        const full = path.join(dir, command + ext);
+        try {
+          if (fs.statSync(full).isFile()) {
+            return full;
+          }
+        } catch {
+          // not here; keep scanning
+        }
+      }
+    }
+    return undefined;
+  }
+
+  /** Run a djobs subcommand via the resolved launcher and return stdout. */
+  private run(subArgs: string[], timeout = 30000): Promise<string> {
+    const launcher = this.resolveLauncher();
+    return this.execFile(
+      launcher.exe,
+      [...launcher.prefix, ...subArgs],
+      this.workspaceRoot,
+      timeout,
+    );
+  }
+
+  private execFile(exe: string, args: string[], cwd: string, timeout = 30000): Promise<string> {
     return new Promise((resolve, reject) => {
       childProcess.execFile(
-        pythonPath,
+        exe,
         args,
         { cwd, timeout, windowsHide: true },
         (error, stdout, stderr) => {
           if (error) {
             const detail = stderr.trim() || stdout.trim() || error.message;
-            reject(new Error(`djobs command failed: ${detail}`));
+            reject(new Error(detail));
             return;
           }
           resolve(stdout);

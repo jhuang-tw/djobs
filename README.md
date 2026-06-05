@@ -63,18 +63,35 @@ Everything is stored in a local SQLite file. No Redis, no Docker, no cloud servi
 
 ## Quick Start
 
+> **djobs is a tool, not a project dependency.** Install it **once**, globally —
+> like `git` or `ripgrep` — and it works in every project, with or without a
+> virtual environment. You do **not** add it to each project's `requirements.txt`
+> or create a `.venv` for it.
+
 ```bash
-pip install djobs
-djobs install-mcp
+pipx install djobs   # isolated global install (recommended)
+djobs install-mcp    # wire it into the current project's VS Code agent
 ```
 
-Two commands. Your AI agent now has crash-proof task memory.
+No `pipx`? `pip install djobs` works too (`python -m pip install --user djobs`
+for a user-level install). `install-mcp` auto-detects the right interpreter, so
+the wiring keeps working even in a JavaScript, Go, or Rust repo with no Python
+environment.
 
-Verify it works:
+That's it — your AI agent now has crash-proof task memory.
+
+**Prefer the VS Code UI?** Install the
+[djobs extension](https://marketplace.visualstudio.com/items?itemName=jhuang-tw.djobs)
+and click **Set up djobs** when it offers — it runs the two steps above for you
+and adds a task sidebar.
+
+Verify the setup at any time:
 
 ```bash
-djobs health
-# {"pending": 0, "running": 0, "succeeded": 0, ...}
+djobs doctor
+# [OK  ] djobs package: v0.6.5 ...
+# [OK  ] queue db (global default): ~/.djobs/global.db — exists, writable
+# [OK  ] mcp.json wiring: command='djobs-mcp' — found
 ```
 
 <details>
@@ -88,9 +105,30 @@ djobs install-mcp
 djobs install-mcp --full-approve
 ```
 
-Or add to `.vscode/mcp.json` manually:
+Or add to `.vscode/mcp.json` manually. After a global install the `djobs-mcp`
+console script is on your PATH, so the wiring is identical on every OS:
 
-<!-- Windows (venv) -->
+```json
+{
+  "servers": {
+    "djobs": {
+      "type": "stdio",
+      "command": "djobs-mcp",
+      "autoApprove": [
+        "health", "resume_session", "check_task", "list_tasks", "audit_log"
+      ]
+    }
+  }
+}
+```
+
+<details>
+<summary>Per-project venv (portable, for repos that commit mcp.json)</summary>
+
+If you'd rather keep djobs inside each project's virtual environment — e.g. so a
+checked-in `mcp.json` resolves to whatever `.venv` each collaborator has — run
+`djobs install-mcp --portable` to emit a relocatable interpreter hint:
+
 ```json
 {
   "servers": {
@@ -106,42 +144,8 @@ Or add to `.vscode/mcp.json` manually:
 }
 ```
 
-<details>
-<summary>macOS / Linux (venv)</summary>
-
-```json
-{
-  "servers": {
-    "djobs": {
-      "type": "stdio",
-      "command": "${workspaceFolder}/.venv/bin/python",
-      "args": ["-m", "djobs.mcp_server"],
-      "autoApprove": [
-        "health", "resume_session", "check_task", "list_tasks", "audit_log"
-      ]
-    }
-  }
-}
-```
-</details>
-
-<details>
-<summary>System Python (any OS)</summary>
-
-```json
-{
-  "servers": {
-    "djobs": {
-      "type": "stdio",
-      "command": "python",
-      "args": ["-m", "djobs.mcp_server"],
-      "autoApprove": [
-        "health", "resume_session", "check_task", "list_tasks", "audit_log"
-      ]
-    }
-  }
-}
-```
+On macOS / Linux the path is `${workspaceFolder}/.venv/bin/python`. You can also
+pin any interpreter explicitly with `djobs install-mcp --python /path/to/python`.
 </details>
 
 > **Security note:** The default `autoApprove` list only includes **read-only** tools.
@@ -193,6 +197,7 @@ Beyond the three core tools, djobs also provides:
 - **`audit_log`** — "What did the AI do yesterday?" Full event history across sessions.
 - **`check_task` / `list_tasks`** — Inspect individual tasks or list by workspace.
 - **`health`** — Queue depth by status at a glance.
+- **`djobs doctor`** — One-shot setup check: confirms djobs is installed, the queue DB is writable, and `.vscode/mcp.json` is wired correctly. Run it (or "djobs: Diagnose Setup" in VS Code) whenever something feels off.
 - **Multi-agent coordination** — Several agents share one queue: `claim_task` (atomic, exclusive), `heartbeat_task`, `release_task`, task dependencies (`depends_on`), resource locks (`resource_key`), and an agent registry (`register_agent` / `agent_heartbeat` / `list_agents`).
 - **Web dashboard** — `djobs dashboard` serves a read-only, cross-agent view of queue health, every task, and the live agent fleet at `http://127.0.0.1:8787` (stdlib only, no extra deps). **Local-only by design:** no authentication, binds to `127.0.0.1`; for remote access use an SSH tunnel rather than exposing a public interface.
 - **Retry with backoff** — Failed tasks can retry automatically.

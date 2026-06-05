@@ -2,7 +2,7 @@
   "name": "djobs",
   "displayName": "djobs — Crash-Proof Task Memory",
   "description": "Sidebar view for djobs: see task status, one-click resume, audit trail.",
-  "version": "0.6.5",
+  "version": "0.7.0",
   "publisher": "jhuang-tw",
   "license": "MIT",
   "icon": "media/icon-128.png",
@@ -13,14 +13,24 @@
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Other"],
-  "keywords": ["djobs", "durable", "crash-recovery", "ai-agent", "mcp", "copilot"],
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "djobs",
+    "durable",
+    "crash-recovery",
+    "ai-agent",
+    "mcp",
+    "copilot"
+  ],
   "activationEvents": [
     "onView:djobsTasks",
     "onCommand:djobs.refresh",
     "onCommand:djobs.resumeAll",
     "onCommand:djobs.copyTaskId",
     "onCommand:djobs.inspectTask",
+    "onCommand:djobs.diagnose",
     "workspaceContains:**/djobs_mcp.db",
     "workspaceContains:.vscode/mcp.json"
   ],
@@ -101,6 +111,12 @@
         "title": "Resume this workflow",
         "icon": "$(play)",
         "category": "djobs"
+      },
+      {
+        "command": "djobs.diagnose",
+        "title": "Diagnose Setup",
+        "icon": "$(pulse)",
+        "category": "djobs"
       }
     ],
     "menus": {
@@ -124,6 +140,11 @@
           "command": "djobs.archiveWorkflow",
           "when": "view == djobsTasks",
           "group": "navigation"
+        },
+        {
+          "command": "djobs.diagnose",
+          "when": "view == djobsTasks",
+          "group": "9_diagnostics"
         }
       ],
       "view/item/context": [
@@ -177,7 +198,10 @@
         },
         "djobs.queueLocation": {
           "type": "string",
-          "enum": ["workspace", "global"],
+          "enum": [
+            "workspace",
+            "global"
+          ],
           "default": "global",
           "enumDescriptions": [
             "Each workspace uses its own djobs_mcp.db.",
@@ -192,7 +216,10 @@
         },
         "djobs.scope": {
           "type": "string",
-          "enum": ["allWorkspaces", "currentWorkspace"],
+          "enum": [
+            "allWorkspaces",
+            "currentWorkspace"
+          ],
           "default": "allWorkspaces",
           "description": "Task scope shown in the sidebar. Use currentWorkspace for only this workspace correlation_id, or allWorkspaces for every task in the configured database."
         },

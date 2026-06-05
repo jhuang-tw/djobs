@@ -39,8 +39,19 @@ export type DjobsScope = 'currentWorkspace' | 'allWorkspaces';
 
 export interface DjobsCommandOptions {
   workspaceRoot: string;
-  pythonPath: string;
   dbPath: string;
   scope: DjobsScope;
   showCompleted: boolean;
+}
+
+export interface DjobsDoctorCheck {
+  name: string;
+  ok: boolean;
+  detail: string;
+}
+
+export interface DjobsDoctorReport {
+  /** The installed djobs Python package version, or null when not importable. */
+  version?: string | null;
+  checks: DjobsDoctorCheck[];
 }

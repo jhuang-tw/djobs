@@ -427,11 +427,17 @@ async function maybeOfferUpdate(
   client: DjobsClient,
 ): Promise<boolean> {
   const extVersion = context.extension.packageJSON.version as string | undefined;
-  const installed = await client.installedVersion();
-  // Not installed yet — let the setup flow install it; nothing to gate here.
-  if (!installed) {
-    return true;
+  const installedVer = await client.installedVersion();
+  if (!installedVer) {
+    // Nothing installed at all — let the setup flow handle it.
+    if (!(await client.isPackageInstalled())) {
+      return true;
+    }
+    // Package IS installed but too old to expose __version__ (pre-0.6).
+    // Fall through treating it as "0.0.0" so the version comparison always
+    // triggers the upgrade prompt — preventing new CLI flags from failing.
   }
+  const installed = installedVer ?? '0.0.0';
   // Already current (or newer) — safe to run the wiring commands.
   if (!extVersion || !isOlderVersion(installed, extVersion)) {
     return true;
@@ -446,8 +452,9 @@ async function maybeOfferUpdate(
     return false;
   }
 
+  const versionLabel = installedVer ? `v${installedVer}` : 'unknown version (likely outdated)';
   const selected = await vscode.window.showWarningMessage(
-    `The djobs package (v${installed}) is older than the djobs extension `
+    `The djobs package (${versionLabel}) is older than the djobs extension `
       + `(v${extVersion}). Update it so the sidebar and agent work correctly?`,
     update,
     dontAsk,

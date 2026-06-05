@@ -20,6 +20,14 @@ artifact.
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-06-05
+
+### Fixed
+- `[ext]` **Pre-0.6 djobs no longer crashes setup with unrecognized flags.** When
+  the installed djobs is too old to expose `__version__`, the extension now
+  detects it is still present and forces an upgrade prompt before attempting any
+  wiring, preventing the `unrecognized arguments: --force --global` error.
+
 ## [0.7.2] - 2026-06-05
 
 ### Fixed

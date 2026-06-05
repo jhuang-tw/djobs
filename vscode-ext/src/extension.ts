@@ -215,8 +215,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const detail = error instanceof Error ? error.message : String(error);
       doctorChannel.appendLine(`Could not run diagnostics: ${detail}`);
       doctorChannel.appendLine('');
-      doctorChannel.appendLine('djobs may not be installed. Install it with:  pipx install djobs');
+      doctorChannel.appendLine('djobs may not be installed.');
+      const setUp = 'Set up djobs';
+      const choice = await vscode.window.showErrorMessage(
+        'djobs may not be installed. Set it up now?',
+        setUp,
+      );
+      if (choice === setUp) {
+        await vscode.commands.executeCommand('djobs.setup');
+      }
     }
+  });
+
+  const setup = vscode.commands.registerCommand('djobs.setup', async () => {
+    await runDjobsSetup(client, provider);
   });
 
   const configWatcher = vscode.workspace.onDidChangeConfiguration(async (event) => {
@@ -245,6 +257,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     toggleScope,
     toggleQueueLocation,
     diagnose,
+    setup,
     configWatcher,
     { dispose: () => clearInterval(timer) },
   );
@@ -256,17 +269,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const cliReady = await maybeOfferUpdate(context, client);
   if (cliReady) {
     await maybeOfferSetup(context, client, provider);
-    await maybeOfferReWire(context, client, provider);
   }
 }
 
 export function deactivate(): void {}
 
 /**
- * On activation, if djobs isn't usable yet (tool missing, or the shared global
- * queue isn't wired for this project), offer a single one-click setup: install
- * djobs (isolated, via pipx when available) and wire the agent's write side.
- * Skips silently once the user opts out per workspace.
+ * On activation, if djobs isn't usable yet, offer a single one-click setup. This
+ * covers three failure modes so the user never hits a dead end:
+ *   - djobs not installed at all,
+ *   - the shared global queue isn't wired for this project, or
+ *   - .vscode/mcp.json points the agent at an interpreter that no longer exists
+ *     (e.g. a project `.venv` was deleted) — the cause of VS Code's native
+ *     "command ... needed to run djobs was not found" error.
+ * Skips silently once the user opts out per workspace; the `djobs.setup` command
+ * remains available to repair things manually afterwards.
  */
 async function maybeOfferSetup(
   context: vscode.ExtensionContext,
@@ -275,7 +292,8 @@ async function maybeOfferSetup(
 ): Promise<void> {
   const installed = await client.isPackageInstalled();
   const needsWiring = client.isGlobalQueue() && !client.isGlobalMcpWired();
-  if (installed && !needsWiring) {
+  const deadCommand = client.detectDeadMcpInterpreter();
+  if (installed && !needsWiring && !deadCommand) {
     return;
   }
 
@@ -284,14 +302,31 @@ async function maybeOfferSetup(
     return;
   }
 
-  const setUp = 'Set up djobs';
+  const setUp = !installed ? 'Set up djobs' : 'Re-wire djobs';
   const dontAsk = "Don't ask again";
-  const message = !installed
-    ? 'djobs isn\'t installed yet. Set it up (isolated global install) so the '
-      + 'sidebar and your AI agent get crash-proof task memory?'
-    : 'djobs uses a shared global queue. Wire this project\'s agent to it so '
-      + 'tasks it creates show up everywhere?';
-  const selected = await vscode.window.showInformationMessage(message, setUp, dontAsk);
+  let selected: string | undefined;
+  if (!installed) {
+    selected = await vscode.window.showInformationMessage(
+      'djobs isn\'t installed yet. Set it up (isolated global install) so the '
+        + 'sidebar and your AI agent get crash-proof task memory?',
+      setUp,
+      dontAsk,
+    );
+  } else if (deadCommand) {
+    selected = await vscode.window.showWarningMessage(
+      `djobs' agent is wired to a missing interpreter (${deadCommand}). `
+        + 'Re-wire it to the working djobs install?',
+      setUp,
+      dontAsk,
+    );
+  } else {
+    selected = await vscode.window.showInformationMessage(
+      'djobs uses a shared global queue. Wire this project\'s agent to it so '
+        + 'tasks it creates show up everywhere?',
+      setUp,
+      dontAsk,
+    );
+  }
 
   if (selected === dontAsk) {
     await context.workspaceState.update(dismissKey, true);
@@ -301,7 +336,22 @@ async function maybeOfferSetup(
     return;
   }
 
+  await runDjobsSetup(client, provider);
+}
+
+/**
+ * Install djobs when missing and (re-)wire the agent's MCP launch command when
+ * it points at the shared global queue but isn't connected yet, or at an
+ * interpreter that no longer exists. Shared by the activation prompt and the
+ * manually invokable "Set up / Repair djobs" command so neither path dead-ends.
+ * On failure, offers the diagnostics output as a follow-up action.
+ */
+async function runDjobsSetup(
+  client: DjobsClient,
+  provider: DjobsTasksProvider,
+): Promise<void> {
   try {
+    const installed = await client.isPackageInstalled();
     await vscode.window.withProgress(
       { location: vscode.ProgressLocation.Notification, title: 'Setting up djobs…' },
       async (progress) => {
@@ -309,9 +359,14 @@ async function maybeOfferSetup(
           progress.report({ message: 'Installing djobs…' });
           await client.installPackage();
         }
+        // Re-evaluate after a possible install: prefer wiring the shared queue,
+        // otherwise repair a dead launch command so the MCP server can start.
         if (client.isGlobalQueue() && !client.isGlobalMcpWired()) {
           progress.report({ message: 'Wiring the agent…' });
           await client.wireGlobalMcp();
+        } else if (client.detectDeadMcpInterpreter()) {
+          progress.report({ message: 'Re-wiring the agent…' });
+          await client.reWireMcp();
         }
       },
     );
@@ -324,68 +379,6 @@ async function maybeOfferSetup(
     const diagnose = 'Diagnose Setup';
     const choice = await vscode.window.showErrorMessage(
       `djobs setup failed: ${detail}. If pipx is missing, install it first (pip install pipx).`,
-      diagnose,
-    );
-    if (choice === diagnose) {
-      await vscode.commands.executeCommand('djobs.diagnose');
-    }
-  }
-}
-
-/**
- * When .vscode/mcp.json points the djobs agent at an interpreter that no longer
- * exists (e.g. a project `.venv` was deleted, or djobs is now only installed
- * globally), offer to re-wire it to the working runtime so the agent's tools
- * keep functioning. Skips silently once the user opts out per workspace.
- */
-async function maybeOfferReWire(
-  context: vscode.ExtensionContext,
-  client: DjobsClient,
-  provider: DjobsTasksProvider,
-): Promise<void> {
-  const deadCommand = client.detectDeadMcpInterpreter();
-  if (!deadCommand) {
-    return;
-  }
-  // Only re-wire when djobs is actually usable now; otherwise the setup flow
-  // (which installs it) is the right prompt, not this one.
-  if (!(await client.isPackageInstalled())) {
-    return;
-  }
-
-  const dismissKey = 'djobs.rewire.dismissed';
-  if (context.workspaceState.get<boolean>(dismissKey)) {
-    return;
-  }
-
-  const reWire = 'Re-wire';
-  const dontAsk = "Don't ask again";
-  const selected = await vscode.window.showWarningMessage(
-    `djobs' agent is wired to a missing interpreter (${deadCommand}). `
-      + 'Re-wire it to the working djobs install?',
-    reWire,
-    dontAsk,
-  );
-
-  if (selected === dontAsk) {
-    await context.workspaceState.update(dismissKey, true);
-    return;
-  }
-  if (selected !== reWire) {
-    return;
-  }
-
-  try {
-    await client.reWireMcp();
-    vscode.window.showInformationMessage(
-      'djobs agent re-wired. Reload the window if the MCP server was already running.',
-    );
-    await provider.refresh();
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    const diagnose = 'Diagnose Setup';
-    const choice = await vscode.window.showErrorMessage(
-      `djobs: could not re-wire the agent. ${detail}`,
       diagnose,
     );
     if (choice === diagnose) {

@@ -20,6 +20,19 @@ artifact.
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-06-05
+
+### Fixed
+- `[ext]` **No more dead ends when the MCP launch command is missing.** When
+  `.vscode/mcp.json` points the agent at an interpreter that no longer exists
+  (e.g. a deleted project `.venv` — the cause of VS Code's *"command … needed to
+  run djobs was not found"* error), the setup prompt now installs djobs (if
+  missing) **and** re-wires the launch command in one step, instead of leaving
+  the broken command in place. A new **"djobs: Set up / Repair djobs"** command
+  (Command Palette and sidebar) lets you trigger this manually even after
+  dismissing the prompt, and **"Diagnose Setup"** now offers a one-click *Set up
+  djobs* button instead of only printing install instructions.
+
 ## [0.7.1] - 2026-06-05
 
 ### Fixed

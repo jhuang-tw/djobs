@@ -1,0 +1,37 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+  "name": "io.github.jhuang-tw/djobs",
+  "title": "djobs",
+  "description": "Crash-proof task memory for Claude Code, Cursor, Cline, Copilot agents via MCP.",
+  "version": "0.8.0",
+  "repository": {
+    "url": "https://github.com/jhuang-tw/djobs",
+    "source": "github"
+  },
+  "websiteUrl": "https://jhuang-tw.github.io/djobs/",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "djobs",
+      "version": "0.8.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "DJOBS_DB",
+          "description": "Absolute path to the SQLite queue database. Defaults to djobs_mcp.db in the working directory when unset. Point multiple clients at one path to share a queue.",
+          "isRequired": false
+        }
+      ]
+    }
+  ]
+}

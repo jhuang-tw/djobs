@@ -2,7 +2,7 @@
   "name": "djobs",
   "displayName": "djobs — Crash-Proof Task Memory",
   "description": "Sidebar view for djobs: see task status, one-click resume, audit trail.",
-  "version": "0.7.3",
+  "version": "0.8.0",
   "publisher": "jhuang-tw",
   "license": "MIT",
   "icon": "media/icon-128.png",
@@ -11,7 +11,7 @@
     "url": "https://github.com/jhuang-tw/djobs"
   },
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.101.0"
   },
   "categories": [
     "Other"
@@ -27,6 +27,7 @@
   "activationEvents": [
     "onView:djobsTasks",
     "onCommand:djobs.refresh",
+    "onCommand:djobs.startWorkflow",
     "onCommand:djobs.resumeAll",
     "onCommand:djobs.copyTaskId",
     "onCommand:djobs.inspectTask",
@@ -37,6 +38,12 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "djobsServerProvider",
+        "label": "djobs"
+      }
+    ],
     "viewsContainers": {
       "activitybar": [
         {
@@ -59,6 +66,12 @@
         "command": "djobs.refresh",
         "title": "Refresh",
         "icon": "$(refresh)",
+        "category": "djobs"
+      },
+      {
+        "command": "djobs.startWorkflow",
+        "title": "Start Tracked Workflow",
+        "icon": "$(add)",
         "category": "djobs"
       },
       {
@@ -129,6 +142,11 @@
     "menus": {
       "view/title": [
         {
+          "command": "djobs.startWorkflow",
+          "when": "view == djobsTasks",
+          "group": "navigation"
+        },
+        {
           "command": "djobs.refresh",
           "when": "view == djobsTasks",
           "group": "navigation"
@@ -172,6 +190,11 @@
         },
         {
           "command": "djobs.resumeWorkflow",
+          "when": "view == djobsTasks && viewItem == actionGroup",
+          "group": "inline"
+        },
+        {
+          "command": "djobs.archiveWorkflow",
           "when": "view == djobsTasks && viewItem == actionGroup",
           "group": "inline"
         },
@@ -232,8 +255,8 @@
             "allWorkspaces",
             "currentWorkspace"
           ],
-          "default": "allWorkspaces",
-          "description": "Task scope shown in the sidebar. Use currentWorkspace for only this workspace correlation_id, or allWorkspaces for every task in the configured database."
+          "default": "currentWorkspace",
+          "description": "Task scope shown in the sidebar. Defaults to currentWorkspace so unrelated projects do not mix together. Use allWorkspaces for every task in the configured database."
         },
         "djobs.showCompleted": {
           "type": "boolean",
@@ -259,7 +282,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "@types/vscode": "^1.85.0",
+    "@types/vscode": "^1.101.0",
     "typescript": "^5.4.0",
     "@vscode/vsce": "^3.0.0"
   }

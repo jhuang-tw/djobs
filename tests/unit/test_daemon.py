@@ -268,6 +268,30 @@ class TestCLI:
             main([])
         assert exc_info.value.code == 1
 
+    def test_mcp_subcommand_runs_server(self, monkeypatch):
+        """`djobs mcp` should launch the MCP server over stdio."""
+        called = {"ran": False}
+
+        def fake_main() -> None:
+            called["ran"] = True
+
+        monkeypatch.setattr("djobs.mcp_server.main", fake_main)
+        main(["mcp"])
+        assert called["ran"] is True
+
+    def test_mcp_subcommand_configures_db_when_given(self, monkeypatch, tmp_path):
+        """`djobs mcp --db PATH` should point the server at that database."""
+        configured = {"db": None}
+
+        def fake_configure(db):
+            configured["db"] = db
+
+        monkeypatch.setattr("djobs.mcp_server.main", lambda: None)
+        monkeypatch.setattr("djobs.mcp_server.configure", fake_configure)
+        db_path = str(tmp_path / "explicit.db")
+        main(["mcp", "--db", db_path])
+        assert configured["db"] == db_path
+
     def test_status_outputs_json_for_workspace(self, tmp_path, capsys):
         """status command returns queue health and correlation-scoped tasks."""
         db_path = tmp_path / "jobs.db"
@@ -296,6 +320,17 @@ class TestCLI:
         assert output["tasks"][0]["type"] == "add-docstrings"
         assert output["tasks"][0]["correlation_id"] == "workspace-a"
         assert json.loads(output["tasks"][0]["payload_json"]) == {"file": "src/example.py"}
+
+    def test_status_matches_path_like_correlation_ids_tolerantly(self, tmp_path, capsys):
+        db_path = tmp_path / "jobs.db"
+        repository = SQLiteJobRepository.from_path(db_path)
+        repository.create_job(Job(type="lint", correlation_id="c:/src/my/djobs"))
+        repository.create_job(Job(type="other", correlation_id="c:/src/my/market"))
+
+        main(["status", "--db", str(db_path), "--correlation-id", r"C:\src\my\djobs\\"])
+
+        output = json.loads(capsys.readouterr().out)
+        assert [task["type"] for task in output["tasks"]] == ["lint"]
 
     def test_status_includes_latest_evidence(self, tmp_path, capsys):
         db_path = tmp_path / "jobs.db"
@@ -361,6 +396,101 @@ class TestCLI:
         assert output["count"] == 1
         assert repository.require_job(active.id).status.value == "archived"
         assert repository.require_job(done.id).status.value == "succeeded"
+
+    def test_explain_ready_task_json(self, tmp_path, capsys):
+        db_path = tmp_path / "jobs.db"
+        repo = SQLiteJobRepository.from_path(db_path)
+        repo.create_job(Job(type="lint", correlation_id="w"))
+
+        main(["explain", "--db", str(db_path), "--format", "json"])
+
+        out = json.loads(capsys.readouterr().out)
+        assert out["visible_count"] == 1
+        assert out["tasks"][0]["category"] == "ready"
+        assert "Ready to run" in out["tasks"][0]["reason"]
+
+    def test_explain_blocked_task_reports_dependency(self, tmp_path, capsys):
+        db_path = tmp_path / "jobs.db"
+        repo = SQLiteJobRepository.from_path(db_path)
+        dep = repo.create_job(Job(type="build", correlation_id="w"))
+        blocked = repo.create_job(Job(type="test", correlation_id="w", depends_on=[dep.id]))
+
+        main(["explain", "--db", str(db_path), "--format", "json"])
+
+        out = json.loads(capsys.readouterr().out)
+        by_id = {t["id"]: t for t in out["tasks"]}
+        assert by_id[blocked.id]["category"] == "blocked"
+        assert by_id[blocked.id]["blocked_by"] == [dep.id]
+        # The dependency itself is just a ready task.
+        assert by_id[dep.id]["category"] == "ready"
+
+    def test_explain_blocked_by_terminal_dependency_flags_stuck(self, tmp_path, capsys):
+        db_path = tmp_path / "jobs.db"
+        repo = SQLiteJobRepository.from_path(db_path)
+        queue = QueueService(repo)
+        dep = queue.submit("build", correlation_id="w")
+        blocked = repo.create_job(Job(type="test", correlation_id="w", depends_on=[dep.id]))
+        queue.archive(dep.id, reason="abandoned")
+
+        main(["explain", "--db", str(db_path), "--format", "json"])
+
+        out = json.loads(capsys.readouterr().out)
+        by_id = {t["id"]: t for t in out["tasks"]}
+        assert by_id[blocked.id]["category"] == "blocked"
+        assert "never succeed" in by_id[blocked.id]["reason"]
+        # An archived dependency is terminal, so it is not itself a visible task.
+        assert dep.id not in by_id
+
+    def test_explain_flags_stale_pending_task(self, tmp_path, capsys):
+        from datetime import UTC, datetime, timedelta
+
+        db_path = tmp_path / "jobs.db"
+        repo = SQLiteJobRepository.from_path(db_path)
+        old = datetime.now(UTC) - timedelta(days=30)
+        repo.create_job(Job(type="lint", correlation_id="w", created_at=old))
+
+        main(["explain", "--db", str(db_path), "--format", "json"])
+
+        out = json.loads(capsys.readouterr().out)
+        task = out["tasks"][0]
+        assert task["category"] == "stale"
+        assert task["stale"] is True
+        assert task["age_days"] >= 7
+
+    def test_explain_scheduled_task(self, tmp_path, capsys):
+        from datetime import UTC, datetime, timedelta
+
+        db_path = tmp_path / "jobs.db"
+        repo = SQLiteJobRepository.from_path(db_path)
+        queue = QueueService(repo)
+        future = datetime.now(UTC) + timedelta(hours=2)
+        queue.submit("deploy", correlation_id="w", run_after=future)
+
+        main(["explain", "--db", str(db_path), "--format", "json"])
+
+        out = json.loads(capsys.readouterr().out)
+        assert out["tasks"][0]["category"] == "scheduled"
+        assert "not due yet" in out["tasks"][0]["reason"]
+
+    def test_explain_empty_reports_nothing_waiting(self, tmp_path, capsys):
+        db_path = tmp_path / "jobs.db"
+        SQLiteJobRepository.from_path(db_path)
+
+        main(["explain", "--db", str(db_path)])
+
+        assert "Nothing is waiting" in capsys.readouterr().out
+
+    def test_explain_table_groups_and_summarizes(self, tmp_path, capsys):
+        db_path = tmp_path / "jobs.db"
+        repo = SQLiteJobRepository.from_path(db_path)
+        repo.create_job(Job(type="lint", correlation_id="w"))
+
+        main(["explain", "--db", str(db_path)])
+
+        out = capsys.readouterr().out
+        assert "Workflow: w" in out
+        assert "[ready]" in out
+        assert "Summary:" in out
 
 
 # ---------------------------------------------------------------------------

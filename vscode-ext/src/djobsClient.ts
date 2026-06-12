@@ -5,8 +5,18 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { DjobsCommandOptions, DjobsDoctorReport, DjobsScope, DjobsStatus, DjobsTask } from './types';
 
+type DjobsInstaller =
+  | { kind: 'pipx'; exe: string }
+  | { kind: 'uv'; exe: string }
+  | { kind: 'pip'; exe: string; pyArgs: string[]; isVenv: boolean };
+
 export class DjobsClient {
   constructor(private readonly workspaceRoot: string) {}
+
+  getViewOptions(): Pick<DjobsCommandOptions, 'scope' | 'showCompleted'> {
+    const options = this.getOptions();
+    return { scope: options.scope, showCompleted: options.showCompleted };
+  }
 
   async status(): Promise<DjobsStatus> {
     const options = this.getOptions();
@@ -17,7 +27,11 @@ export class DjobsClient {
     }
 
     const output = await this.run(args);
-    return JSON.parse(output) as DjobsStatus;
+    const status = JSON.parse(output) as DjobsStatus;
+    if (!options.showCompleted) {
+      status.tasks = status.tasks.filter((task) => task.status !== 'succeeded');
+    }
+    return status;
   }
 
   buildResumePrompt(): string {
@@ -27,7 +41,26 @@ export class DjobsClient {
       `Workspace correlation_id: ${this.workspaceRoot}`,
       '',
       'Call djobs resume_session with that correlation_id, then continue incomplete tasks.',
+      'If there are no incomplete tasks and this request is multi-step or edits files,',
+      'create a durable plan with djobs enqueue_task before editing.',
       'Do not ask whether to resume unless there are conflicting instructions.',
+    ].join('\n');
+  }
+
+  buildStartWorkflowPrompt(): string {
+    return [
+      'Start a djobs-tracked workflow for this request.',
+      '',
+      `Workspace correlation_id: ${this.workspaceRoot}`,
+      '',
+      'Before editing:',
+      '1. Call djobs resume_session with that correlation_id.',
+      '2. If unfinished tasks exist, continue them first.',
+      '3. If this is new multi-step work, call djobs enqueue_task once per meaningful unit before editing.',
+      '4. Give each task a clear summary, why, condition, and stable idempotency_key.',
+      '5. As each unit finishes, call complete_task with evidence describing what changed.',
+      '',
+      'Use chat only for explanation; use djobs as the durable source of progress.',
     ].join('\n');
   }
 
@@ -152,6 +185,69 @@ export class DjobsClient {
   }
 
   /**
+   * Resolve how to launch the djobs **MCP server** (not the CLI) for VS Code's
+   * native MCP registration. Mirrors `_resolve_mcp_command` in the CLI so the
+   * programmatic registration and the `install-mcp` JSON fallback start the same
+   * server: prefer an explicit interpreter, then a project `.venv`, then the
+   * `djobs-mcp` console script on PATH, then a bare `python`. `DJOBS_DB` is
+   * always pinned to the absolute queue path the sidebar reads, so the agent's
+   * writes and the sidebar's reads share one database regardless of cwd.
+   */
+  mcpServerLaunch(): { command: string; args: string[]; env: Record<string, string>; cwd: string } {
+    const configured = vscode.workspace.getConfiguration('djobs').get<string>('pythonPath')?.trim();
+    let command: string;
+    let args: string[];
+    if (configured) {
+      command = configured;
+      args = ['-m', 'djobs.mcp_server'];
+    } else {
+      const venvPython = process.platform === 'win32'
+        ? path.join(this.workspaceRoot, '.venv', 'Scripts', 'python.exe')
+        : path.join(this.workspaceRoot, '.venv', 'bin', 'python');
+      if (fs.existsSync(venvPython)) {
+        command = venvPython;
+        args = ['-m', 'djobs.mcp_server'];
+      } else {
+        const consoleScript = this.which('djobs-mcp');
+        if (consoleScript) {
+          command = consoleScript;
+          args = [];
+        } else {
+          command = process.platform === 'win32' ? 'python' : 'python3';
+          args = ['-m', 'djobs.mcp_server'];
+        }
+      }
+    }
+    return { command, args, env: { DJOBS_DB: this.resolvedDbPath() }, cwd: this.workspaceRoot };
+  }
+
+  /** Absolute path of the queue DB the sidebar reads (global or per-workspace). */
+  resolvedDbPath(): string {
+    return this.getOptions().dbPath;
+  }
+
+  /**
+   * True when this workspace already has a `.vscode/mcp.json` djobs server
+   * entry. When present, native MCP registration defers to it so the agent
+   * never sees two "djobs" servers (which would duplicate its tool list); an
+   * absent file lets the extension register the server natively, with no JSON.
+   */
+  hasMcpJsonDjobsServer(): boolean {
+    try {
+      const mcpPath = path.join(this.workspaceRoot, '.vscode', 'mcp.json');
+      if (!fs.existsSync(mcpPath)) {
+        return false;
+      }
+      const parsed = JSON.parse(fs.readFileSync(mcpPath, 'utf8')) as {
+        servers?: Record<string, unknown>;
+      };
+      return Boolean(parsed.servers && Object.prototype.hasOwnProperty.call(parsed.servers, 'djobs'));
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Inspect this workspace's .vscode/mcp.json and report the djobs MCP server's
    * launch command when it can no longer be resolved (e.g. it points at a
    * project `.venv` that was deleted, or a console script no longer on PATH).
@@ -195,29 +291,160 @@ export class DjobsClient {
   }
 
   /**
-   * Install djobs as a standalone tool. Prefers pipx for an isolated global
-   * install that works across every project; falls back to `pip install` into
-   * the project venv or a Python on PATH when pipx is unavailable.
+    * Install djobs as a standalone tool, trying every reasonable strategy so the
+    * user never has to touch a terminal. pipx is convenient, but it can itself be
+    * installed with an older Python; if that Python cannot satisfy djobs'
+    * Requires-Python metadata, fall back to uv / py -3.11+ / pip instead of
+    * surfacing pip's wall of resolver output.
+   *
+    * Throws `Error('NO_PYTHON_RUNTIME')` when no runtime is found (the extension
+    * cannot silently install Python; that is a system change the user must make),
+    * `Error('PYTHON_TOO_OLD: ...')` when all available runtimes are below djobs'
+    * minimum, or `Error('INSTALL_FAILED: ...')` with compact attempt summaries.
    */
   async installPackage(): Promise<void> {
+    const installers = this.findInstallers();
+    if (installers.length === 0) {
+      throw new Error('NO_PYTHON_RUNTIME');
+    }
+
+    const errors: string[] = [];
+    for (const installer of installers) {
+      try {
+        await this.installWith(installer);
+        this.resetLauncher();
+        if (await this.isPackageInstalled()) {
+          return;
+        }
+        errors.push(`${this.describeInstaller(installer)}: install completed but djobs did not launch`);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        errors.push(`${this.describeInstaller(installer)}: ${this.summarizeInstallError(detail)}`);
+      }
+    }
+
+    const detail = errors.join(' | ');
+    if (errors.some((error) => this.isRequiresPythonError(error))) {
+      throw new Error(
+        'PYTHON_TOO_OLD: djobs requires Python 3.11 or newer, but the available '
+        + 'installer runtimes could not satisfy that requirement. Install uv '
+        + '(recommended, no pre-existing Python needed) or Python 3.11+, then run setup again. '
+        + `Attempts: ${detail}`,
+      );
+    }
+    throw new Error(`INSTALL_FAILED: ${detail}`);
+  }
+
+  private async installWith(installer: DjobsInstaller): Promise<void> {
+    if (installer.kind === 'pipx') {
+      await this.execFile(installer.exe, ['install', 'djobs'], this.workspaceRoot, 180000);
+    } else if (installer.kind === 'uv') {
+      // `uv tool install` is isolated like pipx and manages its own tool bin on
+      // PATH; uv can also provision a Python, so this succeeds with no system
+      // Python at all.
+      await this.execFile(installer.exe, ['tool', 'install', 'djobs'], this.workspaceRoot, 180000);
+    } else {
+      const pipArgs = [...installer.pyArgs, '-m', 'pip', 'install', '--upgrade'];
+      if (!installer.isVenv) {
+        pipArgs.push('--user');
+      }
+      pipArgs.push('djobs');
+      await this.execFile(installer.exe, pipArgs, this.workspaceRoot, 180000);
+      // A bare `pip --user` install often lands the `djobs` console script in a
+      // per-user Scripts dir that is not on PATH, so pin the concrete
+      // interpreter we installed into. The venv case needs no pin (the launcher
+      // already finds `.venv`).
+      if (!installer.isVenv) {
+        await this.pinInterpreter(installer.exe, installer.pyArgs);
+      }
+    }
+  }
+
+  /**
+  * Locate available ways to install djobs, in preferred order. An empty list
+  * means no installer/runtime was found.
+   */
+  private findInstallers(): DjobsInstaller[] {
+    const installers: DjobsInstaller[] = [];
     const pipx = this.which('pipx');
     if (pipx) {
-      await this.execFile(pipx, ['install', 'djobs'], this.workspaceRoot, 180000);
-      this.resetLauncher();
-      return;
+      installers.push({ kind: 'pipx', exe: pipx });
+    }
+    // After pipx, prefer uv when present: `uv tool install` is isolated and uv
+    // can provision its own Python, so it is the only installer that works when
+    // there is no Python on the machine at all.
+    const uv = this.which('uv');
+    if (uv) {
+      installers.push({ kind: 'uv', exe: uv });
     }
     const venvPython = process.platform === 'win32'
       ? path.join(this.workspaceRoot, '.venv', 'Scripts', 'python.exe')
       : path.join(this.workspaceRoot, '.venv', 'bin', 'python');
-    const fallback = process.platform === 'win32' ? 'python' : 'python3';
-    const exe = fs.existsSync(venvPython) ? venvPython : fallback;
-    await this.execFile(
-      exe,
-      ['-m', 'pip', 'install', '--upgrade', 'djobs'],
-      this.workspaceRoot,
-      180000,
-    );
-    this.resetLauncher();
+    if (fs.existsSync(venvPython)) {
+      installers.push({ kind: 'pip', exe: venvPython, pyArgs: [], isVenv: true });
+    }
+    // Windows `py -3` launcher: common when python.exe is not on PATH.
+    if (process.platform === 'win32') {
+      const py = this.which('py');
+      if (py) {
+        installers.push(
+          { kind: 'pip', exe: py, pyArgs: ['-3.13'], isVenv: false },
+          { kind: 'pip', exe: py, pyArgs: ['-3.12'], isVenv: false },
+          { kind: 'pip', exe: py, pyArgs: ['-3.11'], isVenv: false },
+          { kind: 'pip', exe: py, pyArgs: ['-3'], isVenv: false },
+        );
+      }
+    }
+    const python = this.which(process.platform === 'win32' ? 'python' : 'python3')
+      ?? this.which('python');
+    if (python) {
+      installers.push({ kind: 'pip', exe: python, pyArgs: [], isVenv: false });
+    }
+    return installers;
+  }
+
+  private describeInstaller(installer: DjobsInstaller): string {
+    if (installer.kind === 'pipx') { return 'pipx'; }
+    if (installer.kind === 'uv') { return 'uv'; }
+    return [installer.exe, ...installer.pyArgs].join(' ');
+  }
+
+  private summarizeInstallError(detail: string): string {
+    const compact = detail.replace(/\s+/g, ' ').trim();
+    if (this.isRequiresPythonError(compact)) {
+      return 'Python runtime is too old for djobs (requires Python >=3.11)';
+    }
+    return compact.length > 320 ? `${compact.slice(0, 320)}...` : compact;
+  }
+
+  private isRequiresPythonError(detail: string): boolean {
+    return /Requires-Python\s*>=\s*3\.11/i.test(detail)
+      || /requires Python\s*>=\s*3\.11/i.test(detail)
+      || /too old for djobs/i.test(detail)
+      || /requires a different python/i.test(detail);
+  }
+
+  /**
+   * Pin `djobs.pythonPath` to the concrete interpreter we installed into, so the
+   * launcher and `install-mcp` resolve to it regardless of PATH. Best-effort.
+   */
+  private async pinInterpreter(exe: string, pyArgs: string[]): Promise<void> {
+    try {
+      const out = await this.execFile(
+        exe,
+        [...pyArgs, '-c', 'import sys; sys.stdout.write(sys.executable)'],
+        this.workspaceRoot,
+      );
+      const concrete = out.trim();
+      if (concrete && fs.existsSync(concrete)) {
+        await vscode.workspace
+          .getConfiguration('djobs')
+          .update('pythonPath', concrete, vscode.ConfigurationTarget.Global);
+        this.resetLauncher();
+      }
+    } catch {
+      // Non-fatal: the launcher falls back to its normal resolution order.
+    }
   }
 
   /** Run `djobs doctor --json` and return the parsed setup report. */
@@ -277,13 +504,20 @@ export class DjobsClient {
     if (pipx) {
       await this.execFile(pipx, ['upgrade', 'djobs'], this.workspaceRoot, 180000);
     } else {
-      const fallback = process.platform === 'win32' ? 'python' : 'python3';
-      await this.execFile(
-        fallback,
-        ['-m', 'pip', 'install', '--upgrade', 'djobs'],
-        this.workspaceRoot,
-        180000,
-      );
+      // Match installPackage's pipx-then-uv preference so we upgrade with the
+      // same tool that installed the console script.
+      const uv = this.which('uv');
+      if (uv) {
+        await this.execFile(uv, ['tool', 'upgrade', 'djobs'], this.workspaceRoot, 180000);
+      } else {
+        const fallback = process.platform === 'win32' ? 'python' : 'python3';
+        await this.execFile(
+          fallback,
+          ['-m', 'pip', 'install', '--upgrade', 'djobs'],
+          this.workspaceRoot,
+          180000,
+        );
+      }
     }
     this.resetLauncher();
   }
@@ -291,7 +525,7 @@ export class DjobsClient {
   private getOptions(): DjobsCommandOptions {
     const config = vscode.workspace.getConfiguration('djobs');
     const configuredDb = config.get<string>('dbPath')?.trim() || 'djobs_mcp.db';
-    const configuredScope = config.get<DjobsScope>('scope') ?? 'allWorkspaces';
+    const configuredScope = config.get<DjobsScope>('scope') ?? 'currentWorkspace';
     const showCompleted = config.get<boolean>('showCompleted') ?? false;
     const queueLocation = config.get<string>('queueLocation') ?? 'global';
 

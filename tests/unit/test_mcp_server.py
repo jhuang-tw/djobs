@@ -7,6 +7,7 @@ durable job queue functionality exposed to AI agents.
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
@@ -53,6 +54,22 @@ class TestEnqueueTask:
     def test_enqueue_with_correlation_id(self):
         result = json.loads(enqueue_task(task_type="test.job", correlation_id="workspace-123"))
         assert result["correlation_id"] == "workspace-123"
+
+    def test_enqueue_without_correlation_id_defaults_to_workspace(self, monkeypatch, tmp_path):
+        """Omitting correlation_id groups the task under the workspace (cwd),
+        not a throwaway UUID, so resume_session can find it later."""
+        monkeypatch.chdir(tmp_path)
+        result = json.loads(enqueue_task(task_type="test.job"))
+        assert result["correlation_id"] == os.getcwd()
+
+    def test_enqueue_without_correlation_id_groups_for_resume(self, monkeypatch, tmp_path):
+        """Two tasks enqueued without a correlation_id share the workspace id, so
+        resume_session for that workspace recovers both."""
+        monkeypatch.chdir(tmp_path)
+        enqueue_task(task_type="a")
+        enqueue_task(task_type="b")
+        result = json.loads(resume_session(os.getcwd()))
+        assert result["incomplete_count"] == 2
 
     def test_enqueue_idempotency(self):
         r1 = json.loads(enqueue_task(task_type="lint", idempotency_key="lint:foo.py"))
@@ -422,7 +439,7 @@ class TestMultiAgentClaim:
 
         released = json.loads(release_task(task_id, "agent-a", reason="cannot proceed"))
         assert released["status"] == "pending"
-        assert released["leased_by"] is None
+        assert released.get("leased_by") is None
 
         reclaimed = json.loads(claim_task(agent_id="agent-b"))
         assert reclaimed["claimed"] is True
@@ -522,3 +539,206 @@ class TestAgentRegistry:
 
         offline = json.loads(list_agents(status="offline"))
         assert offline["agents"] == []
+
+
+class TestTokenEfficientOutput:
+    """Tool responses are tokens the agent must read, so they stay compact + lean."""
+
+    def test_output_is_compact_not_pretty_printed(self):
+        # Compact JSON has no newlines and no ", " / ": " separators.
+        raw = enqueue_task(task_type="lint", correlation_id="ws")
+        assert "\n" not in raw
+        assert ", " not in raw
+        assert '": ' not in raw
+        # Still valid JSON.
+        assert json.loads(raw)["type"] == "lint"
+
+    def test_lean_omits_empty_fields(self):
+        # A freshly enqueued task has no error/lease/deps/schedule — those keys
+        # must be omitted entirely rather than serialised as null.
+        result = json.loads(enqueue_task(task_type="lint"))
+        for absent in (
+            "last_error",
+            "run_after",
+            "depends_on",
+            "resource_key",
+            "leased_by",
+            "lease_expires_at",
+        ):
+            assert absent not in result
+
+    def test_lean_keeps_core_fields_always(self):
+        result = json.loads(enqueue_task(task_type="lint"))
+        for required in ("id", "type", "status", "payload", "attempt", "max_attempts"):
+            assert required in result
+
+    def test_lean_includes_fields_when_present(self):
+        # When a field carries information it must be included.
+        dep = json.loads(enqueue_task(task_type="build"))
+        dependent = json.loads(
+            enqueue_task(
+                task_type="deploy",
+                correlation_id="ws",
+                depends_on=[dep["id"]],
+                resource_key="src/foo.py",
+            )
+        )
+        assert dependent["correlation_id"] == "ws"
+        assert dependent["depends_on"] == [dep["id"]]
+        assert dependent["resource_key"] == "src/foo.py"
+
+    def test_failed_task_includes_last_error(self):
+        created = json.loads(enqueue_task(task_type="lint"))
+        result = json.loads(fail_task(created["id"], "boom"))
+        assert result["last_error"] == "boom"
+
+    def test_resume_session_payload_stays_lean(self):
+        cid = "lean-resume"
+        enqueue_task(task_type="docstring", correlation_id=cid)
+        result = json.loads(resume_session(cid))
+        task = result["tasks"][0]
+        # No null noise per task.
+        assert "last_error" not in task
+        assert "leased_by" not in task
+
+
+class TestCorrelationIdMatching:
+    """resume_session/list_tasks tolerate equivalent spellings of a path cid."""
+
+    def test_resume_matches_across_slash_direction(self):
+        enqueue_task(task_type="a", correlation_id=r"c:\src\my\proj")
+        # Same path with forward slashes must still find it.
+        result = json.loads(resume_session("c:/src/my/proj"))
+        assert result["incomplete_count"] == 1
+
+    def test_resume_matches_across_drive_letter_case(self):
+        enqueue_task(task_type="a", correlation_id=r"c:\src\my\proj")
+        result = json.loads(resume_session(r"C:\src\my\proj"))
+        assert result["incomplete_count"] == 1
+
+    def test_resume_matches_with_trailing_separator(self):
+        enqueue_task(task_type="a", correlation_id="c:/src/my/proj")
+        result = json.loads(resume_session("c:/src/my/proj/"))
+        assert result["incomplete_count"] == 1
+
+    def test_list_tasks_matches_equivalent_spelling(self):
+        enqueue_task(task_type="a", correlation_id=r"c:\proj")
+        enqueue_task(task_type="b", correlation_id=r"c:\proj")
+        result = json.loads(list_tasks("c:/proj"))
+        assert len(result) == 2
+
+    def test_distinct_paths_do_not_collide(self):
+        enqueue_task(task_type="a", correlation_id="c:/proj-a")
+        enqueue_task(task_type="b", correlation_id="c:/proj-b")
+        result = json.loads(resume_session("c:/proj-a"))
+        assert result["incomplete_count"] == 1
+        assert result["tasks"][0]["type"] == "a"
+
+    def test_uuid_like_cid_is_unaffected(self):
+        cid = "e065e866-8300-4d66-a49c-c0223fa3ecf2"
+        enqueue_task(task_type="a", correlation_id=cid)
+        assert json.loads(resume_session(cid))["incomplete_count"] == 1
+        # A different id must not match.
+        other = "11111111-2222-3333-4444-555555555555"
+        assert json.loads(resume_session(other))["incomplete_count"] == 0
+
+    def test_resume_returns_tasks_in_insertion_order(self):
+        cid = "c:/ordered"
+        first = json.loads(enqueue_task(task_type="step-1", correlation_id=cid))
+        second = json.loads(enqueue_task(task_type="step-2", correlation_id=cid))
+        third = json.loads(enqueue_task(task_type="step-3", correlation_id=cid))
+        result = json.loads(resume_session(cid))
+        ids = [t["id"] for t in result["tasks"]]
+        assert ids == [first["id"], second["id"], third["id"]]
+
+    def test_resume_message_guides_safe_continuation(self):
+        cid = "c:/guidance"
+        enqueue_task(task_type="a", correlation_id=cid)
+        msg = json.loads(resume_session(cid))["message"]
+        assert "complete_task" in msg
+
+    def test_variants_helper_collapses_non_path_ids(self):
+        from djobs.mcp_server import _correlation_id_variants
+
+        # A plain token has no path separators/drive → only itself.
+        assert _correlation_id_variants("session-123") == ["session-123"]
+
+
+class TestResumeAnnotations:
+    """resume_session adds advisory stale / blocked_by hints to guide the agent."""
+
+    def _backdate(self, task_id: str, days: int) -> None:
+        """Push a task's created_at into the past (simulates an old workflow)."""
+        from datetime import UTC, datetime, timedelta
+
+        from djobs.mcp_server import _get_queue
+
+        past = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+        repo = _get_queue()._repository
+        with repo._lock:
+            repo._connection.execute(
+                "UPDATE jobs SET created_at = ? WHERE id = ?", (past, task_id)
+            )
+            repo._connection.commit()
+
+    def test_fresh_tasks_are_not_stale(self):
+        cid = "c:/fresh"
+        enqueue_task(task_type="a", correlation_id=cid)
+        result = json.loads(resume_session(cid))
+        assert result["stale_count"] == 0
+        assert "stale" not in result["tasks"][0]
+
+    def test_old_tasks_flagged_stale(self):
+        cid = "c:/old"
+        created = json.loads(enqueue_task(task_type="a", correlation_id=cid))
+        self._backdate(created["id"], days=30)
+        result = json.loads(resume_session(cid))
+        assert result["stale_count"] == 1
+        task = result["tasks"][0]
+        assert task["stale"] is True
+        assert task["age_days"] >= 30
+        assert "stale" in result["message"]
+        assert "archive-workflow" in result["message"]
+
+    def test_blocked_task_reports_blocked_by(self):
+        cid = "c:/dag"
+        dep = json.loads(enqueue_task(task_type="build", correlation_id=cid))
+        dependent = json.loads(
+            enqueue_task(task_type="deploy", correlation_id=cid, depends_on=[dep["id"]])
+        )
+        result = json.loads(resume_session(cid))
+        assert result["blocked_count"] == 1
+        by_id = {t["id"]: t for t in result["tasks"]}
+        # The dependency is ready (not blocked); the dependent is blocked by it.
+        assert "blocked_by" not in by_id[dep["id"]]
+        assert by_id[dependent["id"]]["blocked_by"] == [dep["id"]]
+        assert "blocked" in result["message"]
+
+    def test_completed_dependency_unblocks(self):
+        cid = "c:/dag2"
+        dep = json.loads(enqueue_task(task_type="build", correlation_id=cid))
+        enqueue_task(task_type="deploy", correlation_id=cid, depends_on=[dep["id"]])
+        complete_task(dep["id"])
+        result = json.loads(resume_session(cid))
+        # Only the dependent remains, and it is no longer blocked.
+        assert result["incomplete_count"] == 1
+        assert result["blocked_count"] == 0
+        assert "blocked_by" not in result["tasks"][0]
+
+
+class TestEnqueuePayloadValidation:
+    """enqueue_task gives a helpful error instead of crashing on bad JSON."""
+
+    def test_invalid_payload_returns_friendly_error(self):
+        result = json.loads(enqueue_task(task_type="lint", payload="{not valid json"))
+        assert result["error"] == "invalid payload JSON"
+        assert "hint" in result
+        assert "detail" in result
+
+    def test_valid_payload_still_works(self):
+        result = json.loads(enqueue_task(task_type="lint", payload=json.dumps({"file": "a.py"})))
+        assert result["payload"]["file"] == "a.py"
+
+    def test_default_empty_payload_works(self):
+        result = json.loads(enqueue_task(task_type="lint"))
+        assert result["payload"] == {}

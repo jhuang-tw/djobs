@@ -5,9 +5,13 @@ Commands::
     djobs serve              Start the background daemon
     djobs serve --db my.db   Use a custom database path
     djobs serve --workers 8  Set max concurrent workers
+    djobs mcp                Run the MCP server over stdio (for agents / uvx)
     djobs dashboard          Serve the read-only cross-agent web dashboard
+    djobs init               One-command setup (mcp.json + instructions + doctor)
     djobs install-mcp        Print an mcp.json snippet for VS Code
+    djobs install-instructions  Create/update the agent guidance block
     djobs doctor             Diagnose setup (interpreter, wiring, db)
+    djobs explain            Explain why each still-visible task is in the queue
     djobs audit              Query the audit trail from the terminal
 """
 
@@ -19,6 +23,8 @@ import logging
 import os
 import sys
 from collections.abc import Callable
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 Handler = Callable[[dict[str, Any]], Any]
@@ -39,6 +45,162 @@ def _global_db() -> str:
     from pathlib import Path
 
     return str(Path.home() / ".djobs" / "global.db")
+
+
+def _correlation_id_variants(correlation_id: str) -> list[str]:
+    """Equivalent spellings for path-like workflow ids used by CLI filters."""
+    variants: set[str] = {correlation_id}
+    forward = correlation_id.replace("\\", "/")
+    variants.add(forward)
+    variants.add(forward.replace("/", "\\"))
+    for value in list(variants):
+        trimmed = value.rstrip("/\\")
+        if trimmed:
+            variants.add(trimmed)
+    for value in list(variants):
+        if len(value) >= 2 and value[1] == ":" and value[0].isalpha():
+            variants.add(value[0].lower() + value[1:])
+            variants.add(value[0].upper() + value[1:])
+    return sorted(variants)
+
+
+# A pending task older than this many days is flagged as likely abandoned. Kept
+# in sync with ``_STALE_AFTER_DAYS`` in mcp_server.py and the extension sidebar.
+_STALE_AFTER_DAYS = 7
+
+
+def _parse_dt(value: Any) -> datetime | None:
+    """Parse an ISO datetime string to an aware UTC datetime, or None."""
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value))
+    except (ValueError, TypeError):
+        return None
+    return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
+
+
+def _explain_visible_task(
+    task: dict[str, Any],
+    dep_status: dict[str, str],
+    resource_holders: dict[str, str],
+    now: datetime,
+) -> dict[str, Any]:
+    """Annotate a non-terminal task with a plain-language ``reason`` it is still
+    visible, plus a machine-friendly ``category``.
+
+    Mirrors the queue's real claim gating so the explanation matches what
+    actually happens: a dependency blocks unless it has *succeeded*; a pending
+    task is also gated by a future ``run_after`` and by a ``resource_key`` held
+    by a running task. The task dict is mutated in place and returned.
+    """
+    status = task["status"]
+    attempt = task.get("attempt") or 0
+    max_attempts = task.get("max_attempts") or 0
+
+    def _err() -> str:
+        lines = (task.get("last_error") or "").strip().splitlines()
+        first = lines[0] if lines else ""
+        return (first[:117] + "...") if len(first) > 120 else first
+
+    if status == "dead_lettered":
+        msg = _err()
+        task["category"] = "dead_lettered"
+        task["reason"] = (
+            f"Gave up after {attempt}/{max_attempts} attempts (dead-lettered)."
+            + (f" Last error: {msg}." if msg else "")
+            + " Archive it, or fix the cause and re-enqueue."
+        )
+        return task
+
+    if status == "failed":
+        msg = _err()
+        task["category"] = "failed"
+        task["reason"] = (
+            f"Failed on attempt {attempt}/{max_attempts} and is not scheduled to retry."
+            + (f" Last error: {msg}." if msg else "")
+            + " Archive it, or re-enqueue to try again."
+        )
+        return task
+
+    if status == "retry_scheduled":
+        when = _parse_dt(task.get("run_after"))
+        at = f" at {when.isoformat(timespec='seconds')}" if when else ""
+        task["category"] = "retry_scheduled"
+        task["reason"] = f"Waiting to retry (attempt {attempt}/{max_attempts}){at}."
+        return task
+
+    if status == "running":
+        lease = _parse_dt(task.get("lease_expires_at"))
+        leased_by = task.get("leased_by") or "a worker"
+        if lease and lease < now:
+            task["category"] = "lease_expired"
+            task["reason"] = (
+                f"Was claimed by {leased_by} but the lease expired "
+                f"{lease.isoformat(timespec='seconds')} (the worker likely died). "
+                "It will be recovered and retried automatically."
+            )
+        else:
+            until = f" (lease until {lease.isoformat(timespec='seconds')})" if lease else ""
+            task["category"] = "running"
+            task["reason"] = f"Currently running on {leased_by}{until}."
+        return task
+
+    # status == pending
+    deps = task.get("depends_on") or []
+    blocking = [d for d in deps if dep_status.get(d) != "succeeded"]
+    if blocking:
+        # A dependency that is failed/dead/archived/missing can never succeed, so
+        # the task is permanently stuck, not merely waiting — call that out.
+        stuck = [
+            f"{d[:8]} ({dep_status.get(d, 'missing')})"
+            for d in blocking
+            if dep_status.get(d) in (None, "failed", "dead_lettered", "archived")
+        ]
+        detail = f"Blocked: {len(blocking)} dependency task(s) have not succeeded."
+        if stuck:
+            detail += (
+                " These will never succeed: "
+                + ", ".join(stuck)
+                + " — re-enqueue the dependency or archive this workflow."
+            )
+        task["category"] = "blocked"
+        task["blocked_by"] = blocking
+        task["reason"] = detail
+        return task
+
+    run_after = _parse_dt(task.get("run_after"))
+    if run_after and run_after > now:
+        task["category"] = "scheduled"
+        task["reason"] = (
+            f"Scheduled to start at {run_after.isoformat(timespec='seconds')}; not due yet."
+        )
+        return task
+
+    resource_key = task.get("resource_key")
+    if resource_key and resource_key in resource_holders:
+        holder = resource_holders[resource_key]
+        task["category"] = "resource_wait"
+        task["reason"] = (
+            f"Waiting for the exclusive resource '{resource_key}', currently held by "
+            f"running task {holder[:8]}."
+        )
+        return task
+
+    created = _parse_dt(task.get("created_at"))
+    age_days = (now - created).days if created else 0
+    if age_days >= _STALE_AFTER_DAYS:
+        task["category"] = "stale"
+        task["stale"] = True
+        task["age_days"] = age_days
+        task["reason"] = (
+            f"Ready to run, but it has been pending {age_days} days — usually an "
+            "abandoned workflow. Archive it if it is no longer needed."
+        )
+    else:
+        task["category"] = "ready"
+        task["reason"] = "Ready to run now; the agent simply has not picked it up yet."
+    return task
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +276,28 @@ def _cmd_serve(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# mcp command
+# ---------------------------------------------------------------------------
+
+
+def _cmd_mcp(args: argparse.Namespace) -> None:
+    """Run the djobs MCP server over stdio.
+
+    This is the same server as the ``djobs-mcp`` console script, exposed as a
+    subcommand so it can be launched as ``djobs mcp`` — which lets the MCP
+    Registry / ``uvx djobs mcp`` start the server while keeping ``djobs`` (the
+    real PyPI package) as the verifiable package identifier. The server honors
+    the ``DJOBS_DB`` environment variable; pass ``--db`` to override it.
+    """
+    from djobs.mcp_server import configure
+    from djobs.mcp_server import main as run_mcp_server
+
+    if getattr(args, "db", None):
+        configure(args.db)
+    run_mcp_server()
+
+
+# ---------------------------------------------------------------------------
 # dashboard command
 # ---------------------------------------------------------------------------
 
@@ -170,12 +354,15 @@ def _cmd_status(args: argparse.Namespace) -> None:
     tasks: list[dict[str, Any]] = []
     with repo._lock:
         if args.correlation_id:
+            cids = _correlation_id_variants(args.correlation_id)
+            cid_ph = ",".join("?" for _ in cids)
             rows = repo._connection.execute(
                 "SELECT id, type, status, payload_json, correlation_id, "
                 "created_at, updated_at, attempt, max_attempts, last_error, "
                 "depends_on_json "
-                "FROM jobs WHERE correlation_id = ? AND status != ? ORDER BY created_at",
-                (args.correlation_id, "archived"),
+                f"FROM jobs WHERE correlation_id IN ({cid_ph}) AND status != ? "
+                "ORDER BY created_at",
+                (*cids, "archived"),
             ).fetchall()
         else:
             rows = repo._connection.execute(
@@ -291,6 +478,118 @@ def _cmd_archive_workflow(args: argparse.Namespace) -> None:
     )
 
 
+def _cmd_explain(args: argparse.Namespace) -> None:
+    """Explain, in plain language, why each still-visible task is in the queue.
+
+    Answers the recurring "why is this old task still here?" question by
+    reporting the real reason each non-terminal task has not completed —
+    blocked by dependencies, scheduled for later, waiting on a resource lock,
+    running (or orphaned by a dead worker), failed/dead-lettered, or simply
+    pending and possibly stale. This is the read-only companion to
+    skip / accept-before / archive-workflow, which act on what it surfaces.
+    """
+    import json
+    from collections import Counter
+    from itertools import groupby
+
+    from djobs.storage.sqlite import SQLiteJobRepository
+
+    repo = SQLiteJobRepository.from_path(args.db)
+    now = datetime.now(UTC)
+
+    columns = (
+        "id, type, status, correlation_id, created_at, run_after, "
+        "attempt, max_attempts, last_error, leased_by, lease_expires_at, "
+        "depends_on_json, resource_key"
+    )
+    with repo._lock:
+        if args.correlation_id:
+            rows = repo._connection.execute(
+                f"SELECT {columns} FROM jobs "
+                "WHERE status NOT IN ('succeeded', 'archived') AND correlation_id = ? "
+                "ORDER BY created_at",
+                (args.correlation_id,),
+            ).fetchall()
+        else:
+            rows = repo._connection.execute(
+                f"SELECT {columns} FROM jobs "
+                "WHERE status NOT IN ('succeeded', 'archived') "
+                "ORDER BY correlation_id, created_at",
+            ).fetchall()
+
+        # Resolve every dependency's status and which running task holds each
+        # resource key, in one query each, so the per-task explanation matches
+        # the queue's real claim gating without an N+1 query pattern.
+        dep_ids: set[str] = set()
+        for r in rows:
+            raw = r["depends_on_json"]
+            if raw:
+                dep_ids.update(json.loads(raw))
+        dep_status: dict[str, str] = {}
+        if dep_ids:
+            placeholders = ", ".join("?" * len(dep_ids))
+            for d in repo._connection.execute(
+                f"SELECT id, status FROM jobs WHERE id IN ({placeholders})",
+                tuple(dep_ids),
+            ).fetchall():
+                dep_status[d["id"]] = d["status"]
+        resource_holders: dict[str, str] = {}
+        for r in repo._connection.execute(
+            "SELECT id, resource_key FROM jobs "
+            "WHERE status = 'running' AND resource_key IS NOT NULL ORDER BY created_at",
+        ).fetchall():
+            resource_holders.setdefault(r["resource_key"], r["id"])
+
+    tasks: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        raw_depends = item.pop("depends_on_json", None)
+        item["depends_on"] = json.loads(raw_depends) if raw_depends else []
+        tasks.append(_explain_visible_task(item, dep_status, resource_holders, now))
+
+    by_category: Counter[str] = Counter(t["category"] for t in tasks)
+
+    if args.output_format == "json":
+        print(
+            json.dumps(
+                {
+                    "timestamp": now.isoformat(),
+                    "visible_count": len(tasks),
+                    "by_category": dict(by_category),
+                    "tasks": tasks,
+                },
+                indent=2,
+                default=str,
+            )
+        )
+        return
+
+    if not tasks:
+        scope = f" for correlation_id {args.correlation_id}" if args.correlation_id else ""
+        print(f"No visible (non-terminal) tasks{scope}. Nothing is waiting.")
+        return
+
+    sorted_tasks = (
+        tasks
+        if args.correlation_id
+        else sorted(tasks, key=lambda t: t.get("correlation_id") or "")
+    )
+    workflows = 0
+    for cid, group in groupby(sorted_tasks, key=lambda t: t.get("correlation_id") or ""):
+        workflows += 1
+        members = list(group)
+        label = cid or "(no correlation_id)"
+        print(f"\nWorkflow: {label}  ({len(members)} visible task(s))")
+        for t in members:
+            print(f"  [{t['category']}] {t['id'][:8]}  {t['type']}")
+            print(f"      {t['reason']}")
+
+    print("\nSummary:")
+    for cat, count in by_category.most_common():
+        print(f"  {cat:15s} {count}")
+    print(f"\n{len(tasks)} visible task(s) across {workflows} workflow(s).")
+
+
 # ---------------------------------------------------------------------------
 # install-mcp command
 # ---------------------------------------------------------------------------
@@ -311,14 +610,22 @@ with a single `resume_session` call instead of re-reading files and re-planning
 from scratch after a crash or context reset. It also keeps progress out of the
 chat context, so long multi-step tasks stay cheap and avoid context overflow.
 
-- **Resume first.** At the start of a session that continues prior work, call
-  `resume_session` (with the session/correlation_id) to recover any unfinished
-  tasks before starting something new.
-- **Enqueue long or risky work.** When a request is long-running, multi-step,
-  or could be interrupted (large refactors, batch edits, migrations, builds,
-  data processing), submit it with `enqueue_task` and a stable `correlation_id`
-  so progress is durable and visible in the djobs sidebar. Mark each unit done
-  with `complete_task` / `fail_task`.
+- **Start every coding session with `resume_session`.** Before editing files,
+    call `resume_session` with the workspace/session `correlation_id`. If it
+    returns unfinished tasks, continue those first instead of starting from chat
+    memory. If it returns nothing, proceed normally for small work or create a
+    durable plan for larger work.
+- **Plan before editing long or multi-step work.** When a request touches
+    multiple files, has several steps, needs tests/docs/release packaging, or
+    could be interrupted, call `enqueue_task` before the first edit. Create one
+    task per meaningful unit with a stable `correlation_id` and `idempotency_key`
+    (e.g. `"{task_type}:{file}"`) so progress is visible in the djobs sidebar and
+    resuming after a crash re-runs nothing that already succeeded.
+- **Close the loop with evidence.** As each unit finishes, call
+  `complete_task(task_id, evidence="what changed")` — or `fail_task(task_id,
+  error)` on failure. Always pass `evidence`: that one-line record is what lets
+  a later session or a human verify the work and trust `resume_session` instead
+  of re-doing it, and it is what the sidebar and `audit_log` show.
 - **Make every task self-explanatory.** The sidebar shows the task `type` and a
   one-line summary — never make a human guess what an opaque id means. In each
   `enqueue_task` payload include human-readable fields:
@@ -334,16 +641,37 @@ chat context, so long multi-step tasks stay cheap and avoid context overflow.
 """
 
 
-def _write_instructions_block() -> None:
-    """Append/update the djobs managed block in .github/copilot-instructions.md.
+# Instruction-file targets the agent reads. Mapping is reused by both
+# `install-instructions` and `init`.
+_INSTRUCTION_TARGETS = {
+    "copilot": ".github/copilot-instructions.md",
+    "agent-md": ".agent.md",
+}
+
+
+def _render_instructions_block() -> str:
+    """Return the full djobs managed guidance block, including sentinel markers."""
+    return f"{_DJOBS_INSTRUCTIONS_START}\n{_DJOBS_INSTRUCTIONS_BODY}{_DJOBS_INSTRUCTIONS_END}\n"
+
+
+def _resolve_instruction_targets(target: str) -> list[Path]:
+    """Map a ``--target`` choice to the instruction file path(s) to write."""
+    if target == "all":
+        return [Path(p) for p in _INSTRUCTION_TARGETS.values()]
+    return [Path(_INSTRUCTION_TARGETS[target])]
+
+
+def _write_instructions_to(target: Path) -> None:
+    """Create/update the djobs managed block in *target* idempotently.
 
     Uses sentinel markers so re-running only updates the djobs block and never
-    touches the user's other instructions.
-    """
-    from pathlib import Path
+    touches the user's other instructions:
 
-    target = Path(".github/copilot-instructions.md")
-    block = f"{_DJOBS_INSTRUCTIONS_START}\n{_DJOBS_INSTRUCTIONS_BODY}{_DJOBS_INSTRUCTIONS_END}\n"
+    - missing file  -> create it with the block;
+    - file present, no djobs block -> append the block;
+    - file present with a djobs block -> replace only that block in place.
+    """
+    block = _render_instructions_block()
 
     if target.exists():
         existing = target.read_text(encoding="utf-8")
@@ -371,6 +699,25 @@ def _write_instructions_block() -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(block, encoding="utf-8")
     print(f"Created {target} with djobs guidance")
+
+
+def _write_instructions_block() -> None:
+    """Write the djobs block to ``.github/copilot-instructions.md``.
+
+    Backward-compatible wrapper around :func:`_write_instructions_to` used by
+    ``install-mcp`` (which writes the default Copilot instruction file).
+    """
+    _write_instructions_to(Path(_INSTRUCTION_TARGETS["copilot"]))
+
+
+def _cmd_install_instructions(args: argparse.Namespace) -> None:
+    """Create/update the djobs agent guidance block without touching mcp.json."""
+    if getattr(args, "print", False):
+        print(_render_instructions_block(), end="")
+        return
+
+    for target in _resolve_instruction_targets(args.target):
+        _write_instructions_to(target)
 
 
 def _resolve_mcp_command(args: argparse.Namespace) -> tuple[str, list[str]]:
@@ -580,25 +927,43 @@ def _cmd_doctor(args: argparse.Namespace) -> None:
             ("mcp.json wiring", False, f"{mcp_json} not found — run 'djobs install-mcp'")
         )
 
-    # 6. agent guidance block
-    instr = Path(".github/copilot-instructions.md")
-    has_block = False
-    if instr.exists():
-        has_block = _DJOBS_INSTRUCTIONS_START in instr.read_text(encoding="utf-8")
+    # 6. agent guidance block (checks every instruction target djobs manages)
+    present_in: list[str] = []
+    for rel in _INSTRUCTION_TARGETS.values():
+        p = Path(rel)
+        if p.exists() and _DJOBS_INSTRUCTIONS_START in p.read_text(encoding="utf-8"):
+            present_in.append(rel)
+    has_block = bool(present_in)
     checks.append(
         (
             "agent guidance block",
             has_block,
-            "present" if has_block else "missing — agent may not use djobs proactively",
+            f"present in {', '.join(present_in)}"
+            if has_block
+            else "missing — run 'djobs install-instructions'",
         )
     )
+
+    # Informational checks are never failures: even when False, the setup still
+    # works (e.g. no djobs-mcp on PATH just means wiring uses the interpreter
+    # directly). Showing these as FAIL after a successful `djobs init` is exactly
+    # what made the tool feel broken, so they render as INFO instead.
+    info_checks = {"djobs-mcp on PATH"}
 
     if getattr(args, "as_json", False):
         print(
             json.dumps(
                 {
                     "version": pkg_version,
-                    "checks": [{"name": n, "ok": o, "detail": d} for n, o, d in checks],
+                    "checks": [
+                        {
+                            "name": n,
+                            "ok": o,
+                            "detail": d,
+                            "level": "info" if n in info_checks else "check",
+                        }
+                        for n, o, d in checks
+                    ],
                 },
                 indent=2,
             )
@@ -607,7 +972,12 @@ def _cmd_doctor(args: argparse.Namespace) -> None:
 
     print("djobs doctor — setup diagnostics\n")
     for name, ok, detail in checks:
-        mark = "OK  " if ok else "FAIL"
+        if ok:
+            mark = "OK  "
+        elif name in info_checks:
+            mark = "INFO"
+        else:
+            mark = "FAIL"
         print(f"  [{mark}] {name}: {detail}")
     print()
 
@@ -615,6 +985,59 @@ def _cmd_doctor(args: argparse.Namespace) -> None:
     if not (pkg_ok and db_ok):
         print("One or more critical checks failed. See the FAIL lines above.")
         sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# init command (one-command onboarding)
+# ---------------------------------------------------------------------------
+
+
+def _cmd_init(args: argparse.Namespace) -> None:
+    """One-command setup: wire mcp.json, install agent instructions, run doctor.
+
+    This is the recommended way to onboard a project. It is composed from the
+    existing building blocks (``install-mcp`` + ``install-instructions`` +
+    ``doctor``) so behaviour stays consistent and there is nothing new to learn.
+    """
+    # 1. MCP wiring. Reuse install-mcp, but don't abort the whole init when an
+    #    mcp.json already exists — just keep it unless --force was given.
+    mcp_target = Path(args.output)
+    if mcp_target.exists() and not args.force:
+        print(f"MCP wiring already present at {mcp_target} (use --force to rewrite).")
+    else:
+        mcp_args = argparse.Namespace(
+            full_approve=args.full_approve,
+            print=False,
+            force=args.force,
+            output=args.output,
+            db=getattr(args, "db", None),
+            use_global=args.use_global,
+            python=args.python,
+            command=args.command,
+            portable=args.portable,
+            # init writes instructions itself (below), per --instructions-target.
+            write_instructions=False,
+        )
+        _cmd_install_mcp(mcp_args)
+
+    # 2. Agent instructions.
+    for target in _resolve_instruction_targets(args.instructions_target):
+        _write_instructions_to(target)
+
+    # 3. Diagnostics. doctor exits non-zero on a critical failure, which also
+    #    suppresses the success message below — intentional, so we never claim
+    #    success on a broken setup.
+    print()
+    _cmd_doctor(argparse.Namespace(as_json=False))
+
+    # 4. Success + next steps.
+    print(
+        "\ndjobs is initialized.\n\n"
+        "Next steps:\n"
+        "1. Restart VS Code / your agent host so it reloads .vscode/mcp.json.\n"
+        "2. Start a new agent session.\n"
+        "3. Ask the agent to call resume_session before continuing long-running work."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -720,7 +1143,7 @@ def main(argv: list[str] | None = None) -> None:
         prog="djobs",
         description="Distributed job system CLI",
     )
-    subparsers = parser.add_subparsers(dest="command")
+    subparsers = parser.add_subparsers(dest="subcommand")
 
     # --- serve ---
     serve_parser = subparsers.add_parser(
@@ -760,6 +1183,18 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     serve_parser.set_defaults(func=_cmd_serve)
+
+    # --- mcp ---
+    mcp_serve_parser = subparsers.add_parser(
+        "mcp",
+        help="Run the MCP server over stdio (for agents / uvx; honors DJOBS_DB)",
+    )
+    mcp_serve_parser.add_argument(
+        "--db",
+        default=None,
+        help="SQLite database path (default: $DJOBS_DB or djobs_mcp.db)",
+    )
+    mcp_serve_parser.set_defaults(func=_cmd_mcp)
 
     # --- dashboard ---
     dashboard_parser = subparsers.add_parser(
@@ -861,6 +1296,30 @@ def main(argv: list[str] | None = None) -> None:
     )
     archive_workflow_parser.set_defaults(func=_cmd_archive_workflow)
 
+    # --- explain ---
+    explain_parser = subparsers.add_parser(
+        "explain",
+        help="Explain in plain language why each still-visible task is in the queue",
+    )
+    explain_parser.add_argument(
+        "--db",
+        default=None,
+        help="SQLite database path (default: $DJOBS_DB or djobs_mcp.db)",
+    )
+    explain_parser.add_argument(
+        "--correlation-id",
+        default=None,
+        help="Only explain tasks in this workflow/session (omit for all visible tasks)",
+    )
+    explain_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        dest="output_format",
+        help="Output format (default: table)",
+    )
+    explain_parser.set_defaults(func=_cmd_explain)
+
     # --- install-mcp ---
     mcp_parser = subparsers.add_parser(
         "install-mcp",
@@ -938,6 +1397,85 @@ def main(argv: list[str] | None = None) -> None:
     )
     mcp_parser.set_defaults(func=_cmd_install_mcp, write_instructions=True)
 
+    # --- install-instructions ---
+    instr_parser = subparsers.add_parser(
+        "install-instructions",
+        help="Create/update the djobs agent guidance block (does NOT touch mcp.json)",
+    )
+    instr_parser.add_argument(
+        "--target",
+        choices=["copilot", "agent-md", "all"],
+        default="copilot",
+        help=(
+            "Which instruction file(s) to write: copilot=.github/copilot-instructions.md "
+            "(default), agent-md=.agent.md, all=both."
+        ),
+    )
+    instr_parser.add_argument(
+        "--print",
+        action="store_true",
+        help="Print the managed block to stdout instead of writing files",
+    )
+    instr_parser.set_defaults(func=_cmd_install_instructions)
+
+    # --- init (one-command onboarding) ---
+    init_parser = subparsers.add_parser(
+        "init",
+        help="One-command setup: wire mcp.json + install agent instructions + run doctor",
+    )
+    init_parser.add_argument(
+        "--full-approve",
+        action="store_true",
+        help="Include write tools (enqueue_task, complete_task, fail_task) in autoApprove",
+    )
+    init_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite an existing .vscode/mcp.json",
+    )
+    init_parser.add_argument(
+        "-o",
+        "--output",
+        default=".vscode/mcp.json",
+        help="mcp.json output path (default: .vscode/mcp.json)",
+    )
+    init_parser.add_argument(
+        "--python",
+        default=None,
+        help="Python interpreter the MCP server runs under (see 'install-mcp --python').",
+    )
+    init_parser.add_argument(
+        "--command",
+        default=None,
+        help="Exact launch command for the MCP server (see 'install-mcp --command').",
+    )
+    init_parser.add_argument(
+        "--portable",
+        action="store_true",
+        help="Emit a relocatable '${workspaceFolder}/.venv' hint (see 'install-mcp --portable').",
+    )
+    init_parser.add_argument(
+        "--db",
+        default=None,
+        help="Point the agent's MCP server at this database via DJOBS_DB.",
+    )
+    init_parser.add_argument(
+        "--global",
+        dest="use_global",
+        action="store_true",
+        help="Use the shared global queue at ~/.djobs/global.db (sets --db for you).",
+    )
+    init_parser.add_argument(
+        "--instructions-target",
+        choices=["copilot", "agent-md", "all"],
+        default="copilot",
+        help=(
+            "Which instruction file(s) to write: copilot=.github/copilot-instructions.md "
+            "(default), agent-md=.agent.md, all=both."
+        ),
+    )
+    init_parser.set_defaults(func=_cmd_init)
+
     # --- doctor ---
     doctor_parser = subparsers.add_parser(
         "doctor",
@@ -1000,8 +1538,13 @@ def main(argv: list[str] | None = None) -> None:
     if not hasattr(args, "func"):
         parser.print_help()
         sys.exit(1)
-    # install-mcp manages its own db wiring (DJOBS_DB env); don't auto-resolve.
-    if args.command != "install-mcp" and getattr(args, "db", None) is None and hasattr(args, "db"):
+    # install-mcp / init manage their own db wiring (DJOBS_DB env); don't auto-resolve.
+    # `mcp` likewise honors DJOBS_DB itself (and only configures when --db is given).
+    if (
+        args.subcommand not in ("install-mcp", "init", "mcp")
+        and getattr(args, "db", None) is None
+        and hasattr(args, "db")
+    ):
         args.db = _default_db()
     args.func(args)
 

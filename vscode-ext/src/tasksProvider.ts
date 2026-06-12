@@ -73,17 +73,34 @@ export class DjobsTasksProvider implements vscode.TreeDataProvider<DashItem> {
 
     const tasks = this.snapshot.tasks;
     if (tasks.length === 0) {
+      const options = this.client.getViewOptions();
+      const active = options.showCompleted ? '' : 'active ';
+      if (options.scope === 'currentWorkspace') {
+        return [
+          card('inbox', `No ${active}tasks for this workspace`),
+          card('add', 'Start a tracked workflow',
+            'Copies an agent prompt that resumes first, then creates djobs tasks before editing.',
+            { command: 'djobs.startWorkflow', title: 'Start Workflow' }),
+          hint('Use the globe toolbar button to show all workspaces.'),
+        ];
+      }
       return [
-        card('inbox', 'No tasks yet'),
-        hint('Use Durable Coder agent on a multi-file task.'),
+        card('inbox', `No ${active}tasks in the queue`),
+        hint(options.showCompleted
+          ? 'Use Durable Coder agent on a multi-file task.'
+          : 'Completed tasks are hidden by default.'),
       ];
     }
 
-    return buildRootLevel(tasks);
+    return buildRootLevel(tasks, this.client.getViewOptions().scope);
   }
 
   getIncompleteCount(): number {
     return this.snapshot?.tasks.filter((t) => !isTerminal(t.status)).length ?? 0;
+  }
+
+  getVisibleWorkflowCorrelationIds(): string[] {
+    return [...groupByCorrelation(this.snapshot?.tasks ?? []).keys()];
   }
 }
 
@@ -93,7 +110,7 @@ export class DjobsTasksProvider implements vscode.TreeDataProvider<DashItem> {
 // tooltip can resolve depends_on ids to readable labels and block state.
 const taskById = new Map<string, DjobsTask>();
 
-function buildRootLevel(tasks: DjobsTask[]): DashItem[] {
+function buildRootLevel(tasks: DjobsTask[], scope: 'currentWorkspace' | 'allWorkspaces'): DashItem[] {
   const items: DashItem[] = [];
 
   taskById.clear();
@@ -116,8 +133,9 @@ function buildRootLevel(tasks: DjobsTask[]): DashItem[] {
   }
 
   // Quick stats
+  const scopeLabel = scope === 'currentWorkspace' ? 'current workspace' : 'all workspaces';
   items.push(hint(
-    `Total: ${tasks.length} task(s) across ${workflows.size} workflow(s)`,
+    `Total: ${tasks.length} task(s) across ${workflows.size} workflow(s) in ${scopeLabel}`,
   ));
 
   return items;
@@ -149,6 +167,21 @@ function buildWorkflowChildren(tasks: DjobsTask[]): DashItem[] {
       parts.join(', ') + errorHint));
   }
 
+  // Surface abandoned-looking work even when a single workflow is flattened
+  // (no WorkflowGroup header to carry the badge). Points to the archive action.
+  const stale = staleCount(tasks);
+  if (stale > 0) {
+    const oldest = Math.max(
+      ...tasks.filter(isStale).map((t) => ageInDays(t.created_at) ?? 0),
+    );
+    items.push(card(
+      'warning',
+      `${stale} stale task(s) — older than ${STALE_AFTER_DAYS} days`,
+      `Oldest is ${oldest}d old. If this workflow was abandoned, archive it `
+        + `(right-click the workflow or run "djobs archive-workflow") instead of resuming.`,
+    ));
+  }
+
   const succeeded = tasks.filter((t) => t.status === 'succeeded');
   if (succeeded.length > 0) {
     items.push(new CompletedSummary(succeeded));
@@ -168,15 +201,20 @@ export class WorkflowGroup extends vscode.TreeItem {
     const label = friendlyWorkflow(correlationId);
     const resumable = tasks.filter((t) => !isTerminal(t.status)).length;
     const done = tasks.filter((t) => t.status === 'succeeded').length;
+    const stale = staleCount(tasks);
     super(label, vscode.TreeItemCollapsibleState.Expanded);
     this.iconPath = workflowIcon(tasks);
     this.description = `${done}/${tasks.length} done`
-      + (resumable > 0 ? ` · ${resumable} resumable` : '');
+      + (resumable > 0 ? ` · ${resumable} resumable` : '')
+      + (stale > 0 ? ` · ⚠ ${stale} stale` : '');
     this.tooltip = [
       `Workflow: ${correlationId}`,
       `Progress: ${done}/${tasks.length}`,
       resumable > 0 ? `Resumable: ${resumable}` : 'All clear',
-    ].join('\n');
+      stale > 0
+        ? `⚠ ${stale} task(s) stale (>${STALE_AFTER_DAYS}d) — right-click to archive if abandoned`
+        : undefined,
+    ].filter((l) => l !== undefined).join('\n');
     this.contextValue = 'workflowGroup';
   }
 }
@@ -234,7 +272,7 @@ export class TaskItem extends vscode.TreeItem {
     );
     this.description = taskDescription(task);
     this.tooltip = taskTooltip(task);
-    this.iconPath = statusIcon(task.status);
+    this.iconPath = isStale(task) ? new vscode.ThemeIcon('warning') : statusIcon(task.status);
     this.contextValue = 'task';
   }
 }
@@ -248,11 +286,12 @@ class EvidenceItem extends vscode.TreeItem {
 }
 
 class CardItem extends vscode.TreeItem {
-  constructor(icon: string, label: string, detail?: string) {
+  constructor(icon: string, label: string, detail?: string, command?: vscode.Command) {
     super(label, vscode.TreeItemCollapsibleState.None);
     this.iconPath = new vscode.ThemeIcon(icon);
     this.tooltip = detail ?? label;
     if (detail) { this.description = detail.split('\n')[0]; }
+    if (command) { this.command = command; }
     this.contextValue = 'card';
   }
 }
@@ -264,8 +303,8 @@ class HintItem extends vscode.TreeItem {
   }
 }
 
-function card(icon: string, label: string, detail?: string): CardItem {
-  return new CardItem(icon, label, detail);
+function card(icon: string, label: string, detail?: string, command?: vscode.Command): CardItem {
+  return new CardItem(icon, label, detail, command);
 }
 function hint(text: string): HintItem { return new HintItem(text); }
 
@@ -277,6 +316,10 @@ function taskDescription(task: DjobsTask): string {
   }
   if (isBlocked(task)) {
     return `⛔ blocked by ${dependencyLabel(blockingDeps(task)[0])}`;
+  }
+  if (isStale(task)) {
+    const age = ageInDays(task.created_at);
+    return `⚠ stale · ${age}d old — archive if abandoned`;
   }
   return task.created_at ? relativeTime(task.created_at) : '';
 }
@@ -306,10 +349,14 @@ function taskTooltip(task: DjobsTask): string {
   const condition = firstString(payload, ['condition', 'when', 'requires']);
   const action = friendlyAction(task.type);
   const blockedBy = blockedByLine(task);
+  const staleLine = isStale(task)
+    ? `⚠ Stale: incomplete for ${ageInDays(task.created_at)} days — archive the workflow if it was abandoned`
+    : undefined;
   return [
     summary ? `What: ${summary}` : `What: ${action}${file ? ' on ' + file : ''}`,
     why ? `Why: ${why}` : undefined,
     condition ? `Condition: ${condition}` : undefined,
+    staleLine,
     blockedBy,
     `Status: ${task.status}`,
     `Type: ${task.type}`,
@@ -445,6 +492,30 @@ function relativeTime(iso: string): string {
     if (hours < 24) { return `${hours}h ago`; }
     return `${Math.floor(hours / 24)}d ago`;
   } catch { return ''; }
+}
+
+// Keep in sync with djobs.mcp_server._STALE_AFTER_DAYS so the sidebar and the
+// agent's resume_session hints agree on what "stale" means.
+const STALE_AFTER_DAYS = 7;
+
+function ageInDays(iso: string | undefined): number | undefined {
+  if (!iso) { return undefined; }
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) { return undefined; }
+  return Math.floor((Date.now() - t) / 86_400_000);
+}
+
+// A task is stale when it has sat incomplete past the threshold — a signal that
+// the workflow may have been abandoned and is a candidate for archiving rather
+// than resuming.
+function isStale(task: DjobsTask): boolean {
+  if (isTerminal(task.status)) { return false; }
+  const age = ageInDays(task.created_at);
+  return age !== undefined && age >= STALE_AFTER_DAYS;
+}
+
+function staleCount(tasks: DjobsTask[]): number {
+  return tasks.filter(isStale).length;
 }
 
 function statusIcon(status: JobStatus): vscode.ThemeIcon {

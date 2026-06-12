@@ -1,0 +1,1056 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>djobs — Crash-proof task memory for AI coding agents</title>
+    <meta name="description" content="djobs is an open-source MCP server that gives Claude Code, Cursor, Cline, and Copilot crash-proof task memory — durable, resumable workflows that survive IDE crashes and context loss. Local SQLite, zero infra.">
+    <meta name="keywords" content="Claude Code, Cursor, Cline, Copilot, MCP server, AI coding agents, resumable workflows, workflow state, crash recovery, durable task queue">
+    <meta name="author" content="jhuang-tw">
+    <meta name="robots" content="index, follow, max-image-preview:large">
+    <meta name="theme-color" content="#272a3a">
+    <link rel="canonical" href="https://jhuang-tw.github.io/djobs/">
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="djobs">
+    <meta property="og:url" content="https://jhuang-tw.github.io/djobs/">
+    <meta property="og:title" content="djobs — Crash-proof task memory for AI coding agents">
+    <meta property="og:description" content="An open-source MCP server giving Claude Code, Cursor, Cline, and Copilot durable, resumable workflows that survive crashes and context loss.">
+    <meta property="og:image" content="https://raw.githubusercontent.com/jhuang-tw/djobs/main/vscode-ext/media/banner.png">
+    <meta property="og:image:alt" content="djobs — Crash-proof task memory for AI coding agents">
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="djobs — Crash-proof task memory for AI coding agents">
+    <meta name="twitter:description" content="An open-source MCP server giving Claude Code, Cursor, Cline, and Copilot durable, resumable workflows that survive crashes and context loss.">
+    <meta name="twitter:image" content="https://raw.githubusercontent.com/jhuang-tw/djobs/main/vscode-ext/media/banner.png">
+    <meta name="twitter:image:alt" content="djobs — Crash-proof task memory for AI coding agents">
+
+    <link rel="preconnect" href="https://raw.githubusercontent.com" crossorigin>
+
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "djobs",
+      "description": "Crash-proof task memory for Claude Code, Cursor, Cline, Copilot, and other AI coding agents via an MCP server with durable, resumable workflows.",
+      "applicationCategory": "DeveloperApplication",
+      "operatingSystem": "Windows, macOS, Linux",
+      "url": "https://jhuang-tw.github.io/djobs/",
+      "downloadUrl": "https://pypi.org/project/djobs/",
+      "codeRepository": "https://github.com/jhuang-tw/djobs",
+      "license": "https://opensource.org/licenses/MIT",
+      "programmingLanguage": "Python",
+      "author": { "@type": "Person", "name": "jhuang-tw", "url": "https://github.com/jhuang-tw" },
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+    }
+    </script>
+
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "What is djobs?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "djobs is an open-source MCP server that gives AI coding agents crash-proof task memory. It saves each step of long-running work as a durable task so the agent can resume exactly where it left off after an IDE crash, context loss, or interrupted session."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Which AI coding agents work with djobs?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Any MCP-compatible client, including Claude Code, Cursor, Cline, and GitHub Copilot. djobs exposes its tools over the Model Context Protocol, so agents call resume_session, enqueue_task, complete_task, and fail_task directly."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does djobs need a database server or cloud service?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. djobs stores tasks, status, and an audit trail in a local SQLite file by default — no broker, no daemon, and no cloud lock-in. PostgreSQL is supported optionally for shared setups."
+          }
+        }
+      ]
+    }
+    </script>
+
+    <style>
+      :root {
+        color-scheme: light;
+        --paper: #f4f2ec;
+        --ink: #23252f;
+        --muted: #5e6470;
+        --line: #e4dfd4;
+        --line-soft: #ece8de;
+        --panel: #fffdf9;
+        --navy: #272a3a;
+        --term: #0f1310;
+        --violet: #6d6ff1;
+        --violet-deep: #5557d6;
+        --lavender: #b3a6ef;
+        --green: #34a368;
+        --grad: linear-gradient(135deg, #6d6ff1 0%, #b3a6ef 100%);
+        --shadow-sm: 0 1px 2px rgba(31, 33, 45, 0.05), 0 6px 18px rgba(31, 33, 45, 0.06);
+        --shadow-lg: 0 24px 60px rgba(31, 33, 45, 0.16);
+        --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, ui-serif, serif;
+        --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        --mono: ui-monospace, SFMono-Regular, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        color: var(--ink);
+        font-family: var(--sans);
+        line-height: 1.6;
+        background:
+          radial-gradient(920px 520px at 88% -10%, rgba(109, 111, 241, 0.1), transparent 60%),
+          radial-gradient(820px 480px at -8% 2%, rgba(52, 163, 104, 0.08), transparent 55%),
+          var(--paper);
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizelegibility;
+      }
+
+      a {
+        color: inherit;
+      }
+
+      :focus-visible {
+        outline: 2px solid var(--violet);
+        outline-offset: 3px;
+        border-radius: 6px;
+      }
+
+      .skip {
+        position: absolute;
+        left: -999px;
+        top: 0;
+        background: var(--navy);
+        color: #fff;
+        padding: 10px 16px;
+        border-radius: 0 0 8px 0;
+        z-index: 20;
+      }
+
+      .skip:focus {
+        left: 0;
+      }
+
+      .wrap {
+        width: min(1140px, calc(100% - 40px));
+        margin: 0 auto;
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        margin: 0 0 22px;
+        padding: 6px 13px 6px 11px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--panel);
+        color: var(--muted);
+        font-size: 0.82rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        box-shadow: var(--shadow-sm);
+      }
+
+      .eyebrow .pip {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--grad);
+      }
+
+      /* Header */
+      header {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        border-bottom: 1px solid var(--line);
+        background: rgba(244, 242, 236, 0.82);
+        backdrop-filter: saturate(140%) blur(10px);
+      }
+
+      nav {
+        display: flex;
+        min-height: 66px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 800;
+        font-size: 1.12rem;
+        letter-spacing: -0.01em;
+        text-decoration: none;
+      }
+
+      .brand svg {
+        display: block;
+      }
+
+      .nav-links {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .nav-text {
+        padding: 8px 12px;
+        border-radius: 8px;
+        color: var(--muted);
+        font-size: 0.94rem;
+        font-weight: 550;
+        text-decoration: none;
+        transition: color 0.15s ease, background 0.15s ease;
+      }
+
+      .nav-text:hover {
+        color: var(--ink);
+        background: var(--line-soft);
+      }
+
+      .nav-sep {
+        width: 1px;
+        height: 22px;
+        margin: 0 8px;
+        background: var(--line);
+      }
+
+      .icon-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 38px;
+        height: 38px;
+        border-radius: 9px;
+        color: var(--muted);
+        text-decoration: none;
+        transition: color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+      }
+
+      .icon-link:hover {
+        color: var(--ink);
+        background: var(--line-soft);
+        transform: translateY(-1px);
+      }
+
+      .icon-link svg {
+        display: block;
+      }
+
+      main {
+        overflow: hidden;
+      }
+
+      /* Hero */
+      .hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1.06fr) minmax(340px, 0.94fr);
+        align-items: center;
+        gap: clamp(32px, 5vw, 60px);
+        min-height: 520px;
+        padding: clamp(40px, 6vw, 76px) 0 clamp(36px, 5vw, 60px);
+      }
+
+      h1 {
+        max-width: 12ch;
+        margin: 0;
+        font-family: var(--serif);
+        font-weight: 600;
+        font-size: clamp(2.6rem, 5.2vw, 4.4rem);
+        line-height: 1.04;
+        letter-spacing: -0.015em;
+      }
+
+      h1 .accent {
+        background: var(--grad);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+
+      .lead {
+        max-width: 60ch;
+        margin: 26px 0 0;
+        color: var(--muted);
+        font-size: clamp(1.05rem, 1.4vw, 1.22rem);
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 30px;
+      }
+
+      .install-pill {
+        display: inline-flex;
+        min-height: 48px;
+        align-items: center;
+        gap: 12px;
+        border: 1px solid #20222e;
+        border-radius: 10px;
+        background: var(--term);
+        color: #eef3ef;
+        padding: 0 16px;
+        box-shadow: var(--shadow-lg);
+        text-decoration: none;
+      }
+
+      .install-pill .prompt {
+        color: #7f86f4;
+        font-family: var(--mono);
+        font-weight: 700;
+      }
+
+      .install-pill code {
+        font: 650 0.95rem var(--mono);
+      }
+
+      .small-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 48px;
+        padding: 0 10px;
+        color: var(--muted);
+        font-size: 0.94rem;
+        font-weight: 650;
+        text-decoration: none;
+      }
+
+      .small-link:hover {
+        color: var(--ink);
+      }
+
+      .install-pill .copy-ic {
+        width: 16px;
+        height: 16px;
+        color: #8b91a3;
+        flex: none;
+      }
+
+      .install-pill:hover .copy-ic {
+        color: #cfd4dd;
+      }
+
+      .install-pill.copied {
+        border-color: var(--green);
+      }
+
+      .install-pill.copied .copy-ic,
+      .install-pill.copied .prompt {
+        color: var(--green);
+      }
+
+      .trust {
+        margin: 22px 0 0;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 18px;
+        color: var(--muted);
+        font-size: 0.88rem;
+      }
+
+      .trust span {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+      }
+
+      .trust .ok {
+        color: var(--green);
+        font-weight: 700;
+      }
+
+      .tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 9px;
+        margin-top: 26px;
+      }
+
+      .tag {
+        padding: 6px 12px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--panel);
+        color: var(--muted);
+        font-size: 0.86rem;
+      }
+
+      .tag:nth-child(4n + 1) { border-color: rgba(109, 111, 241, 0.4); }
+      .tag:nth-child(4n + 2) { border-color: rgba(52, 163, 104, 0.4); }
+      .tag:nth-child(4n + 3) { border-color: rgba(179, 166, 239, 0.55); }
+
+      /* Terminal */
+      .terminal {
+        overflow: hidden;
+        border-radius: 14px;
+        background: var(--term);
+        border: 1px solid #20222e;
+        box-shadow: var(--shadow-lg);
+      }
+
+      .terminal-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 15px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+      }
+
+      .terminal-bar .dot {
+        width: 11px;
+        height: 11px;
+        border-radius: 50%;
+      }
+
+      .dot.r { background: #ec6a5e; }
+      .dot.y { background: #f4bf4f; }
+      .dot.g { background: #61c554; }
+
+      .terminal-bar .ttl {
+        margin-left: 6px;
+        color: #8b91a3;
+        font: 600 0.8rem/1 var(--mono);
+      }
+
+      .terminal img {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+
+      /* Compatibility strip */
+      .compat {
+        border-top: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+        background: rgba(255, 253, 249, 0.6);
+      }
+
+      .compat .wrap {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 14px 26px;
+        padding: 22px 0;
+      }
+
+      .compat .label {
+        color: var(--muted);
+        font-size: 0.82rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .compat ul {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px 24px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .compat li {
+        font-weight: 650;
+        color: var(--ink);
+      }
+
+      /* Sections */
+      .band {
+        padding: clamp(56px, 8vw, 92px) 0;
+      }
+
+      .section-head {
+        max-width: 60ch;
+        margin: 0 0 44px;
+      }
+
+      .section-head h2 {
+        margin: 12px 0 14px;
+        font-family: var(--serif);
+        font-weight: 600;
+        font-size: clamp(1.9rem, 3.4vw, 2.9rem);
+        line-height: 1.08;
+        letter-spacing: -0.015em;
+      }
+
+      .section-head p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 1.08rem;
+      }
+
+      .label-sm {
+        margin: 0;
+        color: var(--violet-deep);
+        font-size: 0.8rem;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 20px;
+      }
+
+      .card {
+        padding: 26px 24px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--panel);
+        box-shadow: var(--shadow-sm);
+        transition: transform 0.16s ease, box-shadow 0.16s ease;
+      }
+
+      .card:hover {
+        transform: translateY(-3px);
+        box-shadow: var(--shadow-lg);
+      }
+
+      .icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 42px;
+        height: 42px;
+        margin-bottom: 16px;
+        border-radius: 11px;
+        background: linear-gradient(135deg, rgba(109, 111, 241, 0.16), rgba(179, 166, 239, 0.22));
+        color: var(--violet-deep);
+      }
+
+      .card h3 {
+        margin: 0 0 8px;
+        font-size: 1.12rem;
+        letter-spacing: -0.01em;
+      }
+
+      .card p {
+        margin: 0;
+        color: var(--muted);
+      }
+
+      /* Steps */
+      .steps {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 20px;
+        counter-reset: step;
+      }
+
+      .step {
+        position: relative;
+        padding: 26px 24px;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: var(--panel);
+        box-shadow: var(--shadow-sm);
+      }
+
+      .step::before {
+        counter-increment: step;
+        content: counter(step);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 34px;
+        height: 34px;
+        margin-bottom: 14px;
+        border-radius: 50%;
+        background: var(--navy);
+        color: #fff;
+        font-weight: 700;
+        font-size: 0.95rem;
+      }
+
+      .step h3 {
+        margin: 0 0 8px;
+        font-size: 1.08rem;
+        letter-spacing: -0.01em;
+      }
+
+      .step h3 code {
+        font: 600 0.86em var(--mono);
+        color: var(--violet-deep);
+        background: rgba(109, 111, 241, 0.1);
+        padding: 2px 6px;
+        border-radius: 5px;
+      }
+
+      .step p {
+        margin: 0;
+        color: var(--muted);
+      }
+
+      /* Install band */
+      .install-band {
+        border-top: 1px solid var(--line);
+        background:
+          radial-gradient(700px 360px at 100% 0%, rgba(109, 111, 241, 0.08), transparent 60%),
+          rgba(255, 253, 249, 0.6);
+      }
+
+      .install {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(300px, 460px);
+        gap: clamp(28px, 5vw, 56px);
+        align-items: center;
+      }
+
+      .install h2 {
+        margin: 12px 0 14px;
+        font-family: var(--serif);
+        font-weight: 600;
+        font-size: clamp(1.8rem, 3vw, 2.6rem);
+        line-height: 1.1;
+        letter-spacing: -0.015em;
+      }
+
+      .install p {
+        margin: 0 0 18px;
+        color: var(--muted);
+        font-size: 1.06rem;
+      }
+
+      .granular {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .granular li {
+        font: 0.86rem var(--mono);
+        color: var(--ink);
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        padding: 5px 10px;
+      }
+
+      .code-card {
+        border-radius: 14px;
+        overflow: hidden;
+        border: 1px solid #20222e;
+        box-shadow: var(--shadow-lg);
+      }
+
+      .code-card .terminal-bar {
+        background: var(--term);
+      }
+
+      pre {
+        overflow-x: auto;
+        margin: 0;
+        background: var(--term);
+        color: #e8efe9;
+        padding: 20px 22px 24px;
+        font: 0.95rem/1.8 var(--mono);
+      }
+
+      pre .p { color: #7f86f4; }
+      pre .c { color: #6f7787; }
+      pre .g { color: #69cf8e; }
+
+      /* Success result row under the command block (wraps instead of forcing
+         the whole code card to scroll horizontally). */
+      .code-status {
+        display: flex;
+        gap: 9px;
+        padding: 13px 22px 16px;
+        background: var(--term);
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        color: #9fb8a8;
+        font: 0.84rem/1.5 var(--mono);
+      }
+
+      .code-status .g {
+        color: #69cf8e;
+        font-weight: 700;
+        flex: none;
+      }
+
+      /* Closing CTA */
+      .cta-band {
+        padding: clamp(56px, 8vw, 96px) 0;
+        text-align: center;
+      }
+
+      .cta-band h2 {
+        max-width: 18ch;
+        margin: 0 auto 16px;
+        font-family: var(--serif);
+        font-weight: 600;
+        font-size: clamp(2rem, 4vw, 3rem);
+        line-height: 1.08;
+        letter-spacing: -0.015em;
+      }
+
+      .cta-band p {
+        max-width: 56ch;
+        margin: 0 auto 28px;
+        color: var(--muted);
+        font-size: 1.1rem;
+      }
+
+      .cta-band .actions {
+        justify-content: center;
+      }
+
+      /* Footer */
+      footer {
+        border-top: 1px solid var(--line);
+        padding: 40px 0;
+        color: var(--muted);
+      }
+
+      .foot {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+
+      .foot .links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 18px;
+      }
+
+      .foot a {
+        color: var(--muted);
+        text-decoration: none;
+      }
+
+      .foot a:hover {
+        color: var(--ink);
+      }
+
+      .foot .kw {
+        width: 100%;
+        margin: 0;
+        font-size: 0.84rem;
+        color: var(--muted);
+        opacity: 0.85;
+      }
+
+      @media (max-width: 880px) {
+        .hero,
+        .install {
+          grid-template-columns: 1fr;
+        }
+
+        .hero {
+          min-height: auto;
+        }
+
+        .cards,
+        .steps {
+          grid-template-columns: 1fr;
+        }
+
+        .nav-text,
+        .nav-sep {
+          display: none;
+        }
+      }
+
+      @media (max-width: 480px) {
+        .tags {
+          display: none;
+        }
+
+        pre {
+          font-size: 0.82rem;
+          padding: 18px 16px 20px;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+
+        * {
+          transition: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+
+    <header>
+      <nav class="wrap" aria-label="Primary">
+        <a class="brand" href="https://jhuang-tw.github.io/djobs/" aria-label="djobs home">
+          <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true" focusable="false">
+            <defs>
+              <linearGradient id="djring" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#6d6ff1"/>
+                <stop offset="1" stop-color="#b3a6ef"/>
+              </linearGradient>
+            </defs>
+            <rect x="0" y="0" width="28" height="28" rx="8" fill="#272a3a"/>
+            <path d="M20.5 9.2a7 7 0 1 0 1.4 4.2" fill="none" stroke="url(#djring)" stroke-width="2.4" stroke-linecap="round"/>
+            <path d="M9.6 14.2l3 3 6.2-7" fill="none" stroke="#4cc07d" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span>djobs</span>
+        </a>
+        <div class="nav-links">
+          <a class="nav-text" href="#how">How it works</a>
+          <a class="nav-text" href="#install">Install</a>
+          <span class="nav-sep" aria-hidden="true"></span>
+          <a class="icon-link" href="https://github.com/jhuang-tw/djobs" aria-label="djobs on GitHub" title="GitHub">
+            <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" focusable="false"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+          </a>
+          <a class="icon-link" href="https://pypi.org/project/djobs/" aria-label="djobs on PyPI" title="PyPI">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>
+          </a>
+          <a class="icon-link" href="https://marketplace.visualstudio.com/items?itemName=jhuang-tw.djobs" aria-label="djobs on the VS Code Marketplace" title="VS Code Marketplace">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"/></svg>
+          </a>
+        </div>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="wrap hero">
+        <div>
+          <p class="eyebrow"><span class="pip"></span> Workflow state for AI coding agents</p>
+          <h1>Crash-proof task memory for <span class="accent">AI coding agents</span></h1>
+          <p class="lead">
+            djobs gives Claude Code, Cursor, Cline, Copilot, and other AI coding agents durable,
+            resumable task memory over MCP. It saves every step of long-running work as workflow
+            state, so your agent resumes cleanly after IDE crashes, context loss, or interrupted chat
+            sessions - nothing lost, nothing redone.
+          </p>
+          <div class="actions">
+            <a class="button primary" href="https://marketplace.visualstudio.com/items?itemName=jhuang-tw.djobs">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"/></svg>
+              Install the VS Code extension
+            </a>
+            <a class="install-pill" href="#install" data-copy="djobs init" aria-label="Copy command: djobs init">
+              <span class="prompt">$</span>
+              <code>djobs init</code>
+              <svg class="copy-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            </a>
+          </div>
+          <div class="trust">
+            <span><span class="ok">&check;</span> MIT licensed</span>
+            <span><span class="ok">&check;</span> Any MCP agent</span>
+            <span><span class="ok">&check;</span> SQLite — zero infra</span>
+          </div>
+          <div class="tags" aria-label="Search keywords">
+            <span class="tag">Claude Code</span>
+            <span class="tag">Cursor</span>
+            <span class="tag">Cline</span>
+            <span class="tag">Copilot</span>
+            <span class="tag">MCP server</span>
+            <span class="tag">AI coding agents</span>
+            <span class="tag">resumable workflows</span>
+            <span class="tag">workflow state</span>
+          </div>
+        </div>
+        <figure class="terminal" style="margin: 0">
+          <img src="demo.svg" alt="Animated terminal demo: djobs resumes the unfinished tasks after an IDE crash, with no files lost and none re-done." loading="eager" decoding="async">
+        </figure>
+      </section>
+
+      <div class="compat">
+        <div class="wrap">
+          <span class="label">Works with</span>
+          <ul>
+            <li>Claude Code</li>
+            <li>Cursor</li>
+            <li>Cline</li>
+            <li>GitHub Copilot</li>
+            <li>Any MCP client</li>
+          </ul>
+        </div>
+      </div>
+
+      <section class="wrap band" aria-labelledby="why-title">
+        <div class="section-head">
+          <p class="label-sm">Why djobs</p>
+          <h2 id="why-title">Long agent tasks shouldn't vanish when the IDE does.</h2>
+          <p>
+            When a multi-file refactor or migration is interrupted, the agent's progress normally
+            lives only in chat history — and disappears with it. djobs makes that progress durable,
+            inspectable, and resumable.
+          </p>
+        </div>
+        <div class="cards">
+          <div class="card">
+            <span class="icon" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg>
+            </span>
+            <h3>Local-first memory</h3>
+            <p>Tasks, status, and a full audit trail live in SQLite by default. No broker, no daemon, no cloud lock-in.</p>
+          </div>
+          <div class="card">
+            <span class="icon" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 1 3 3v1a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3Z"/><path d="M5 10a3 3 0 0 0 0 6"/><path d="M19 10a3 3 0 0 1 0 6"/><path d="M9 13h6"/><path d="M12 16v4"/></svg>
+            </span>
+            <h3>Agent-native MCP</h3>
+            <p>Durable <code>enqueue</code>, <code>complete</code>, <code>inspect</code>, and <code>resume</code> tools are exposed directly to your agent over the Model Context Protocol.</p>
+          </div>
+          <div class="card">
+            <span class="icon" aria-hidden="true">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+            </span>
+            <h3>Human-inspectable</h3>
+            <p>See exactly what remains, what succeeded, and what changed when a session comes back — in the CLI or the VS Code sidebar.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="wrap band" id="how" aria-labelledby="how-title">
+        <div class="section-head">
+          <p class="label-sm">How it works</p>
+          <h2 id="how-title">Enqueue, crash, resume — nothing lost, nothing redone.</h2>
+          <p>
+            djobs also installs agent instructions, so coding agents proactively call
+            <code>resume_session</code>, <code>enqueue_task</code>, <code>complete_task</code>, and
+            <code>fail_task</code> during long or risky work — you don't have to remember to ask.
+          </p>
+        </div>
+        <div class="steps">
+          <div class="step">
+            <h3>Agent calls <code>enqueue_task</code></h3>
+            <p>As it plans a long job, the agent saves each unit of work as a durable task with a clear summary — a checkpoint that survives any crash.</p>
+          </div>
+          <div class="step">
+            <h3>The IDE crashes</h3>
+            <p>Context resets, the chat disconnects, the window closes. The in-flight plan would normally be gone — but every task is already on disk.</p>
+          </div>
+          <div class="step">
+            <h3>Agent calls <code>resume_session</code></h3>
+            <p>On the next session, the agent instantly recovers the unfinished tasks and continues — completing what's left without redoing finished work.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="install-band band" id="install" aria-labelledby="install-title">
+        <div class="wrap install">
+          <div>
+            <p class="label-sm">Get started</p>
+            <h2 id="install-title">Two ways in. Both take a minute.</h2>
+            <p>
+              djobs is workflow state for your agent, not a dependency of your app - so it works in
+              any repo. In VS Code, the extension installs and manages everything for you. For other
+              MCP agents, one command wires the project. djobs installs its own runtime; you don't
+              manage Python or config by hand.
+            </p>
+            <ul class="granular" aria-label="What setup does">
+              <li>installs runtime</li>
+              <li>wires MCP server</li>
+              <li>installs agent instructions</li>
+              <li>adds VS Code sidebar</li>
+            </ul>
+          </div>
+          <div class="code-card">
+            <div class="terminal-bar" aria-hidden="true">
+              <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+              <span class="ttl">setup</span>
+            </div>
+            <pre><code><span class="c"># VS Code / Copilot:</span>
+<span class="c"># install extension -&gt; run "Set up djobs"</span>
+
+<span class="c"># Claude Code / Cursor / Cline:</span>
+<span class="p">djobs</span> init</code></pre>
+            <div class="code-status">
+              <span class="g">&check;</span>
+              <span>runtime installed &middot; MCP wired &middot; instructions added &middot; doctor OK</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="wrap cta-band" aria-labelledby="cta-title">
+        <h2 id="cta-title">Give your agent a memory that survives the crash.</h2>
+        <p>Open source, MIT licensed, and built for calm multi-agent work. One install gives every MCP-aware coding agent the same durable workflow state.</p>
+        <div class="actions">
+          <a class="install-pill" href="#install" data-copy="djobs init" aria-label="Copy command: djobs init">
+            <span class="prompt">$</span>
+            <code>djobs init</code>
+            <svg class="copy-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          </a>
+          <a class="small-link" href="#install">See setup</a>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap foot">
+        <a class="brand" href="https://jhuang-tw.github.io/djobs/" aria-label="djobs home">
+          <svg width="24" height="24" viewBox="0 0 28 28" aria-hidden="true" focusable="false">
+            <rect x="0" y="0" width="28" height="28" rx="8" fill="#272a3a"/>
+            <path d="M20.5 9.2a7 7 0 1 0 1.4 4.2" fill="none" stroke="#b3a6ef" stroke-width="2.4" stroke-linecap="round"/>
+            <path d="M9.6 14.2l3 3 6.2-7" fill="none" stroke="#4cc07d" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span>djobs</span>
+        </a>
+        <div class="links">
+          <a href="https://github.com/jhuang-tw/djobs">GitHub</a>
+          <a href="https://pypi.org/project/djobs/">PyPI</a>
+          <a href="https://marketplace.visualstudio.com/items?itemName=jhuang-tw.djobs">VS Code Marketplace</a>
+        </div>
+        <p class="kw">
+          Crash recovery, resumable workflows, and durable task memory for Claude Code, Cursor,
+          Cline, GitHub Copilot, and any MCP coding agent. MIT licensed.
+        </p>
+      </div>
+    </footer>
+    <script>
+      // Progressive enhancement: clicking a command pill copies the command.
+      // If the clipboard API is unavailable, the anchor's href (#install) still works.
+      document.querySelectorAll('.install-pill[data-copy]').forEach((el) => {
+        el.addEventListener('click', async (e) => {
+          if (!navigator.clipboard) { return; }
+          try {
+            await navigator.clipboard.writeText(el.getAttribute('data-copy'));
+          } catch { return; }
+          e.preventDefault();
+          const code = el.querySelector('code');
+          const original = code.textContent;
+          code.textContent = 'Copied ✓';
+          el.classList.add('copied');
+          setTimeout(() => {
+            code.textContent = original;
+            el.classList.remove('copied');
+          }, 1500);
+        });
+      });
+    </script>
+  </body>
+</html>

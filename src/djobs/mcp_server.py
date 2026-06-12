@@ -35,7 +35,7 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from djobs.cli import BUILTIN_HANDLERS
-from djobs.core.models import Agent, Job
+from djobs.core.models import Agent, Job, _new_id
 from djobs.daemon import Daemon
 from djobs.queue.service import QueueService
 from djobs.storage.sqlite import SQLiteJobRepository
@@ -130,25 +130,142 @@ def _start_embedded_daemon() -> None:
     logger.info("Embedded daemon started (handlers: %s)", list(BUILTIN_HANDLERS))
 
 
+def _dumps(obj: Any) -> str:
+    """Compact JSON for agent-facing tool output.
+
+    Every byte returned by a tool is tokens the agent must read, so this uses the
+    tightest separators (no spaces, no indent). It trims roughly 15-30% off tool
+    responses versus pretty-printing, with zero loss of information.
+    """
+    return json.dumps(obj, separators=(",", ":"), default=str)
+
+
+def _correlation_id_variants(correlation_id: str) -> list[str]:
+    """Return equivalent spellings of a correlation_id for tolerant matching.
+
+    Agents and humans spell the same workspace path inconsistently —
+    ``c:\\proj`` vs ``C:/proj`` vs ``c:/proj/``. correlation_id is matched as an
+    exact string, so without this a task enqueued under one spelling would be
+    invisible to ``resume_session`` / ``list_tasks`` called with another, making
+    real work look lost — the exact thing that erodes trust in crash recovery.
+
+    We never rewrite the stored value (that could corrupt existing data);
+    instead we query for every equivalent spelling. The rules are deliberately
+    conservative so non-path ids (UUIDs, custom session ids) collapse to just
+    the original value and are unaffected:
+
+    - ``\\`` and ``/`` are treated as interchangeable (Windows vs POSIX);
+    - a trailing separator does not matter;
+    - a leading Windows drive letter is case-insensitive (``c:`` == ``C:``).
+    """
+    variants: set[str] = {correlation_id}
+
+    forward = correlation_id.replace("\\", "/")
+    variants.add(forward)
+    variants.add(forward.replace("/", "\\"))
+
+    for v in list(variants):
+        trimmed = v.rstrip("/\\")
+        if trimmed:
+            variants.add(trimmed)
+
+    for v in list(variants):
+        if len(v) >= 2 and v[1] == ":" and v[0].isalpha():
+            variants.add(v[0].lower() + v[1:])
+            variants.add(v[0].upper() + v[1:])
+
+    return sorted(variants)
+
+
+def _default_correlation_id() -> str:
+    """Correlation id to use when an agent omits one on ``enqueue_task``.
+
+    Agents routinely call ``enqueue_task`` without a ``correlation_id``. Left to
+    the model default, every such task would get a *fresh* random UUID, so they
+    would never group together and ``resume_session`` for the workspace would
+    not find them — silently defeating crash recovery, the whole point of the
+    tool. The MCP server runs with its working directory set to the workspace
+    root (VS Code launches it there, and the extension pins ``cwd`` explicitly),
+    so the cwd is a stable per-workspace id that matches what ``resume_session``
+    and the sidebar already use. Tolerant matching (``_correlation_id_variants``)
+    smooths over slash/drive-letter spelling differences. Falls back to a UUID
+    only if the cwd cannot be determined.
+    """
+    try:
+        cwd = os.getcwd()
+    except OSError:
+        return _new_id()
+    return cwd or _new_id()
+
+
+# Tasks still incomplete after this many days are flagged stale, so an
+# abandoned workflow reads as "archive me", not "silently nagging forever".
+_STALE_AFTER_DAYS = 7
+
+
+def _annotate_resume_tasks(tasks: list[dict[str, Any]]) -> None:
+    """Add derived ``stale`` / ``age_days`` / ``blocked_by`` hints in place.
+
+    These are advisory fields for the agent's benefit — they help it start with
+    work that is actually runnable and notice abandoned workflows — without
+    changing what is stored. Kept out of ``_job_to_dict`` so other tools stay
+    lean; only ``resume_session`` pays the (small) cost.
+    """
+    now = datetime.now(UTC)
+    incomplete_ids = {t["id"] for t in tasks}
+    for t in tasks:
+        created_raw = t.get("created_at")
+        if created_raw:
+            try:
+                created = datetime.fromisoformat(str(created_raw))
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=UTC)
+                age_days = (now - created).days
+                if age_days >= _STALE_AFTER_DAYS:
+                    t["stale"] = True
+                    t["age_days"] = age_days
+            except ValueError:
+                pass
+        # A task is blocked if any of its dependencies is still incomplete.
+        deps = t.get("depends_on") or []
+        blocking = [d for d in deps if d in incomplete_ids]
+        if blocking:
+            t["blocked_by"] = blocking
+
+
 def _job_to_dict(job: Job) -> dict[str, Any]:
-    """Serialise a Job dataclass to a JSON-safe dict."""
-    return {
+    """Serialise a Job to a JSON-safe dict, omitting empty/irrelevant fields.
+
+    Only fields that carry information are included. A freshly enqueued task has
+    no error, lease, dependencies, or schedule, so emitting those as ``null``
+    every time is pure token overhead in agent-facing payloads. Core fields
+    (id, type, status, payload, attempt counters, timestamps) are always present.
+    """
+    data: dict[str, Any] = {
         "id": job.id,
         "type": job.type,
         "status": job.status.value,
         "payload": job.payload,
         "attempt": job.attempt,
         "max_attempts": job.max_attempts,
-        "correlation_id": job.correlation_id,
-        "last_error": job.last_error,
-        "run_after": job.run_after.isoformat() if job.run_after else None,
-        "depends_on": job.depends_on,
-        "resource_key": job.resource_key,
-        "leased_by": job.leased_by,
-        "lease_expires_at": job.lease_expires_at.isoformat() if job.lease_expires_at else None,
         "created_at": job.created_at.isoformat(),
         "updated_at": job.updated_at.isoformat(),
     }
+    if job.correlation_id:
+        data["correlation_id"] = job.correlation_id
+    if job.last_error:
+        data["last_error"] = job.last_error
+    if job.run_after:
+        data["run_after"] = job.run_after.isoformat()
+    if job.depends_on:
+        data["depends_on"] = job.depends_on
+    if job.resource_key:
+        data["resource_key"] = job.resource_key
+    if job.leased_by:
+        data["leased_by"] = job.leased_by
+    if job.lease_expires_at:
+        data["lease_expires_at"] = job.lease_expires_at.isoformat()
+    return data
 
 
 def _agent_to_dict(agent: Agent) -> dict[str, Any]:
@@ -184,7 +301,9 @@ def enqueue_task(
         task_type: Category of work (e.g. "refactor", "add-docstrings", "test-gen").
         payload: JSON string with task-specific parameters.
         max_attempts: How many times to retry on failure (default 3).
-        correlation_id: Groups related tasks (use workspace path or session id).
+        correlation_id: Groups related tasks. Defaults to the current workspace
+                    directory when omitted, so resume_session finds these tasks
+                    later; pass an explicit workspace path or session id to override.
         idempotency_key: Prevents duplicate submission of the same task.
         depends_on: Optional list of task ids that must succeed before this task
                     becomes claimable. Use this to build a dependency DAG —
@@ -198,7 +317,25 @@ def enqueue_task(
         JSON summary of the created task including its id.
     """
     q = _get_queue()
-    parsed_payload = json.loads(payload) if isinstance(payload, str) else payload
+    if isinstance(payload, str):
+        try:
+            parsed_payload = json.loads(payload)
+        except json.JSONDecodeError as exc:
+            return _dumps(
+                {
+                    "error": "invalid payload JSON",
+                    "detail": str(exc),
+                    "hint": (
+                        "payload must be a JSON object string, e.g. "
+                        '{"file": "src/app.py", "summary": "add docstrings"}. '
+                        "Pass {} if there are no parameters."
+                    ),
+                }
+            )
+    else:
+        parsed_payload = payload
+    if correlation_id is None:
+        correlation_id = _default_correlation_id()
     job = q.submit(
         job_type=task_type,
         payload=parsed_payload,
@@ -208,7 +345,7 @@ def enqueue_task(
         depends_on=depends_on,
         resource_key=resource_key,
     )
-    return json.dumps(_job_to_dict(job), indent=2)
+    return _dumps(_job_to_dict(job))
 
 
 @_server.tool()
@@ -223,7 +360,7 @@ def check_task(task_id: str) -> str:
     """
     q = _get_queue()
     result = q.inspect(task_id)
-    return json.dumps(result, indent=2, default=str)
+    return _dumps(result)
 
 
 @_server.tool()
@@ -245,7 +382,7 @@ def complete_task(task_id: str, evidence: str | None = None) -> str:
     """
     q = _get_queue()
     job = q.complete(task_id, evidence=evidence)
-    return json.dumps(_job_to_dict(job), indent=2)
+    return _dumps(_job_to_dict(job))
 
 
 @_server.tool()
@@ -268,7 +405,7 @@ def fail_task(task_id: str, error: str) -> str:
     """
     q = _get_queue()
     job = q.fail(task_id, error)
-    return json.dumps(_job_to_dict(job), indent=2)
+    return _dumps(_job_to_dict(job))
 
 
 @_server.tool()
@@ -305,11 +442,8 @@ def claim_task(
     else:
         job = q.claim(agent_id, type_filter=task_types)
     if job is None:
-        return json.dumps(
-            {"claimed": False, "message": "No pending tasks available to claim."},
-            indent=2,
-        )
-    return json.dumps({"claimed": True, "task": _job_to_dict(job)}, indent=2)
+        return _dumps({"claimed": False, "message": "No pending tasks available to claim."})
+    return _dumps({"claimed": True, "task": _job_to_dict(job)})
 
 
 @_server.tool()
@@ -331,7 +465,7 @@ def heartbeat_task(task_id: str, agent_id: str, lease_seconds: int | None = None
     q = _get_queue()
     lease = timedelta(seconds=lease_seconds) if lease_seconds is not None else None
     job = q.heartbeat(task_id, agent_id, lease)
-    return json.dumps(_job_to_dict(job), indent=2)
+    return _dumps(_job_to_dict(job))
 
 
 @_server.tool()
@@ -354,7 +488,7 @@ def release_task(task_id: str, agent_id: str, reason: str | None = None) -> str:
     """
     q = _get_queue()
     job = q.release(task_id, agent_id, reason)
-    return json.dumps(_job_to_dict(job), indent=2)
+    return _dumps(_job_to_dict(job))
 
 
 @_server.tool()
@@ -379,7 +513,7 @@ def register_agent(
     """
     q = _get_queue()
     agent = q.register_agent(agent_id, capabilities, metadata)
-    return json.dumps(_agent_to_dict(agent), indent=2)
+    return _dumps(_agent_to_dict(agent))
 
 
 @_server.tool()
@@ -398,7 +532,7 @@ def agent_heartbeat(agent_id: str) -> str:
     """
     q = _get_queue()
     agent = q.agent_heartbeat(agent_id)
-    return json.dumps(_agent_to_dict(agent), indent=2)
+    return _dumps(_agent_to_dict(agent))
 
 
 @_server.tool()
@@ -417,13 +551,12 @@ def list_agents(status: str | None = None) -> str:
     q = _get_queue()
     reaped = q.reap_stale_agents()
     agents = q.list_agents(status)
-    return json.dumps(
+    return _dumps(
         {
             "reaped": [a.id for a in reaped],
             "count": len(agents),
             "agents": [_agent_to_dict(a) for a in agents],
-        },
-        indent=2,
+        }
     )
 
 
@@ -449,25 +582,29 @@ def list_tasks(
     repo: Any = q._repository
     if hasattr(repo, "_connection"):
         conn = repo._connection
+        cids = _correlation_id_variants(correlation_id)
+        # Placeholders are a fixed run of "?"; all values are bound parameters.
+        cid_ph = ",".join("?" for _ in cids)
         with repo._lock:
             if status_filter:
                 rows = conn.execute(
-                    "SELECT id FROM jobs WHERE correlation_id = ? AND status = ?",
-                    (correlation_id, status_filter),
+                    f"SELECT id FROM jobs WHERE correlation_id IN ({cid_ph}) "
+                    "AND status = ? ORDER BY rowid ASC",
+                    (*cids, status_filter),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT id FROM jobs WHERE correlation_id = ?",
-                    (correlation_id,),
+                    f"SELECT id FROM jobs WHERE correlation_id IN ({cid_ph}) ORDER BY rowid ASC",
+                    (*cids,),
                 ).fetchall()
         for row in rows:
             job = repo.get_job(row[0])
             if job is not None:
                 results.append(_job_to_dict(job))
     else:
-        return json.dumps({"error": "list_tasks requires SQLite backend"})
+        return _dumps({"error": "list_tasks requires SQLite backend"})
 
-    return json.dumps(results, indent=2, default=str)
+    return _dumps(results)
 
 
 @_server.tool()
@@ -487,35 +624,60 @@ def resume_session(correlation_id: str) -> str:
     repo: Any = q._repository
 
     incomplete_statuses = ("pending", "running", "retry_scheduled")
+    cids = _correlation_id_variants(correlation_id)
 
     tasks: list[dict[str, Any]] = []
     if hasattr(repo, "_connection"):
         conn = repo._connection
+        # Placeholders are a fixed run of "?"; all values are bound parameters.
+        cid_ph = ",".join("?" for _ in cids)
         with repo._lock:
             rows = conn.execute(
-                "SELECT id FROM jobs WHERE correlation_id = ? AND status IN (?, ?, ?)",
-                (correlation_id, *incomplete_statuses),
+                f"SELECT id FROM jobs WHERE correlation_id IN ({cid_ph}) "
+                "AND status IN (?, ?, ?) ORDER BY rowid ASC",
+                (*cids, *incomplete_statuses),
             ).fetchall()
         for row in rows:
             job = repo.get_job(row[0])
             if job is not None:
                 tasks.append(_job_to_dict(job))
     else:
-        return json.dumps({"error": "resume_session requires SQLite backend"})
+        return _dumps({"error": "resume_session requires SQLite backend"})
 
-    return json.dumps(
+    _annotate_resume_tasks(tasks)
+    stale_count = sum(1 for t in tasks if t.get("stale"))
+    blocked_count = sum(1 for t in tasks if t.get("blocked_by"))
+
+    if not tasks:
+        message = "No incomplete tasks. Starting fresh."
+    else:
+        parts = [
+            f"Found {len(tasks)} incomplete task(s) from a previous session, in order.",
+            "Before redoing each one, check the current file state (e.g. git diff); "
+            "if it is already done, call complete_task instead of editing it again.",
+        ]
+        if blocked_count:
+            parts.append(
+                f"{blocked_count} task(s) are blocked by unfinished dependencies "
+                "(see blocked_by) — start with the ready ones."
+            )
+        if stale_count:
+            parts.append(
+                f"{stale_count} task(s) are stale (older than {_STALE_AFTER_DAYS} days); "
+                "if a workflow was abandoned, archive it with 'djobs archive-workflow' "
+                "instead of resuming."
+            )
+        message = " ".join(parts)
+
+    return _dumps(
         {
             "correlation_id": correlation_id,
             "incomplete_count": len(tasks),
+            "stale_count": stale_count,
+            "blocked_count": blocked_count,
             "tasks": tasks,
-            "message": (
-                f"Found {len(tasks)} incomplete task(s). These survived from a previous session."
-                if tasks
-                else "No incomplete tasks. Starting fresh."
-            ),
-        },
-        indent=2,
-        default=str,
+            "message": message,
+        }
     )
 
 
@@ -528,7 +690,7 @@ def health() -> str:
     """
     q = _get_queue()
     result = q.health()
-    return json.dumps(result, indent=2)
+    return _dumps(result)
 
 
 @_server.tool()
@@ -567,14 +729,14 @@ def audit_log(
     q = _get_queue()
     repo: Any = q._repository
     if not hasattr(repo, "_connection"):
-        return json.dumps({"error": "audit_log requires SQLite backend"})
+        return _dumps({"error": "audit_log requires SQLite backend"})
 
     now = datetime.now(UTC)
     try:
         since_dt = datetime.fromisoformat(since) if since else now - timedelta(hours=24)
         until_dt = datetime.fromisoformat(until) if until else now
     except ValueError as exc:
-        return json.dumps({"error": f"invalid datetime format: {exc}"})
+        return _dumps({"error": f"invalid datetime format: {exc}"})
     if since_dt.tzinfo is None:
         since_dt = since_dt.replace(tzinfo=UTC)
     if until_dt.tzinfo is None:
@@ -626,7 +788,7 @@ def audit_log(
             }
             for row in rows
         ]
-        return json.dumps(
+        return _dumps(
             {
                 "since": since_dt.isoformat(),
                 "until": until_dt.isoformat(),
@@ -637,9 +799,7 @@ def audit_log(
                 "count": len(events_out),
                 "truncated": len(events_out) == limit,
                 "events": events_out,
-            },
-            indent=2,
-            default=str,
+            }
         )
 
     # Summary mode — aggregate scanned rows.
@@ -670,7 +830,7 @@ def audit_log(
         tasks_by_status[t["status"]] += 1
         tasks_by_type[t["type"]] += 1
 
-    return json.dumps(
+    return _dumps(
         {
             "since": since_dt.isoformat(),
             "until": until_dt.isoformat(),
@@ -687,9 +847,7 @@ def audit_log(
             },
             "recent_failures": failures,
             "scan_truncated": len(rows) == scan_limit,
-        },
-        indent=2,
-        default=str,
+        }
     )
 
 

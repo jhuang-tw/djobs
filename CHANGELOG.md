@@ -20,6 +20,164 @@ artifact.
 
 ## [Unreleased]
 
+### Added
+- `[core]` **MCP Registry manifest + `djobs mcp` subcommand.** Added a
+  `server.json` so djobs can be published to the official MCP Registry and
+  discovered as an MCP server (not only via PyPI / the Marketplace). It launches
+  the server with `uvx djobs mcp`, which keeps the verifiable PyPI package
+  `djobs` as the registry identifier while running the server through a new
+  `djobs mcp` subcommand (equivalent to the `djobs-mcp` console script, honoring
+  `DJOBS_DB`). The manifest version is kept in lockstep with `__version__` by
+  `sync-version.js`, so the single source of truth is unchanged.
+- `[core]` **`djobs explain` — why is each task still here?** A new read-only CLI
+  command that explains, in plain language, why every still-visible
+  (non-terminal) task has not completed: blocked by dependencies (and flags
+  dependencies that can never succeed), scheduled for later, waiting on a
+  resource lock, running (or orphaned by a dead worker), failed/dead-lettered,
+  or simply pending and possibly stale. Groups output by workflow with a
+  category summary, or `--format json` for tools. It mirrors the queue's real
+  claim gating, and is the read-only companion to `skip` / `accept-before` /
+  `archive-workflow` so users can see and clear work they were "haunted" by.
+- `[core]` **`enqueue_task` defaults `correlation_id` to the workspace.** When an
+  agent omits `correlation_id`, the task is now grouped under the MCP server's
+  working directory (the workspace root) instead of a throwaway UUID, so
+  `resume_session` for that workspace recovers it after a crash. Agents can still
+  pass an explicit workspace path or session id to override. This makes crash
+  recovery work even when the agent forgets to set a correlation id.
+- `[ext]` **Native MCP registration — no more hand-editing `.vscode/mcp.json`.**
+  On VS Code 1.101+ the extension registers the djobs MCP server programmatically
+  (`vscode.lm.registerMcpServerDefinitionProvider`), so a VS Code user gets a
+  working agent connection from installing the extension and the runtime alone —
+  no JSON to write. The server's `DJOBS_DB` follows the selected queue location,
+  so the agent's writes and the sidebar's reads share one database, and it
+  re-registers automatically when the runtime, queue location, or interpreter
+  changes. It defers to an existing `.vscode/mcp.json` djobs entry to avoid a
+  duplicate server, and the `djobs install-mcp` CLI remains for non-VS-Code
+  agents (Claude Code, Cursor, Cline) and committed/shared configs. Minimum
+  supported VS Code is now 1.101.
+- `[ext]` **`uv` support for zero-Python setup.** One-click setup now prefers
+  `uv tool install djobs` (after pipx) when `uv` is on PATH. Because `uv` is a
+  single binary that can provision its own Python, this is the one install path
+  that works with no pre-existing Python on the machine, and updates use
+  `uv tool upgrade`. When nothing is found, the setup error now offers "Get uv
+  (no Python needed)" alongside "Get Python", matching the `uvx djobs mcp`
+  launch used by the MCP Registry entry.
+
+### Changed
+- `[core]` **More opinionated agent guidance on evidence and idempotency.** The
+  auto-managed guidance block (written to `.github/copilot-instructions.md`) now
+  tells agents to give each task a stable `idempotency_key` so resuming after a
+  crash re-runs nothing already done, and to always close the loop with
+  `complete_task(task_id, evidence="what changed")` / `fail_task` — so a later
+  session or human can verify the work and trust `resume_session` instead of
+  redoing it. This brings the auto-loaded block in line with the fuller
+  `.agent.md` guidance.
+- `[docs]` **Repositioned as agent workflow state, not a Python package.** The
+  landing page and READMEs now lead with the value (crash-proof, resumable task
+  memory for AI coding agents) and an extension-first setup: the VS Code
+  extension is the recommended path, `djobs init` is the universal MCP path, and
+  installing the Python runtime (`pipx install djobs`) is presented as a managed
+  implementation detail rather than the first step.
+- `[ext]` **More robust one-click runtime setup.** The extension now picks the
+  best available installer (pipx, a project `.venv`, or a Python on PATH —
+  including the Windows `py -3` launcher), installs with `pip --user` when not
+  using pipx, and pins the concrete interpreter so the sidebar and MCP wiring
+  resolve even when the per-user Scripts directory is not on PATH. Setup also
+  verifies the install actually launches before reporting success, and when no
+  Python runtime exists it says so clearly with a "Get Python" action instead of
+  a misleading pip/pipx hint.
+- `[ext]` **Sidebar defaults to this workspace.** The VS Code sidebar now shows
+  only the current workspace by default, so tasks from another project in the
+  shared global queue do not appear as if they belong here. The globe toggle
+  still switches to all-workspaces view when you intentionally want the global
+  overview. `showCompleted=false` now also hides completed tasks from the tree
+  instead of still surfacing completed summaries.
+- `[core]` **`djobs status --correlation-id` matches workspace paths
+  tolerantly.** The extension's current-workspace view now finds jobs even when
+  the stored workflow id and the VS Code workspace path differ only by slash
+  direction, trailing separators, or Windows drive-letter case.
+- `[core]` **Agent guidance now requires a durable start ritual.** The managed
+  instructions tell agents to call `resume_session` before editing and to create
+  a durable `enqueue_task` plan before long or multi-step work, so djobs is not
+  left as an optional tool the agent can forget during exactly the work that
+  needs crash recovery.
+- `[ext]` **Start Tracked Workflow command.** The sidebar now has a command and
+  empty-state action that copies a prompt telling the agent to resume first,
+  enqueue one durable task per meaningful unit, use stable idempotency keys, and
+  complete each unit with evidence.
+- `[ext]` **Setup recovers from pipx using an old Python.** One-click setup no
+  longer stops at the first `pipx install djobs` failure when pipx is backed by
+  Python older than djobs supports. It now tries the remaining installers
+  (`uv`, workspace `.venv`, Windows `py -3.13/-3.12/-3.11/-3`, then
+  `python`/`python3`) and, only if none can satisfy Python 3.11+, shows a short
+  recovery message with `uv` / Python 3.11+ actions instead of dumping pip's
+  resolver output.
+
+## [0.8.0] - 2026-06-11
+
+### Added
+- `[core]` **`djobs init` — one-command onboarding.** Wires `.vscode/mcp.json`,
+  installs the agent guidance block, and runs `djobs doctor` in a single step,
+  then prints clear next steps. Supports the useful `install-mcp` flags
+  (`--full-approve`, `--force`, `--global`, `--db`, `--python`, `--command`,
+  `--portable`) plus `--instructions-target {copilot,agent-md,all}`.
+- `[core]` **`djobs install-instructions`** writes/updates the managed agent
+  guidance block without touching `mcp.json`. Targets: `--target copilot`
+  (`.github/copilot-instructions.md`, default), `--target agent-md` (`.agent.md`),
+  `--target all` (both); `--print` outputs the block without writing files. The
+  block is idempotent — re-running only replaces the djobs-managed section and
+  never disturbs your own instructions.
+- `[core]` **`resume_session` flags stale and blocked work.** Each incomplete
+  task may now carry advisory hints: `stale` / `age_days` when it has been
+  unfinished for more than 7 days (so an abandoned workflow reads as "archive
+  me" rather than nagging forever), and `blocked_by` listing unfinished
+  dependencies. The response adds `stale_count` / `blocked_count` and the
+  message points to `djobs archive-workflow` for stale workflows and tells the
+  agent to start with the ready (unblocked) tasks.
+- `[ext]` **The sidebar flags stale work.** Tasks left incomplete for more than
+  7 days now show a `⚠ stale · Nd old` badge with a warning icon, workflow rows
+  show a `⚠ N stale` count, and a card points you to archiving an abandoned
+  workflow instead of resuming it. Completed tasks are never marked stale. The
+  threshold matches `resume_session`'s, so the sidebar and the agent agree.
+
+### Changed
+- `[core]` **`djobs doctor`** now reports which instruction file(s) contain the
+  guidance block (`.github/copilot-instructions.md` and/or `.agent.md`), and
+  points to `djobs install-instructions` when the block is missing. A missing
+  block remains non-critical (critical checks stay: package importable and queue
+  DB usable).
+- `[core]` **Advisory doctor checks no longer look like failures.** Checks that
+  are informational (e.g. `djobs-mcp` not on PATH, which still works because
+  wiring falls back to the current interpreter) now render as `[INFO]` instead
+  of `[FAIL]`, and `doctor --json` tags each check with a `level`
+  (`"check"` or `"info"`). A successful `djobs init` no longer shows scary red
+  failures.
+- `[core]` **Agent tool responses are smaller (token savings).** Every MCP tool
+  now returns compact JSON (no pretty-print indentation), and task payloads omit
+  empty/irrelevant fields (no `null` `last_error`, `depends_on`, lease columns,
+  etc.) instead of always emitting them. `resume_session` and `list_tasks`
+  shrink the most. No fields are lost — present values are unchanged.
+- `[core]` **`resume_session` returns tasks in insertion order** (instead of an
+  arbitrary order) and its message now guides safe continuation: check the
+  current file state (e.g. `git diff`) before redoing a task and call
+  `complete_task` if it is already done, rather than re-editing it.
+
+### Fixed
+- `[core]` **`install-mcp`/`init` no longer mis-wire `DJOBS_DB`.** The `--command`
+  flag's dest collided with the subcommand dest, so the database auto-resolver
+  could run for `install-mcp`. Renamed the subcommand dest so default
+  `install-mcp`/`init` only set a `DJOBS_DB` env when you pass `--db`/`--global`.
+- `[core]` **`resume_session` / `list_tasks` no longer miss work due to path
+  spelling.** A `correlation_id` that is a filesystem path now matches across
+  equivalent spellings — `\` vs `/`, a trailing separator, and Windows
+  drive-letter case (`c:` == `C:`) — so a task enqueued as `c:\proj` is still
+  found when resuming `C:/proj`. The stored value is never rewritten (matching
+  is query-only), so existing data is unaffected; non-path ids (UUIDs, custom
+  session ids) behave exactly as before.
+- `[core]` **`enqueue_task` returns a helpful error for malformed `payload`.**
+  Invalid JSON now yields a clear `{"error": "invalid payload JSON", ...}` with
+  a hint and example instead of raising an unhandled exception.
+
 ## [0.7.3] - 2026-06-05
 
 ### Fixed

@@ -48,6 +48,8 @@ export interface DjobsDoctorCheck {
   name: string;
   ok: boolean;
   detail: string;
+  /** "info" checks are advisory: a false `ok` is not a failure. Defaults to "check". */
+  level?: 'check' | 'info';
 }
 
 export interface DjobsDoctorReport {

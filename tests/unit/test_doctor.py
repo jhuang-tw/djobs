@@ -85,6 +85,89 @@ def test_doctor_reports_present_mcp_json(
     assert "djobs-mcp" in wiring["detail"]
 
 
+# --- agent guidance block -------------------------------------------------
+
+
+def test_doctor_reports_missing_guidance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DJOBS_DB", str(tmp_path / "q.db"))
+    _run_doctor(as_json=True)
+    data = json.loads(capsys.readouterr().out)
+    guidance = next(c for c in data["checks"] if c["name"] == "agent guidance block")
+    assert guidance["ok"] is False
+    assert "install-instructions" in guidance["detail"]
+
+
+def test_doctor_reports_present_guidance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DJOBS_DB", str(tmp_path / "q.db"))
+    cli._write_instructions_to(tmp_path / ".github" / "copilot-instructions.md")
+    capsys.readouterr()  # drop the write message
+    _run_doctor(as_json=True)
+    data = json.loads(capsys.readouterr().out)
+    guidance = next(c for c in data["checks"] if c["name"] == "agent guidance block")
+    assert guidance["ok"] is True
+    assert ".github/copilot-instructions.md" in guidance["detail"]
+
+
+def test_doctor_missing_guidance_is_not_critical(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No instruction block present, but pkg + db are fine -> must NOT exit non-zero.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DJOBS_DB", str(tmp_path / "q.db"))
+    _run_doctor(as_json=False)  # would raise SystemExit if guidance were critical
+
+
+# --- info-level (advisory) checks -----------------------------------------
+
+
+def test_doctor_mcp_on_path_is_info_level(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # When djobs-mcp is not on PATH the wiring still works via the interpreter,
+    # so that check must be advisory (level=info), never a failure.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DJOBS_DB", str(tmp_path / "q.db"))
+    monkeypatch.setattr("shutil.which", lambda _name: None)
+    _run_doctor(as_json=True)
+    data = json.loads(capsys.readouterr().out)
+    mcp_check = next(c for c in data["checks"] if c["name"] == "djobs-mcp on PATH")
+    assert mcp_check["ok"] is False
+    assert mcp_check["level"] == "info"
+
+
+def test_doctor_human_output_uses_info_not_fail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A successful setup with no djobs-mcp on PATH must not print a scary [FAIL]
+    # for that advisory line — it renders as [INFO].
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DJOBS_DB", str(tmp_path / "q.db"))
+    monkeypatch.setattr("shutil.which", lambda _name: None)
+    _run_doctor(as_json=False)
+    out = capsys.readouterr().out
+    # The djobs-mcp line is present and marked INFO, not FAIL.
+    mcp_line = next(ln for ln in out.splitlines() if "djobs-mcp on PATH" in ln)
+    assert "[INFO]" in mcp_line
+    assert "[FAIL]" not in mcp_line
+
+
+def test_doctor_checks_default_to_check_level(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DJOBS_DB", str(tmp_path / "q.db"))
+    _run_doctor(as_json=True)
+    data = json.loads(capsys.readouterr().out)
+    pkg = next(c for c in data["checks"] if c["name"] == "djobs package")
+    assert pkg["level"] == "check"
+
+
 # --- _probe_command -------------------------------------------------------
 
 

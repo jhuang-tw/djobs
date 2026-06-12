@@ -11,6 +11,43 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const client = new DjobsClient(workspaceRoot);
   const provider = new DjobsTasksProvider(client);
 
+  // Register the djobs MCP server natively (VS Code 1.101+) so a VS Code user
+  // never hand-edits .vscode/mcp.json. Defer to an existing mcp.json djobs entry
+  // to avoid a duplicate server; re-provide whenever the runtime, queue
+  // location, or interpreter changes. The install-mcp CLI path remains for
+  // non-VS-Code agents and is the fallback when this API is unavailable.
+  const nativeMcp = typeof vscode.lm.registerMcpServerDefinitionProvider === 'function';
+  const mcpDidChange = new vscode.EventEmitter<void>();
+  if (nativeMcp) {
+    context.subscriptions.push(
+      mcpDidChange,
+      vscode.lm.registerMcpServerDefinitionProvider('djobsServerProvider', {
+        onDidChangeMcpServerDefinitions: mcpDidChange.event,
+        provideMcpServerDefinitions: async () => {
+          // Defer to a HEALTHY committed mcp.json djobs entry so we never run a
+          // duplicate server (committed/shared configs win). If that entry is
+          // dead (e.g. it points at a deleted .venv), provide natively so djobs
+          // still works; the setup flow separately offers to repair the file.
+          if (client.hasMcpJsonDjobsServer() && !client.detectDeadMcpInterpreter()) {
+            return [];
+          }
+          // Nothing to offer until the runtime is launchable; the setup flow
+          // fires the change emitter once it installs djobs so we re-provide.
+          if (!(await client.isPackageInstalled())) {
+            return [];
+          }
+          const launch = client.mcpServerLaunch();
+          const version = await client.installedVersion();
+          const server = new vscode.McpStdioServerDefinition(
+            'djobs', launch.command, launch.args, launch.env, version,
+          );
+          server.cwd = vscode.Uri.file(launch.cwd);
+          return [server];
+        },
+      }),
+    );
+  }
+
   // Status bar badge
   const statusBarItem = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Left, 50,
@@ -40,7 +77,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   };
 
   // Set initial scope context for conditional icon
-  const initialScope = vscode.workspace.getConfiguration('djobs').get<string>('scope', 'allWorkspaces');
+  const initialScope = vscode.workspace.getConfiguration('djobs').get<string>('scope', 'currentWorkspace');
   vscode.commands.executeCommand('setContext', 'djobs.scope', initialScope);
 
   const treeView = vscode.window.createTreeView('djobsTasks', {
@@ -65,6 +102,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     );
 
     if (selected === openChat) {
+      await openChatWithPrompt(prompt);
+    }
+  });
+
+  const startWorkflow = vscode.commands.registerCommand('djobs.startWorkflow', async () => {
+    const prompt = client.buildStartWorkflowPrompt();
+    await vscode.env.clipboard.writeText(prompt);
+    const selected = await vscode.window.showInformationMessage(
+      'Start workflow prompt copied. Use it to make the agent resume/enqueue before editing.',
+      'Open Chat',
+    );
+    if (selected === 'Open Chat') {
       await openChatWithPrompt(prompt);
     }
   });
@@ -117,11 +166,38 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     await provider.refresh();
   });
 
-  const archiveWorkflow = vscode.commands.registerCommand('djobs.archiveWorkflow', async (item?: WorkflowGroup) => {
-    const correlationId = item?.correlationId ?? workspaceRoot;
-    const label = item ? `"${item.label}"` : 'current workspace';
+  const archiveWorkflow = vscode.commands.registerCommand('djobs.archiveWorkflow', async (item?: WorkflowGroup | ActionGroup) => {
+    let correlationId: string | undefined;
+    let label = 'current workspace';
+
+    if (item instanceof WorkflowGroup) {
+      correlationId = item.correlationId;
+      label = `"${item.label}"`;
+    } else if (item instanceof ActionGroup && item.tasks.length > 0) {
+      correlationId = item.tasks[0].correlation_id ?? workspaceRoot;
+      label = `workflow "${workflowLabel(correlationId)}"`;
+    } else {
+      const workflows = provider.getVisibleWorkflowCorrelationIds();
+      if (workflows.length === 1) {
+        correlationId = workflows[0];
+        label = `workflow "${workflowLabel(correlationId)}"`;
+      } else if (workflows.length > 1) {
+        const picked = await vscode.window.showQuickPick(
+          workflows.map((id) => ({ label: workflowLabel(id), description: id, id })),
+          { placeHolder: 'Archive which djobs workflow?' },
+        );
+        if (!picked) {
+          return;
+        }
+        correlationId = picked.id;
+        label = `workflow "${picked.label}"`;
+      } else {
+        correlationId = workspaceRoot;
+      }
+    }
+
     const choice = await vscode.window.showWarningMessage(
-      `Archive all non-terminal tasks in ${label}?`,
+      `Archive all non-terminal tasks in ${label}? Completed tasks and audit history are kept.`,
       { modal: true },
       'Archive',
     );
@@ -153,7 +229,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const toggleScope = vscode.commands.registerCommand('djobs.toggleScope', async () => {
     const config = vscode.workspace.getConfiguration('djobs');
-    const current = config.get<string>('scope', 'allWorkspaces');
+    const current = config.get<string>('scope', 'currentWorkspace');
     const next = current === 'allWorkspaces' ? 'currentWorkspace' : 'allWorkspaces';
     await config.update('scope', next, vscode.ConfigurationTarget.Workspace);
     await vscode.commands.executeCommand('setContext', 'djobs.scope', next);
@@ -168,7 +244,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const next = current === 'global' ? 'workspace' : 'global';
     await config.update('queueLocation', next, vscode.ConfigurationTarget.Global);
 
-    if (next === 'global') {
+    if (nativeMcp) {
+      // The native server's DJOBS_DB follows the setting; re-provide so VS Code
+      // restarts the agent against the newly selected queue. No JSON to write.
+      mcpDidChange.fire();
+      vscode.window.showInformationMessage(
+        next === 'global'
+          ? 'djobs now uses the shared global queue (~/.djobs/global.db). Your agent follows automatically.'
+          : 'djobs now uses the per-workspace queue (djobs_mcp.db).',
+      );
+    } else if (next === 'global') {
       const wireUp = 'Wire up agent';
       const selected = await vscode.window.showInformationMessage(
         'djobs now reads the shared global queue (~/.djobs/global.db). '
@@ -202,10 +287,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const report = await client.doctor();
       let allOk = true;
       for (const check of report.checks) {
-        if (!check.ok) {
+        const info = check.level === 'info';
+        if (!check.ok && !info) {
           allOk = false;
         }
-        doctorChannel.appendLine(`  [${check.ok ? 'OK  ' : 'FAIL'}] ${check.name}: ${check.detail}`);
+        const mark = check.ok ? 'OK  ' : info ? 'INFO' : 'FAIL';
+        doctorChannel.appendLine(`  [${mark}] ${check.name}: ${check.detail}`);
       }
       doctorChannel.appendLine('');
       doctorChannel.appendLine(
@@ -228,13 +315,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   });
 
   const setup = vscode.commands.registerCommand('djobs.setup', async () => {
-    await runDjobsSetup(client, provider);
+    await runDjobsSetup(client, provider, nativeMcp, mcpDidChange);
   });
 
   const configWatcher = vscode.workspace.onDidChangeConfiguration(async (event) => {
     if (event.affectsConfiguration('djobs')) {
-      const newScope = vscode.workspace.getConfiguration('djobs').get<string>('scope', 'allWorkspaces');
+      const newScope = vscode.workspace.getConfiguration('djobs').get<string>('scope', 'currentWorkspace');
       await vscode.commands.executeCommand('setContext', 'djobs.scope', newScope);
+      if (nativeMcp && (
+        event.affectsConfiguration('djobs.pythonPath')
+        || event.affectsConfiguration('djobs.queueLocation')
+        || event.affectsConfiguration('djobs.globalDbPath')
+        || event.affectsConfiguration('djobs.dbPath')
+      )) {
+        // These determine the native server's launch command/env; re-provide.
+        mcpDidChange.fire();
+      }
       await provider.refresh();
     }
   });
@@ -248,6 +344,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     treeView,
     refresh,
     resumeAll,
+    startWorkflow,
     copyTaskId,
     inspectTask,
     resumeFromHere,
@@ -266,9 +363,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Update the Python package FIRST, against whichever interpreter the sidebar
   // runs. A stale djobs (predating --global / doctor) would otherwise make the
   // wiring commands below fail. Only wire when the CLI is current.
-  const cliReady = await maybeOfferUpdate(context, client);
+  const cliReady = await maybeOfferUpdate(context, client, mcpDidChange);
   if (cliReady) {
-    await maybeOfferSetup(context, client, provider);
+    await maybeOfferSetup(context, client, provider, nativeMcp, mcpDidChange);
   }
 }
 
@@ -289,9 +386,14 @@ async function maybeOfferSetup(
   context: vscode.ExtensionContext,
   client: DjobsClient,
   provider: DjobsTasksProvider,
+  nativeMcp: boolean,
+  mcpDidChange?: vscode.EventEmitter<void>,
 ): Promise<void> {
   const installed = await client.isPackageInstalled();
-  const needsWiring = client.isGlobalQueue() && !client.isGlobalMcpWired();
+  // With native registration the agent is wired automatically (no mcp.json), so
+  // the only reasons to prompt are a missing runtime or a dead, pre-existing
+  // mcp.json entry that VS Code would otherwise error on.
+  const needsWiring = !nativeMcp && client.isGlobalQueue() && !client.isGlobalMcpWired();
   const deadCommand = client.detectDeadMcpInterpreter();
   if (installed && !needsWiring && !deadCommand) {
     return;
@@ -336,7 +438,7 @@ async function maybeOfferSetup(
     return;
   }
 
-  await runDjobsSetup(client, provider);
+  await runDjobsSetup(client, provider, nativeMcp, mcpDidChange);
 }
 
 /**
@@ -349,6 +451,8 @@ async function maybeOfferSetup(
 async function runDjobsSetup(
   client: DjobsClient,
   provider: DjobsTasksProvider,
+  nativeMcp: boolean,
+  mcpDidChange?: vscode.EventEmitter<void>,
 ): Promise<void> {
   try {
     const installed = await client.isPackageInstalled();
@@ -359,9 +463,16 @@ async function runDjobsSetup(
           progress.report({ message: 'Installing djobs…' });
           await client.installPackage();
         }
-        // Re-evaluate after a possible install: prefer wiring the shared queue,
-        // otherwise repair a dead launch command so the MCP server can start.
-        if (client.isGlobalQueue() && !client.isGlobalMcpWired()) {
+        // Re-evaluate after a possible install. With native registration the
+        // agent is wired automatically, so only repair a dead, pre-existing
+        // mcp.json entry (never create a new JSON file). Otherwise fall back to
+        // wiring/repairing mcp.json via the CLI.
+        if (nativeMcp) {
+          if (client.detectDeadMcpInterpreter()) {
+            progress.report({ message: 'Re-wiring the agent…' });
+            await client.reWireMcp();
+          }
+        } else if (client.isGlobalQueue() && !client.isGlobalMcpWired()) {
           progress.report({ message: 'Wiring the agent…' });
           await client.wireGlobalMcp();
         } else if (client.detectDeadMcpInterpreter()) {
@@ -370,15 +481,71 @@ async function runDjobsSetup(
         }
       },
     );
+    // Let VS Code pick up a freshly installed runtime / repaired wiring.
+    mcpDidChange?.fire();
     vscode.window.showInformationMessage(
-      'djobs is set up. Reload the window if the MCP server was already running.',
+      nativeMcp
+        ? 'djobs is set up. Approve the djobs MCP server when VS Code prompts to give your agent crash-proof task memory.'
+        : 'djobs is set up. Reload the window if the MCP server was already running.',
     );
     await provider.refresh();
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
+
+    // No Python runtime at all: the extension cannot silently install one
+    // (that is a system change), so guide the user honestly instead of
+    // pretending pipx/pip is available.
+    if (detail === 'NO_PYTHON_RUNTIME') {
+      const getUv = 'Get uv (no Python needed)';
+      const getPython = 'Get Python';
+      const choice = await vscode.window.showErrorMessage(
+        'djobs needs a runtime to install its engine, but none was found on PATH. '
+          + 'Install uv (a single binary that needs no pre-existing Python) or '
+          + 'Python, then run "djobs: Set up / Repair djobs" again.',
+        getUv,
+        getPython,
+      );
+      if (choice === getUv) {
+        await vscode.env.openExternal(
+          vscode.Uri.parse('https://docs.astral.sh/uv/getting-started/installation/'),
+        );
+      } else if (choice === getPython) {
+        await vscode.env.openExternal(
+          vscode.Uri.parse('https://www.python.org/downloads/'),
+        );
+      }
+      return;
+    }
+
+    if (detail.startsWith('PYTHON_TOO_OLD')) {
+      const getUv = 'Get uv (recommended)';
+      const getPython = 'Get Python 3.11+';
+      const choice = await vscode.window.showErrorMessage(
+        'djobs requires Python 3.11 or newer. The setup flow tried the available '
+          + 'installers, but none could provide a compatible runtime. Install uv '
+          + '(recommended; it can provision Python automatically) or Python 3.11+, '
+          + 'then run "djobs: Set up / Repair djobs" again.',
+        getUv,
+        getPython,
+      );
+      if (choice === getUv) {
+        await vscode.env.openExternal(
+          vscode.Uri.parse('https://docs.astral.sh/uv/getting-started/installation/'),
+        );
+      } else if (choice === getPython) {
+        await vscode.env.openExternal(
+          vscode.Uri.parse('https://www.python.org/downloads/'),
+        );
+      }
+      return;
+    }
+
+    const friendly = detail === 'INSTALL_VERIFY_FAILED'
+      ? 'djobs installed but could not be launched afterward'
+      : `djobs setup failed: ${detail}`;
     const diagnose = 'Diagnose Setup';
     const choice = await vscode.window.showErrorMessage(
-      `djobs setup failed: ${detail}. If pipx is missing, install it first (pip install pipx).`,
+      `${friendly}. Open diagnostics for details.`,
       diagnose,
     );
     if (choice === diagnose) {
@@ -393,6 +560,11 @@ async function openChatWithPrompt(prompt: string): Promise<void> {
   } catch {
     await vscode.commands.executeCommand('workbench.action.chat.open');
   }
+}
+
+function workflowLabel(correlationId: string): string {
+  const parts = correlationId.replace(/\\/g, '/').split('/').filter(Boolean);
+  return parts.at(-1) ?? correlationId;
 }
 
 /**
@@ -425,6 +597,7 @@ export function isOlderVersion(a: string, b: string): boolean {
 async function maybeOfferUpdate(
   context: vscode.ExtensionContext,
   client: DjobsClient,
+  mcpDidChange?: vscode.EventEmitter<void>,
 ): Promise<boolean> {
   const extVersion = context.extension.packageJSON.version as string | undefined;
   const installedVer = await client.installedVersion();
@@ -480,6 +653,8 @@ async function maybeOfferUpdate(
       now ? `djobs updated to v${now}. Reload the window if the MCP server was already running.`
         : 'djobs updated.',
     );
+    // Re-provide so the native MCP server restarts on the new version.
+    mcpDidChange?.fire();
     // Updated successfully — the CLI is now current, so wiring is safe.
     return !!now && !isOlderVersion(now, extVersion);
   } catch (error) {

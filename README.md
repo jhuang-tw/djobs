@@ -1,9 +1,12 @@
 # djobs
 
-**Durable workflow control for AI coding agents.** When your AI agent runs a multi-file task, djobs makes every step inspectable, resumable, and controllable — and survives IDE crashes, context loss, or session interruptions.
+<!-- mcp-name: io.github.jhuang-tw/djobs -->
+
+**Crash-proof workflow state for AI coding agents.** djobs gives Claude Code, Cursor, Cline, Copilot, and other AI coding agents durable, resumable task memory over MCP — so long, multi-file work survives IDE crashes, context loss, or session interruptions instead of being lost or redone. It ships MCP tools, agent instructions, and a VS Code sidebar; the runtime installs and manages itself.
 
 [![CI](https://github.com/jhuang-tw/djobs/actions/workflows/ci.yml/badge.svg)](https://github.com/jhuang-tw/djobs/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/djobs.svg)](https://pypi.org/project/djobs/)
+[![Website](https://img.shields.io/badge/website-GitHub%20Pages-21835b.svg)](https://jhuang-tw.github.io/djobs/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 
@@ -63,46 +66,98 @@ Everything is stored in a local SQLite file. No Redis, no Docker, no cloud servi
 
 ## Quick Start
 
-> **djobs is a tool, not a project dependency.** Install it **once**, globally —
-> like `git` or `ripgrep` — and it works in every project, with or without a
-> virtual environment. You do **not** add it to each project's `requirements.txt`
-> or create a `.venv` for it.
+> **djobs is workflow state for your AI agent — not a dependency of your app.**
+> It works in any repo (Python, JS, Go, Rust, docs) because the queue is a tool
+> the agent uses, not a library your project imports. djobs installs and manages
+> its own runtime; you just pick how to set it up.
+
+### 1. VS Code / GitHub Copilot (recommended)
+
+Install the
+**[djobs extension](https://marketplace.visualstudio.com/items?itemName=jhuang-tw.djobs)**
+from the Marketplace, then run **`djobs: Set up / Repair djobs`** from the
+Command Palette (or click **Set up djobs** when the extension offers).
+
+That one step installs the runtime, wires the MCP server, installs the agent
+instructions, and adds the task sidebar. No terminal, no manual config.
+
+### 2. Any MCP agent (Claude Code, Cursor, Cline, …)
+
+One command wires the current project for any MCP-compatible agent:
+
+```bash
+djobs init
+```
+
+It writes `.vscode/mcp.json`, installs the agent guidance block in
+`.github/copilot-instructions.md`, runs `djobs doctor`, and prints next steps.
+It auto-detects the right interpreter, so the wiring works even in a JavaScript,
+Go, or Rust repo with no Python environment.
+
+> **djobs is not only an MCP tool.** It also installs agent instructions so
+> coding agents proactively call `resume_session`, `enqueue_task`,
+> `complete_task`, and `fail_task` during long or risky work — you don't have to
+> remember to tell them.
+
+<details>
+<summary>Installing the djobs runtime (only if setup asks)</summary>
+
+The VS Code extension installs and repairs the runtime for you. If you are
+setting up outside VS Code, install it once — like `git` or `ripgrep`, globally,
+not per project:
 
 ```bash
 pipx install djobs   # isolated global install (recommended)
-djobs install-mcp    # wire it into the current project's VS Code agent
+# no pipx? ->  pip install djobs   (or: python -m pip install --user djobs)
 ```
 
-No `pipx`? `pip install djobs` works too (`python -m pip install --user djobs`
-for a user-level install). `install-mcp` auto-detects the right interpreter, so
-the wiring keeps working even in a JavaScript, Go, or Rust repo with no Python
-environment.
+Then run `djobs init` in any project.
+</details>
 
-That's it — your AI agent now has crash-proof task memory.
+### Granular commands
 
-**Prefer the VS Code UI?** Install the
-[djobs extension](https://marketplace.visualstudio.com/items?itemName=jhuang-tw.djobs)
-and click **Set up djobs** when it offers — it runs the two steps above for you
-and adds a task sidebar.
+`djobs init` is the recommended path, but each step is also available on its own:
+
+```bash
+djobs install-mcp           # write only .vscode/mcp.json
+djobs install-instructions  # write only the agent guidance block
+djobs doctor                # diagnose an existing setup
+```
 
 Verify the setup at any time:
 
 ```bash
 djobs doctor
-# [OK  ] djobs package: v0.6.5 ...
+# [OK  ] djobs package: v0.7.3 ...
 # [OK  ] queue db (global default): ~/.djobs/global.db — exists, writable
 # [OK  ] mcp.json wiring: command='djobs-mcp' — found
+# [OK  ] agent guidance block: present in .github/copilot-instructions.md
 ```
 
 <details>
 <summary>Options and manual setup</summary>
 
 ```bash
-# Safe default (read-only tools auto-approved)
+# One-command setup with full auto-approve (agent can enqueue/complete/fail without prompts)
+djobs init --full-approve
+
+# Re-run setup, overwriting an existing mcp.json
+djobs init --force
+
+# Also write .agent.md (for agents that read it) in addition to copilot-instructions
+djobs init --instructions-target all
+
+# Just the wiring, safe default (read-only tools auto-approved)
 djobs install-mcp
 
-# Or with full auto-approve (agent can enqueue/complete/fail without prompts)
+# Or wiring with full auto-approve
 djobs install-mcp --full-approve
+
+# Just the agent guidance block (no mcp.json changes)
+djobs install-instructions                 # -> .github/copilot-instructions.md
+djobs install-instructions --target agent-md  # -> .agent.md
+djobs install-instructions --target all       # -> both
+djobs install-instructions --print            # print the block, write nothing
 ```
 
 Or add to `.vscode/mcp.json` manually. After a global install the `djobs-mcp`
@@ -228,6 +283,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 djobs includes a VS Code sidebar extension for visual workflow control:
 
 - **Workflow dashboard** — tasks grouped by workflow and action type with progress indicators
+- **Start tracked workflow** — copies an agent prompt that resumes first and
+  creates durable djobs tasks before multi-step edits
 - **Resume from any step** — expand a workflow, pick a file, and the previous steps are auto-accepted
 - **Skip / Archive** — mark tasks done without editing, or archive stale workflows
 - **Evidence trail** — see what the agent actually changed in each completed task
@@ -250,6 +307,7 @@ cd vscode-ext && npm install && npm run package
 - [x] Published on PyPI
 - [x] `complete_task` evidence field — agent records what it changed
 - [x] VS Code sidebar — workflow dashboard, resume from any step, skip/archive
+- [x] Start Tracked Workflow prompt — nudges agents to resume/enqueue before editing
 - [x] CLI workflow control — `djobs skip`, `djobs accept-before`, `djobs archive-workflow`
 - [x] Multi-agent coordination — shared-queue claim, dependencies, resource locks, agent registry
 - [x] Web dashboard — `djobs dashboard` cross-agent global view

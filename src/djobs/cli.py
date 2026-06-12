@@ -767,6 +767,11 @@ chat context, so long multi-step tasks stay cheap and avoid context overflow.
     returns unfinished tasks, continue those first instead of starting from chat
     memory. If it returns nothing, proceed normally for small work or create a
     durable plan for larger work.
+- **Treat natural work requests as the trigger.** If the user says anything like
+    "continue", "go on", "start", "fix this", "implement it", "run tests",
+    "release", or asks you to keep working, do not wait for them to mention
+    djobs. First call `resume_session`; for new multi-step work, enqueue a
+    durable plan before edits, then continue normally.
 - **Plan before editing long or multi-step work.** When a request touches
     multiple files, has several steps, needs tests/docs/release packaging, or
     could be interrupted, call `enqueue_task` before the first edit. Create one

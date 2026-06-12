@@ -43,6 +43,8 @@ def test_block_requires_resume_and_plan_before_long_work(workdir: Path) -> None:
     cli._write_instructions_block()
     content = _read(workdir)
     assert "Start every coding session with `resume_session`" in content
+    assert "Treat natural work requests as the trigger" in content
+    assert "do not wait for them to mention" in content
     assert "Plan before editing long or multi-step work" in content
     assert "call `enqueue_task` before the first edit" in content
 

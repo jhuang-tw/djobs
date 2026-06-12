@@ -2,7 +2,7 @@
   "name": "djobs",
   "displayName": "djobs — Crash-Proof Task Memory",
   "description": "Sidebar view for djobs: see task status, one-click resume, audit trail.",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "publisher": "jhuang-tw",
   "license": "MIT",
   "icon": "media/icon-128.png",
@@ -271,8 +271,8 @@
           ],
           "default": "askOnce",
           "enumDescriptions": [
-            "Ask once per workspace whether djobs may automatically open Chat and wrap AI work in durable state.",
-            "Zero-click mode: when djobs is ready, automatically open Chat with the resume/start workflow prompt.",
+            "Ask once per workspace whether djobs may automatically take over future AI work. Allowing it does not open Chat immediately.",
+            "Zero-click mode: when djobs is ready, automatically open Chat with the resume/start workflow prompt for future sessions.",
             "Ask before opening Chat once per extension version.",
             "Do not proactively start or resume djobs workflows."
           ],

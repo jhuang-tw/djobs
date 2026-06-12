@@ -3,7 +3,7 @@
   "name": "io.github.jhuang-tw/djobs",
   "title": "djobs",
   "description": "Crash-proof task memory for Claude Code, Cursor, Cline, Copilot agents via MCP.",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "repository": {
     "url": "https://github.com/jhuang-tw/djobs",
     "source": "github"
@@ -14,7 +14,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "djobs",
-      "version": "0.8.2",
+      "version": "0.8.3",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"

@@ -600,21 +600,26 @@ async function maybeOfferAutoTakeover(
 
   if (mode === 'askOnce') {
     const allow = 'Allow auto takeover';
+    const resumeNow = 'Resume now';
     const ask = 'Ask each time';
     const notNow = 'Not now';
     const never = "Don't ask again";
     const message = count > 0
-      ? `djobs found ${count} unfinished task(s). Allow djobs to open Chat automatically so your agent resumes before starting new work?`
-      : 'Allow djobs to open Chat automatically when this workspace opens, so AI work starts with resume/enqueue tracking instead of plain chat?';
+      ? `djobs found ${count} unfinished task(s). Allow future auto takeover, or resume them now?`
+      : 'Allow djobs to auto-take over future AI work in this workspace? This only changes the setting; it will not spend tokens now.';
+    const options = count > 0
+      ? [allow, resumeNow, ask, notNow, never]
+      : [allow, ask, notNow, never];
     const selected = await vscode.window.showInformationMessage(
       message,
-      allow,
-      ask,
-      notNow,
-      never,
+      ...options,
     );
     if (selected === allow) {
       await config.update('autoTakeoverMode', 'openChat', vscode.ConfigurationTarget.Workspace);
+      vscode.window.showInformationMessage(
+        'djobs auto takeover enabled for future AI work in this workspace.',
+      );
+    } else if (selected === resumeNow) {
       await vscode.env.clipboard.writeText(prompt);
       await openChatWithPrompt(prompt);
     } else if (selected === ask) {

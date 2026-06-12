@@ -20,10 +20,15 @@ a task sidebar. You do not manage Python or config by hand.
    resumes first, then creates djobs tasks before editing.
 
 When djobs is ready, the extension asks once per workspace whether it may
-auto-take over future AI work. If you allow it, later sessions open Chat with
-the right resume/enqueue prompt before multi-step edits. It cannot silently
-intercept every AI chat message; instead it wires MCP tools, installs agent
-guidance, and brings Chat to the correct starting prompt.
+auto-take over future AI work. Choosing **Allow auto takeover** only changes the
+workspace setting; it does not open Chat or spend tokens immediately. Later
+sessions open Chat with the right resume/enqueue prompt before multi-step edits.
+It cannot silently intercept every AI chat message; instead it wires MCP tools,
+installs agent guidance, and brings Chat to the correct starting prompt.
+
+After that, keep talking normally: "continue", "fix this", "run tests", or
+"release" are enough. The installed agent guidance tells the AI to bring djobs
+in before editing; you do not need to mention djobs in every prompt.
 
 The setup step installs the runtime if needed, registers the MCP server,
 installs the agent guidance block, and verifies everything with `djobs doctor`.
@@ -32,9 +37,10 @@ Use **djobs: Diagnose Setup** anytime to re-check.
 ## Upgrading from an older version
 
 After upgrade, djobs asks once per workspace whether it may automatically open
-Chat with the right resume/enqueue prompt. Choose **Allow auto takeover** for
-the most hands-off flow, **Ask each time** if you want a prompt before Chat
-opens, or turn it off later with `djobs.autoTakeoverMode`.
+Chat with the right resume/enqueue prompt in future sessions. Choose **Allow
+auto takeover** for the most hands-off flow (no tokens are spent immediately),
+**Ask each time** if you want a prompt before Chat opens, or turn it off later
+with `djobs.autoTakeoverMode`.
 
 ## What the sidebar shows
 

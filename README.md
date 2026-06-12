@@ -82,10 +82,15 @@ That one step installs the runtime, wires the MCP server, installs the agent
 instructions, and adds the task sidebar. No terminal, no manual config.
 
 When djobs is ready, the extension asks once per workspace whether it may
-auto-take over future AI work. If you allow it, later sessions open Chat with a
-prompt that tells the agent to call `resume_session`, create durable tasks
-before multi-step edits, and finish each unit with evidence. You can switch this
-between `askOnce`, `openChat`, `prompt`, and `off` with `djobs.autoTakeoverMode`.
+auto-take over future AI work. Choosing **Allow auto takeover** only changes the
+workspace setting; it does not open Chat or spend tokens immediately. Later
+sessions open Chat with a prompt that tells the agent to call `resume_session`,
+create durable tasks before multi-step edits, and finish each unit with
+evidence. You can switch this between `askOnce`, `openChat`, `prompt`, and `off`
+with `djobs.autoTakeoverMode`.
+After that, you keep talking normally — “continue”, “fix this”, “run tests”, or
+“release” are enough. The installed agent guidance tells the AI to bring djobs
+in before editing; you do not need to mention djobs in every prompt.
 
 ### 2. Any MCP agent (Claude Code, Cursor, Cline, …)
 

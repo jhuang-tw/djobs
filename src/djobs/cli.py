@@ -12,6 +12,7 @@ Commands::
     djobs install-instructions  Create/update the agent guidance block
     djobs doctor             Diagnose setup (interpreter, wiring, db)
     djobs explain            Explain why each still-visible task is in the queue
+    djobs token-savings      Estimate token savings from durable task evidence
     djobs audit              Query the audit trail from the terminal
 """
 
@@ -26,6 +27,9 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from djobs.core.constants import STALE_AFTER_DAYS
+from djobs.core.correlation import correlation_id_variants
 
 Handler = Callable[[dict[str, Any]], Any]
 
@@ -47,26 +51,11 @@ def _global_db() -> str:
     return str(Path.home() / ".djobs" / "global.db")
 
 
-def _correlation_id_variants(correlation_id: str) -> list[str]:
-    """Equivalent spellings for path-like workflow ids used by CLI filters."""
-    variants: set[str] = {correlation_id}
-    forward = correlation_id.replace("\\", "/")
-    variants.add(forward)
-    variants.add(forward.replace("/", "\\"))
-    for value in list(variants):
-        trimmed = value.rstrip("/\\")
-        if trimmed:
-            variants.add(trimmed)
-    for value in list(variants):
-        if len(value) >= 2 and value[1] == ":" and value[0].isalpha():
-            variants.add(value[0].lower() + value[1:])
-            variants.add(value[0].upper() + value[1:])
-    return sorted(variants)
-
-
-# A pending task older than this many days is flagged as likely abandoned. Kept
-# in sync with ``_STALE_AFTER_DAYS`` in mcp_server.py and the extension sidebar.
-_STALE_AFTER_DAYS = 7
+# Tolerant correlation_id matching and the stale threshold live in djobs.core so
+# the CLI, MCP server, and VS Code extension cannot drift apart. The private
+# aliases keep existing call sites unchanged.
+_correlation_id_variants = correlation_id_variants
+_STALE_AFTER_DAYS = STALE_AFTER_DAYS
 
 
 def _parse_dt(value: Any) -> datetime | None:
@@ -325,6 +314,28 @@ def _cmd_dashboard(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _latest_evidence_by_job(repo: Any) -> dict[str, str | None]:
+    """Map each job id to its most recent ``job_succeeded`` evidence message.
+
+    Shared by ``status`` and ``token-savings`` so the evidence lookup cannot
+    drift between the two commands. Ordered newest-first; ``setdefault`` keeps
+    the latest message per job (``None`` when that completion had no evidence).
+    """
+    evidence: dict[str, str | None] = {}
+    with repo._lock:
+        rows = repo._connection.execute(
+            """
+            SELECT job_id, message
+            FROM job_events
+            WHERE event_type = 'job_succeeded'
+            ORDER BY created_at DESC
+            """
+        ).fetchall()
+    for row in rows:
+        evidence.setdefault(row["job_id"], row["message"])
+    return evidence
+
+
 def _cmd_status(args: argparse.Namespace) -> None:
     """JSON snapshot for the VS Code extension."""
     import json
@@ -338,18 +349,7 @@ def _cmd_status(args: argparse.Namespace) -> None:
 
     health_data = queue.health()
 
-    evidence_by_job: dict[str, str | None] = {}
-    with repo._lock:
-        event_rows = repo._connection.execute(
-            """
-            SELECT job_id, message
-            FROM job_events
-            WHERE event_type = 'job_succeeded'
-            ORDER BY created_at DESC
-            """
-        ).fetchall()
-    for row in event_rows:
-        evidence_by_job.setdefault(row["job_id"], row["message"])
+    evidence_by_job = _latest_evidence_by_job(repo)
 
     tasks: list[dict[str, Any]] = []
     with repo._lock:
@@ -588,6 +588,158 @@ def _cmd_explain(args: argparse.Namespace) -> None:
     for cat, count in by_category.most_common():
         print(f"  {cat:15s} {count}")
     print(f"\n{len(tasks)} visible task(s) across {workflows} workflow(s).")
+
+
+def _estimate_tokens(text: str, chars_per_token: float) -> int:
+    """Rough token estimate using a configurable chars/token ratio."""
+    import math
+
+    if not text:
+        return 0
+    return max(1, math.ceil(len(text) / chars_per_token))
+
+
+def _payload_summary(payload_json: str | None) -> str:
+    """Return human-readable task payload fields for estimates."""
+    import json
+
+    if not payload_json:
+        return ""
+    try:
+        payload = json.loads(payload_json)
+    except json.JSONDecodeError:
+        return payload_json
+    if not isinstance(payload, dict):
+        return payload_json
+    fields: list[str] = []
+    for key in ("summary", "title", "name", "description", "file", "why", "condition"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            fields.append(value.strip())
+    return " | ".join(fields) if fields else json.dumps(payload, separators=(",", ":"))
+
+
+def _cmd_token_savings(args: argparse.Namespace) -> None:
+    """Estimate how many prompt tokens djobs avoids during resume/recovery.
+
+    This is intentionally an estimate, not metering. It compares a conservative
+    "without djobs" replay model (the agent re-reads/re-plans each completed
+    step after a reset) with the compact durable evidence djobs keeps for those
+    completed steps. The assumptions are printed so the number is explainable
+    and suitable for product experiments.
+    """
+    import json
+
+    from djobs.storage.sqlite import SQLiteJobRepository
+
+    if args.chars_per_token <= 0:
+        raise SystemExit("--chars-per-token must be greater than 0")
+    if args.redo_overhead_tokens < 0:
+        raise SystemExit("--redo-overhead-tokens must be 0 or greater")
+
+    repo = SQLiteJobRepository.from_path(args.db)
+    evidence_by_job = _latest_evidence_by_job(repo)
+
+    with repo._lock:
+        if args.correlation_id:
+            cids = _correlation_id_variants(args.correlation_id)
+            placeholders = ",".join("?" for _ in cids)
+            rows = repo._connection.execute(
+                "SELECT id, type, status, payload_json, correlation_id, last_error "
+                f"FROM jobs WHERE correlation_id IN ({placeholders}) AND status != ? "
+                "ORDER BY created_at",
+                (*cids, "archived"),
+            ).fetchall()
+        else:
+            rows = repo._connection.execute(
+                "SELECT id, type, status, payload_json, correlation_id, last_error "
+                "FROM jobs WHERE status != ? ORDER BY correlation_id, created_at",
+                ("archived",),
+            ).fetchall()
+
+    completed: list[dict[str, Any]] = []
+    incomplete = 0
+    estimated_replay_tokens = 0
+    estimated_djobs_tokens = 0
+
+    for row in rows:
+        payload_summary = _payload_summary(row["payload_json"])
+        evidence = evidence_by_job.get(row["id"]) or ""
+        durable_text = "\n".join(
+            part
+            for part in (
+                row["type"],
+                row["status"],
+                payload_summary,
+                evidence,
+                row["last_error"] or "",
+            )
+            if part
+        )
+        durable_tokens = _estimate_tokens(durable_text, args.chars_per_token)
+
+        if row["status"] == "succeeded":
+            replay_text = "\n".join(
+                part for part in (row["type"], row["payload_json"] or "", evidence) if part
+            )
+            replay_tokens = args.redo_overhead_tokens + _estimate_tokens(
+                replay_text,
+                args.chars_per_token,
+            )
+            saved = max(0, replay_tokens - durable_tokens)
+            estimated_replay_tokens += replay_tokens
+            estimated_djobs_tokens += durable_tokens
+            completed.append(
+                {
+                    "id": row["id"],
+                    "type": row["type"],
+                    "correlation_id": row["correlation_id"],
+                    "estimated_replay_tokens": replay_tokens,
+                    "estimated_djobs_evidence_tokens": durable_tokens,
+                    "estimated_saved_tokens": saved,
+                    "has_evidence": bool(evidence),
+                }
+            )
+        else:
+            incomplete += 1
+
+    estimated_saved = max(0, estimated_replay_tokens - estimated_djobs_tokens)
+    pct = (
+        round((estimated_saved / estimated_replay_tokens) * 100, 1)
+        if estimated_replay_tokens
+        else 0.0
+    )
+    result = {
+        "task_count": len(rows),
+        "completed_count": len(completed),
+        "incomplete_count": incomplete,
+        "estimated_without_djobs_replay_tokens": estimated_replay_tokens,
+        "estimated_with_djobs_evidence_tokens": estimated_djobs_tokens,
+        "estimated_saved_tokens": estimated_saved,
+        "estimated_saved_percent": pct,
+        "assumptions": {
+            "chars_per_token": args.chars_per_token,
+            "redo_overhead_tokens_per_completed_task": args.redo_overhead_tokens,
+            "model": "completed tasks would otherwise need replay/re-read/re-plan "
+            "after context loss; djobs keeps compact evidence instead",
+        },
+        "completed_tasks": completed,
+    }
+
+    if args.output_format == "json":
+        print(json.dumps(result, indent=2, default=str))
+        return
+
+    scope = f" for {args.correlation_id}" if args.correlation_id else ""
+    print(f"djobs token savings estimate{scope}")
+    print(f"  tasks:       {len(rows)} total, {len(completed)} completed, {incomplete} incomplete")
+    print(f"  without:     {estimated_replay_tokens} replay token(s)")
+    print(f"  with djobs:  {estimated_djobs_tokens} evidence token(s)")
+    print(f"  saved:       {estimated_saved} token(s) ({pct}%)")
+    print("\nAssumptions:")
+    print(f"  chars/token: {args.chars_per_token}")
+    print(f"  redo cost:   {args.redo_overhead_tokens} token(s) per completed task")
+    print("  model:       completed task context is not replayed after resume")
 
 
 # ---------------------------------------------------------------------------
@@ -1319,6 +1471,42 @@ def main(argv: list[str] | None = None) -> None:
         help="Output format (default: table)",
     )
     explain_parser.set_defaults(func=_cmd_explain)
+
+    # --- token-savings ---
+    token_savings_parser = subparsers.add_parser(
+        "token-savings",
+        help="Estimate replay tokens saved by durable completed-task evidence",
+    )
+    token_savings_parser.add_argument(
+        "--db",
+        default=None,
+        help="SQLite database path (default: $DJOBS_DB or djobs_mcp.db)",
+    )
+    token_savings_parser.add_argument(
+        "--correlation-id",
+        default=None,
+        help="Only estimate one workflow/session (omit for all non-archived tasks)",
+    )
+    token_savings_parser.add_argument(
+        "--redo-overhead-tokens",
+        type=int,
+        default=600,
+        help="Estimated re-read/re-plan overhead per completed task (default: 600)",
+    )
+    token_savings_parser.add_argument(
+        "--chars-per-token",
+        type=float,
+        default=4.0,
+        help="Approximate characters per token for estimation (default: 4.0)",
+    )
+    token_savings_parser.add_argument(
+        "--format",
+        choices=["table", "json"],
+        default="table",
+        dest="output_format",
+        help="Output format (default: table)",
+    )
+    token_savings_parser.set_defaults(func=_cmd_token_savings)
 
     # --- install-mcp ---
     mcp_parser = subparsers.add_parser(

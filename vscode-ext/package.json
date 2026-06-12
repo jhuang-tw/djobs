@@ -2,7 +2,7 @@
   "name": "djobs",
   "displayName": "djobs — Crash-Proof Task Memory",
   "description": "Sidebar view for djobs: see task status, one-click resume, audit trail.",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "publisher": "jhuang-tw",
   "license": "MIT",
   "icon": "media/icon-128.png",
@@ -25,14 +25,7 @@
     "copilot"
   ],
   "activationEvents": [
-    "onView:djobsTasks",
-    "onCommand:djobs.refresh",
-    "onCommand:djobs.startWorkflow",
-    "onCommand:djobs.resumeAll",
-    "onCommand:djobs.copyTaskId",
-    "onCommand:djobs.inspectTask",
-    "onCommand:djobs.diagnose",
-    "onCommand:djobs.setup",
+    "onStartupFinished",
     "workspaceContains:**/djobs_mcp.db",
     "workspaceContains:.vscode/mcp.json"
   ],
@@ -262,6 +255,28 @@
           "type": "boolean",
           "default": false,
           "description": "Show completed tasks in the sidebar. Disabled by default to keep the task list focused on active work."
+        },
+        "djobs.autoTakeoverPrompt": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Legacy on/off switch for automatic takeover. Prefer `djobs.autoTakeoverMode` for new setups."
+        },
+        "djobs.autoTakeoverMode": {
+          "type": "string",
+          "enum": [
+            "askOnce",
+            "openChat",
+            "prompt",
+            "off"
+          ],
+          "default": "askOnce",
+          "enumDescriptions": [
+            "Ask once per workspace whether djobs may automatically open Chat and wrap AI work in durable state.",
+            "Zero-click mode: when djobs is ready, automatically open Chat with the resume/start workflow prompt.",
+            "Ask before opening Chat once per extension version.",
+            "Do not proactively start or resume djobs workflows."
+          ],
+          "description": "How djobs should proactively bring AI work into durable workflow state when a workspace opens."
         },
         "djobs.autoRefreshInterval": {
           "type": "number",

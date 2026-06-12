@@ -492,6 +492,58 @@ class TestCLI:
         assert "[ready]" in out
         assert "Summary:" in out
 
+    def test_token_savings_estimates_completed_work_json(self, tmp_path, capsys):
+        db_path = tmp_path / "jobs.db"
+        repository = SQLiteJobRepository.from_path(db_path)
+        queue = QueueService(repository)
+        first = queue.submit(
+            "edit-file",
+            {"summary": "Update README", "file": "README.md"},
+            correlation_id="workflow-a",
+        )
+        queue.complete(first.id, evidence="Updated onboarding copy")
+        queue.submit("run-tests", {"summary": "Run pytest"}, correlation_id="workflow-a")
+        queue.submit("other", {"summary": "Other project"}, correlation_id="workflow-b")
+
+        main(
+            [
+                "token-savings",
+                "--db",
+                str(db_path),
+                "--correlation-id",
+                "workflow-a",
+                "--redo-overhead-tokens",
+                "100",
+                "--format",
+                "json",
+            ]
+        )
+
+        output = json.loads(capsys.readouterr().out)
+        assert output["task_count"] == 2
+        assert output["completed_count"] == 1
+        assert output["incomplete_count"] == 1
+        assert (
+            output["estimated_without_djobs_replay_tokens"]
+            > output["estimated_with_djobs_evidence_tokens"]
+        )
+        assert output["estimated_saved_tokens"] > 0
+        assert output["completed_tasks"][0]["has_evidence"] is True
+
+    def test_token_savings_table_output(self, tmp_path, capsys):
+        db_path = tmp_path / "jobs.db"
+        repository = SQLiteJobRepository.from_path(db_path)
+        queue = QueueService(repository)
+        job = queue.submit("docs", {"summary": "Write docs"}, correlation_id="workflow-a")
+        queue.complete(job.id, evidence="Wrote docs")
+
+        main(["token-savings", "--db", str(db_path), "--correlation-id", "workflow-a"])
+
+        out = capsys.readouterr().out
+        assert "djobs token savings estimate" in out
+        assert "saved:" in out
+        assert "Assumptions" in out
+
 
 # ---------------------------------------------------------------------------
 # Integration: MCP enqueue → Daemon processes

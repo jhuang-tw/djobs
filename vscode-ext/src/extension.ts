@@ -69,11 +69,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
   }
 
-  // Wrap refresh to also update status bar
+  // Wrap refresh to also update the status bar, and guard against overlapping
+  // runs: each refresh spawns a Python child process, and the auto-refresh
+  // timer + config watcher can otherwise fire concurrently (slow on Windows).
   const originalRefresh = provider.refresh.bind(provider);
+  let refreshing = false;
   provider.refresh = async () => {
-    await originalRefresh();
-    updateStatusBar();
+    if (refreshing) {
+      return;
+    }
+    refreshing = true;
+    try {
+      await originalRefresh();
+      updateStatusBar();
+    } finally {
+      refreshing = false;
+    }
   };
 
   // Set initial scope context for conditional icon
@@ -109,13 +120,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const startWorkflow = vscode.commands.registerCommand('djobs.startWorkflow', async () => {
     const prompt = client.buildStartWorkflowPrompt();
     await vscode.env.clipboard.writeText(prompt);
-    const selected = await vscode.window.showInformationMessage(
-      'Start workflow prompt copied. Use it to make the agent resume/enqueue before editing.',
-      'Open Chat',
+    await openChatWithPrompt(prompt);
+    vscode.window.showInformationMessage(
+      'djobs tracking prompt opened. The prompt was also copied to clipboard.',
     );
-    if (selected === 'Open Chat') {
-      await openChatWithPrompt(prompt);
-    }
   });
 
   const copyTaskId = vscode.commands.registerCommand('djobs.copyTaskId', async (item?: TaskItem) => {
@@ -366,6 +374,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const cliReady = await maybeOfferUpdate(context, client, mcpDidChange);
   if (cliReady) {
     await maybeOfferSetup(context, client, provider, nativeMcp, mcpDidChange);
+    await maybeOfferAutoTakeover(context, client, provider, nativeMcp);
   }
 }
 
@@ -485,8 +494,8 @@ async function runDjobsSetup(
     mcpDidChange?.fire();
     vscode.window.showInformationMessage(
       nativeMcp
-        ? 'djobs is set up. Approve the djobs MCP server when VS Code prompts to give your agent crash-proof task memory.'
-        : 'djobs is set up. Reload the window if the MCP server was already running.',
+        ? 'djobs is set up. When asked, allow auto takeover so future AI work starts inside durable task memory.'
+        : 'djobs is set up. Reload the window if the MCP server was already running, then allow auto takeover when prompted.',
     );
     await provider.refresh();
   } catch (error) {
@@ -554,11 +563,110 @@ async function runDjobsSetup(
   }
 }
 
+async function maybeOfferAutoTakeover(
+  context: vscode.ExtensionContext,
+  client: DjobsClient,
+  provider: DjobsTasksProvider,
+  nativeMcp: boolean,
+): Promise<void> {
+  const config = vscode.workspace.getConfiguration('djobs');
+  if (!config.get<boolean>('autoTakeoverPrompt', true)) {
+    return;
+  }
+  const mode = config.get<'askOnce' | 'openChat' | 'prompt' | 'off'>(
+    'autoTakeoverMode', 'askOnce',
+  );
+  if (mode === 'off') {
+    return;
+  }
+  if (!(await client.isPackageInstalled())) {
+    return;
+  }
+  // Don't nudge the agent toward djobs when the status snapshot failed to load
+  // (djobs may be broken) or when the agent isn't actually wired to the queue —
+  // otherwise tracked work would silently not be recorded.
+  if (!provider.hasSnapshot()) {
+    return;
+  }
+  if (!nativeMcp && client.isGlobalQueue() && !client.isGlobalMcpWired()) {
+    return;
+  }
+  if (context.workspaceState.get<boolean>('djobs.autoTakeover.dismissed')) {
+    return;
+  }
+
+  const count = provider.getIncompleteCount();
+  const prompt = count > 0 ? client.buildResumePrompt() : client.buildStartWorkflowPrompt();
+
+  if (mode === 'askOnce') {
+    const allow = 'Allow auto takeover';
+    const ask = 'Ask each time';
+    const notNow = 'Not now';
+    const never = "Don't ask again";
+    const message = count > 0
+      ? `djobs found ${count} unfinished task(s). Allow djobs to open Chat automatically so your agent resumes before starting new work?`
+      : 'Allow djobs to open Chat automatically when this workspace opens, so AI work starts with resume/enqueue tracking instead of plain chat?';
+    const selected = await vscode.window.showInformationMessage(
+      message,
+      allow,
+      ask,
+      notNow,
+      never,
+    );
+    if (selected === allow) {
+      await config.update('autoTakeoverMode', 'openChat', vscode.ConfigurationTarget.Workspace);
+      await vscode.env.clipboard.writeText(prompt);
+      await openChatWithPrompt(prompt);
+    } else if (selected === ask) {
+      await config.update('autoTakeoverMode', 'prompt', vscode.ConfigurationTarget.Workspace);
+    } else if (selected === never) {
+      await config.update('autoTakeoverMode', 'off', vscode.ConfigurationTarget.Workspace);
+      await context.workspaceState.update('djobs.autoTakeover.dismissed', true);
+    }
+    return;
+  }
+
+  if (mode === 'openChat') {
+    await vscode.env.clipboard.writeText(prompt);
+    await openChatWithPrompt(prompt);
+    return;
+  }
+
+  const extensionVersion = context.extension.packageJSON.version as string | undefined;
+  const promptKey = `djobs.autoTakeover.prompted.${extensionVersion ?? 'unknown'}`;
+  if (context.workspaceState.get<boolean>(promptKey)) {
+    return;
+  }
+  await context.workspaceState.update(promptKey, true);
+
+  const primary = count > 0 ? `Resume ${count} task(s)` : 'Start tracked workflow';
+  const dontAsk = "Don't ask again";
+  const message = count > 0
+    ? `djobs found ${count} unfinished task(s) for this workspace. Resume before starting new work?`
+    : 'djobs is ready to track AI work in this workspace. Start tracked workflows before multi-step edits?';
+  const selected = await vscode.window.showInformationMessage(message, primary, dontAsk);
+  if (selected === dontAsk) {
+    await context.workspaceState.update('djobs.autoTakeover.dismissed', true);
+    return;
+  }
+  if (selected === primary) {
+    await vscode.env.clipboard.writeText(prompt);
+    await openChatWithPrompt(prompt);
+  }
+}
+
 async function openChatWithPrompt(prompt: string): Promise<void> {
   try {
     await vscode.commands.executeCommand('workbench.action.chat.open', { query: prompt });
   } catch {
-    await vscode.commands.executeCommand('workbench.action.chat.open');
+    try {
+      await vscode.commands.executeCommand('workbench.action.chat.open');
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      vscode.window.showWarningMessage(
+        `djobs: could not open Chat (${detail}). The prompt is on your clipboard — paste it into Chat.`,
+      );
+    }
   }
 }
 

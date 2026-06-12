@@ -58,7 +58,7 @@ Everything is stored in a local SQLite file. No Redis, no Docker, no cloud servi
 > it speaks MCP natively, optimizes for crash-recovery and human-inspectable audit trails over raw
 > throughput, and runs with zero infrastructure — one local SQLite file, no broker, no daemon.
 
-> **Maturity — early but tested.** 291 passing tests, CI across Python 3.11–3.13, SQLite and optional
+> **Maturity — early but tested.** 369 passing tests, CI across Python 3.11–3.13, SQLite and optional
 > PostgreSQL backends. Marked Alpha while the public API stabilizes; the core enqueue → complete →
 > resume flow is stable and used daily.
 
@@ -80,6 +80,12 @@ Command Palette (or click **Set up djobs** when the extension offers).
 
 That one step installs the runtime, wires the MCP server, installs the agent
 instructions, and adds the task sidebar. No terminal, no manual config.
+
+When djobs is ready, the extension asks once per workspace whether it may
+auto-take over future AI work. If you allow it, later sessions open Chat with a
+prompt that tells the agent to call `resume_session`, create durable tasks
+before multi-step edits, and finish each unit with evidence. You can switch this
+between `askOnce`, `openChat`, `prompt`, and `off` with `djobs.autoTakeoverMode`.
 
 ### 2. Any MCP agent (Claude Code, Cursor, Cline, …)
 
@@ -253,6 +259,9 @@ Beyond the three core tools, djobs also provides:
 - **`check_task` / `list_tasks`** — Inspect individual tasks or list by workspace.
 - **`health`** — Queue depth by status at a glance.
 - **`djobs doctor`** — One-shot setup check: confirms djobs is installed, the queue DB is writable, and `.vscode/mcp.json` is wired correctly. Run it (or "djobs: Diagnose Setup" in VS Code) whenever something feels off.
+- **`djobs token-savings`** — Estimate how many replay/re-plan tokens a workflow
+  avoids because completed task state and evidence are durable. Example:
+  `djobs token-savings --correlation-id C:\my\repo --format json`.
 - **Multi-agent coordination** — Several agents share one queue: `claim_task` (atomic, exclusive), `heartbeat_task`, `release_task`, task dependencies (`depends_on`), resource locks (`resource_key`), and an agent registry (`register_agent` / `agent_heartbeat` / `list_agents`).
 - **Web dashboard** — `djobs dashboard` serves a read-only, cross-agent view of queue health, every task, and the live agent fleet at `http://127.0.0.1:8787` (stdlib only, no extra deps). **Local-only by design:** no authentication, binds to `127.0.0.1`; for remote access use an SSH tunnel rather than exposing a public interface.
 - **Retry with backoff** — Failed tasks can retry automatically.
@@ -270,7 +279,7 @@ cd djobs
 python -m venv .venv && .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest -q              # 291 tests (18 skipped without Postgres)
+pytest -q              # 369 tests (18 skipped without Postgres)
 ruff check src/ tests/ # lint
 ```
 

@@ -534,10 +534,41 @@ class SQLiteJobRepository:
         """Return jobs matching the given status string."""
         with self._lock:
             rows = self._connection.execute(
-                "SELECT id FROM jobs WHERE status = ? ORDER BY updated_at DESC LIMIT ?",
+                "SELECT * FROM jobs WHERE status = ? ORDER BY updated_at DESC LIMIT ?",
                 (status, limit),
             ).fetchall()
-        return [self.require_job(row["id"]) for row in rows]
+            return [_row_to_job(row) for row in rows]
+
+    def list_jobs_by_correlation_ids(
+        self,
+        correlation_ids: list[str],
+        statuses: tuple[str, ...] | None = None,
+    ) -> list[Job]:
+        """Return jobs for any of *correlation_ids*, optionally status-filtered.
+
+        Hydrates full rows in a single locked query (no per-row ``get_job``
+        round trip), so ``resume_session`` / ``list_tasks`` stay one query
+        regardless of task count. Results are ordered by ``rowid`` (strict
+        insertion order), which is stable even when ``created_at`` collides
+        within a clock tick.
+        """
+        if not correlation_ids:
+            return []
+        cid_ph = ",".join("?" for _ in correlation_ids)
+        with self._lock:
+            if statuses:
+                status_ph = ",".join("?" for _ in statuses)
+                rows = self._connection.execute(
+                    f"SELECT * FROM jobs WHERE correlation_id IN ({cid_ph}) "
+                    f"AND status IN ({status_ph}) ORDER BY rowid ASC",
+                    (*correlation_ids, *statuses),
+                ).fetchall()
+            else:
+                rows = self._connection.execute(
+                    f"SELECT * FROM jobs WHERE correlation_id IN ({cid_ph}) ORDER BY rowid ASC",
+                    (*correlation_ids,),
+                ).fetchall()
+            return [_row_to_job(row) for row in rows]
 
     def count_stuck_running(self, now: datetime | None = None) -> int:
         """Count running jobs whose lease has expired (stuck tasks)."""

@@ -4,8 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>djobs — Crash-proof task memory for AI coding agents</title>
-    <meta name="description" content="djobs is an open-source MCP server that gives Claude Code, Cursor, Cline, and Copilot crash-proof task memory — durable, resumable workflows that survive IDE crashes and context loss. Local SQLite, zero infra.">
-    <meta name="keywords" content="Claude Code, Cursor, Cline, Copilot, MCP server, AI coding agents, resumable workflows, workflow state, crash recovery, durable task queue">
+    <meta name="description" content="djobs is an open-source MCP server that gives Claude Code, Cursor, Cline, and Copilot crash-proof task memory — durable, resumable workflows that survive IDE crashes, context loss, and repeated token spend. Local SQLite, zero infra.">
+    <meta name="keywords" content="Claude Code, Cursor, Cline, Copilot, MCP server, AI coding agents, resumable workflows, workflow state, crash recovery, durable task queue, token savings">
     <meta name="author" content="jhuang-tw">
     <meta name="robots" content="index, follow, max-image-preview:large">
     <meta name="theme-color" content="#272a3a">
@@ -16,14 +16,14 @@
     <meta property="og:site_name" content="djobs">
     <meta property="og:url" content="https://jhuang-tw.github.io/djobs/">
     <meta property="og:title" content="djobs — Crash-proof task memory for AI coding agents">
-    <meta property="og:description" content="An open-source MCP server giving Claude Code, Cursor, Cline, and Copilot durable, resumable workflows that survive crashes and context loss.">
+    <meta property="og:description" content="An open-source MCP server giving Claude Code, Cursor, Cline, and Copilot durable, resumable workflows that survive crashes, context loss, and repeated token spend.">
     <meta property="og:image" content="https://raw.githubusercontent.com/jhuang-tw/djobs/main/vscode-ext/media/banner.png">
     <meta property="og:image:alt" content="djobs — Crash-proof task memory for AI coding agents">
 
     <!-- Twitter -->
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="djobs — Crash-proof task memory for AI coding agents">
-    <meta name="twitter:description" content="An open-source MCP server giving Claude Code, Cursor, Cline, and Copilot durable, resumable workflows that survive crashes and context loss.">
+    <meta name="twitter:description" content="An open-source MCP server giving Claude Code, Cursor, Cline, and Copilot durable, resumable workflows that survive crashes, context loss, and repeated token spend.">
     <meta name="twitter:image" content="https://raw.githubusercontent.com/jhuang-tw/djobs/main/vscode-ext/media/banner.png">
     <meta name="twitter:image:alt" content="djobs — Crash-proof task memory for AI coding agents">
 
@@ -852,7 +852,7 @@
             djobs gives Claude Code, Cursor, Cline, Copilot, and other AI coding agents durable,
             resumable task memory over MCP. It saves every step of long-running work as workflow
             state, so your agent resumes cleanly after IDE crashes, context loss, or interrupted chat
-            sessions - nothing lost, nothing redone.
+            sessions - nothing lost, nothing redone, fewer tokens spent replaying finished work.
           </p>
           <div class="actions">
             <a class="button primary" href="https://marketplace.visualstudio.com/items?itemName=jhuang-tw.djobs">
@@ -869,6 +869,7 @@
             <span><span class="ok">&check;</span> MIT licensed</span>
             <span><span class="ok">&check;</span> Any MCP agent</span>
             <span><span class="ok">&check;</span> SQLite — zero infra</span>
+            <span><span class="ok">&check;</span> Token savings estimate</span>
           </div>
           <div class="tags" aria-label="Search keywords">
             <span class="tag">Claude Code</span>
@@ -929,7 +930,7 @@
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
             </span>
             <h3>Human-inspectable</h3>
-            <p>See exactly what remains, what succeeded, and what changed when a session comes back — in the CLI or the VS Code sidebar.</p>
+            <p>See exactly what remains, what succeeded, what changed, and estimate how many replay tokens durable evidence saved.</p>
           </div>
         </div>
       </section>

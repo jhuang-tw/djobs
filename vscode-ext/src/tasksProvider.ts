@@ -99,6 +99,11 @@ export class DjobsTasksProvider implements vscode.TreeDataProvider<DashItem> {
     return this.snapshot?.tasks.filter((t) => !isTerminal(t.status)).length ?? 0;
   }
 
+  /** True once a status snapshot has loaded (so callers can avoid acting on no data). */
+  hasSnapshot(): boolean {
+    return this.snapshot !== undefined;
+  }
+
   getVisibleWorkflowCorrelationIds(): string[] {
     return [...groupByCorrelation(this.snapshot?.tasks ?? []).keys()];
   }

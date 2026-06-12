@@ -19,9 +19,22 @@ a task sidebar. You do not manage Python or config by hand.
    For new multi-step work, run **djobs: Start Tracked Workflow** so the agent
    resumes first, then creates djobs tasks before editing.
 
+When djobs is ready, the extension asks once per workspace whether it may
+auto-take over future AI work. If you allow it, later sessions open Chat with
+the right resume/enqueue prompt before multi-step edits. It cannot silently
+intercept every AI chat message; instead it wires MCP tools, installs agent
+guidance, and brings Chat to the correct starting prompt.
+
 The setup step installs the runtime if needed, registers the MCP server,
 installs the agent guidance block, and verifies everything with `djobs doctor`.
 Use **djobs: Diagnose Setup** anytime to re-check.
+
+## Upgrading from an older version
+
+After upgrade, djobs asks once per workspace whether it may automatically open
+Chat with the right resume/enqueue prompt. Choose **Allow auto takeover** for
+the most hands-off flow, **Ask each time** if you want a prompt before Chat
+opens, or turn it off later with `djobs.autoTakeoverMode`.
 
 ## What the sidebar shows
 

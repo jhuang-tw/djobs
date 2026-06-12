@@ -20,6 +20,25 @@ artifact.
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-06-12
+
+### Added
+- `[ext]` **Auto-takeover prompt for agent work.** When djobs is installed and
+  ready, the VS Code extension now proactively offers to resume unfinished tasks
+  or start a tracked workflow for the current workspace. The Start Tracked
+  Workflow command now opens Chat directly and copies the prompt, reducing the
+  manual copy/open loop.
+- `[core]` **`djobs token-savings` experiment.** Added a CLI estimator that reads
+  completed tasks and evidence from the queue and estimates replay/re-plan
+  tokens avoided by durable task state. It prints explicit assumptions and JSON
+  output for promotion-friendly measurements.
+
+### Changed
+- `[docs]` **Trigger mechanics are explicit.** README and the extension README
+  now explain what djobs can and cannot automatically intercept: MCP tools and
+  guidance are wired automatically, while the extension proactively nudges the
+  agent through Chat prompts before multi-step edits.
+
 ## [0.8.1] - 2026-06-11
 
 ### Fixed

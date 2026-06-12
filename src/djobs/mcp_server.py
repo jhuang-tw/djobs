@@ -35,6 +35,8 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from djobs.cli import BUILTIN_HANDLERS
+from djobs.core.constants import STALE_AFTER_DAYS
+from djobs.core.correlation import correlation_id_variants
 from djobs.core.models import Agent, Job, _new_id
 from djobs.daemon import Daemon
 from djobs.queue.service import QueueService
@@ -143,38 +145,10 @@ def _dumps(obj: Any) -> str:
 def _correlation_id_variants(correlation_id: str) -> list[str]:
     """Return equivalent spellings of a correlation_id for tolerant matching.
 
-    Agents and humans spell the same workspace path inconsistently —
-    ``c:\\proj`` vs ``C:/proj`` vs ``c:/proj/``. correlation_id is matched as an
-    exact string, so without this a task enqueued under one spelling would be
-    invisible to ``resume_session`` / ``list_tasks`` called with another, making
-    real work look lost — the exact thing that erodes trust in crash recovery.
-
-    We never rewrite the stored value (that could corrupt existing data);
-    instead we query for every equivalent spelling. The rules are deliberately
-    conservative so non-path ids (UUIDs, custom session ids) collapse to just
-    the original value and are unaffected:
-
-    - ``\\`` and ``/`` are treated as interchangeable (Windows vs POSIX);
-    - a trailing separator does not matter;
-    - a leading Windows drive letter is case-insensitive (``c:`` == ``C:``).
+    Thin wrapper over :func:`djobs.core.correlation.correlation_id_variants`,
+    the single source of truth shared with the CLI so the rules cannot drift.
     """
-    variants: set[str] = {correlation_id}
-
-    forward = correlation_id.replace("\\", "/")
-    variants.add(forward)
-    variants.add(forward.replace("/", "\\"))
-
-    for v in list(variants):
-        trimmed = v.rstrip("/\\")
-        if trimmed:
-            variants.add(trimmed)
-
-    for v in list(variants):
-        if len(v) >= 2 and v[1] == ":" and v[0].isalpha():
-            variants.add(v[0].lower() + v[1:])
-            variants.add(v[0].upper() + v[1:])
-
-    return sorted(variants)
+    return correlation_id_variants(correlation_id)
 
 
 def _default_correlation_id() -> str:
@@ -198,9 +172,9 @@ def _default_correlation_id() -> str:
     return cwd or _new_id()
 
 
-# Tasks still incomplete after this many days are flagged stale, so an
-# abandoned workflow reads as "archive me", not "silently nagging forever".
-_STALE_AFTER_DAYS = 7
+# Stale threshold lives in djobs.core.constants so the CLI, MCP server, and the
+# extension share one value. Alias keeps existing call sites unchanged.
+_STALE_AFTER_DAYS = STALE_AFTER_DAYS
 
 
 def _annotate_resume_tasks(tasks: list[dict[str, Any]]) -> None:
@@ -576,35 +550,14 @@ def list_tasks(
         JSON array of matching tasks.
     """
     q = _get_queue()
-    results: list[dict[str, Any]] = []
-
-    # Use a direct query for correlation_id filtering
     repo: Any = q._repository
-    if hasattr(repo, "_connection"):
-        conn = repo._connection
-        cids = _correlation_id_variants(correlation_id)
-        # Placeholders are a fixed run of "?"; all values are bound parameters.
-        cid_ph = ",".join("?" for _ in cids)
-        with repo._lock:
-            if status_filter:
-                rows = conn.execute(
-                    f"SELECT id FROM jobs WHERE correlation_id IN ({cid_ph}) "
-                    "AND status = ? ORDER BY rowid ASC",
-                    (*cids, status_filter),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    f"SELECT id FROM jobs WHERE correlation_id IN ({cid_ph}) ORDER BY rowid ASC",
-                    (*cids,),
-                ).fetchall()
-        for row in rows:
-            job = repo.get_job(row[0])
-            if job is not None:
-                results.append(_job_to_dict(job))
-    else:
+    if not hasattr(repo, "list_jobs_by_correlation_ids"):
         return _dumps({"error": "list_tasks requires SQLite backend"})
 
-    return _dumps(results)
+    cids = _correlation_id_variants(correlation_id)
+    statuses = (status_filter,) if status_filter else None
+    jobs = repo.list_jobs_by_correlation_ids(cids, statuses)
+    return _dumps([_job_to_dict(job) for job in jobs])
 
 
 @_server.tool()
@@ -626,23 +579,11 @@ def resume_session(correlation_id: str) -> str:
     incomplete_statuses = ("pending", "running", "retry_scheduled")
     cids = _correlation_id_variants(correlation_id)
 
-    tasks: list[dict[str, Any]] = []
-    if hasattr(repo, "_connection"):
-        conn = repo._connection
-        # Placeholders are a fixed run of "?"; all values are bound parameters.
-        cid_ph = ",".join("?" for _ in cids)
-        with repo._lock:
-            rows = conn.execute(
-                f"SELECT id FROM jobs WHERE correlation_id IN ({cid_ph}) "
-                "AND status IN (?, ?, ?) ORDER BY rowid ASC",
-                (*cids, *incomplete_statuses),
-            ).fetchall()
-        for row in rows:
-            job = repo.get_job(row[0])
-            if job is not None:
-                tasks.append(_job_to_dict(job))
-    else:
+    if not hasattr(repo, "list_jobs_by_correlation_ids"):
         return _dumps({"error": "resume_session requires SQLite backend"})
+
+    jobs = repo.list_jobs_by_correlation_ids(cids, incomplete_statuses)
+    tasks: list[dict[str, Any]] = [_job_to_dict(job) for job in jobs]
 
     _annotate_resume_tasks(tasks)
     stale_count = sum(1 for t in tasks if t.get("stale"))

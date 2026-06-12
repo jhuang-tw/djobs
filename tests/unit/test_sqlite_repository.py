@@ -410,3 +410,33 @@ def test_list_agents_filters_by_status(tmp_path) -> None:
     offline = repository.list_agents(status=AgentStatus.OFFLINE.value)
     assert {a.id for a in online} == {"online-1"}
     assert {a.id for a in offline} == {"offline-1"}
+
+
+def test_list_jobs_by_correlation_ids_filters_and_orders(tmp_path) -> None:
+    repository = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
+    first = repository.create_job(Job(type="a", correlation_id="wf"))
+    second = repository.create_job(Job(type="b", correlation_id="wf"))
+    repository.create_job(Job(type="c", correlation_id="other"))
+
+    jobs = repository.list_jobs_by_correlation_ids(["wf"])
+
+    # Only the matching workflow, in insertion (rowid) order.
+    assert [job.id for job in jobs] == [first.id, second.id]
+
+
+def test_list_jobs_by_correlation_ids_status_filter(tmp_path) -> None:
+    repository = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
+    pending = repository.create_job(Job(type="a", correlation_id="wf"))
+    done = repository.create_job(Job(type="b", correlation_id="wf"))
+    repository.mark_succeeded(done.id)
+
+    jobs = repository.list_jobs_by_correlation_ids(["wf"], statuses=(JobStatus.PENDING.value,))
+
+    assert [job.id for job in jobs] == [pending.id]
+
+
+def test_list_jobs_by_correlation_ids_empty_input(tmp_path) -> None:
+    repository = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
+    repository.create_job(Job(type="a", correlation_id="wf"))
+
+    assert repository.list_jobs_by_correlation_ids([]) == []

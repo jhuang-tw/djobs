@@ -11,7 +11,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      models: read
     outputs:
       upload_url: ${{ steps.create_release.outputs.upload_url }}
     steps:
@@ -19,55 +18,20 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Collect commits since previous tag
-        id: commits
+      - name: Prepare release body from CHANGELOG.md
         run: |
           version="${GITHUB_REF_NAME#v}"
-          prev="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
-          if [ -n "$prev" ]; then
-            range="${prev}..${GITHUB_REF_NAME}"
-          else
-            range="${GITHUB_REF_NAME}"
+          awk -v version="$version" '
+            $0 == "## [" version "] - " substr($0, length("## [" version "] - ") + 1) { in_section=1; next }
+            in_section && /^## \[/ { exit }
+            in_section { print }
+          ' CHANGELOG.md > release_body.md
+          if [ ! -s release_body.md ]; then
+            echo "Could not find a CHANGELOG.md section for $version" >&2
+            echo "Expected heading like: ## [$version] - YYYY-MM-DD" >&2
+            exit 1
           fi
-          echo "Version: $version  Range: $range"
-          {
-            echo "log<<COMMITS_EOF"
-            git log "$range" --no-merges --pretty=format:'- %s%n%b'
-            echo ""
-            echo "COMMITS_EOF"
-          } >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      - name: Generate user-facing release notes
-        id: ai
-        uses: actions/ai-inference@v1
-        with:
-          model: openai/gpt-4o
-          system-prompt: |
-            You are a release-notes writer for "djobs", a durable job-queue
-            Python package with a companion VS Code extension. Write concise,
-            user-facing Markdown release notes from the raw commit log.
-            Rules:
-            - Audience is END USERS who install the package/extension, NOT
-              contributors. Focus on new features, behavior changes, and bug
-              fixes that affect users.
-            - OMIT internal/maintenance noise: CI config, linters, pre-commit,
-              test-only changes, refactors, formatting, release plumbing.
-            - Group under short headings like "### New", "### Fixed",
-              "### Changed". Skip empty sections.
-            - Use plain language, one bullet per change. No preamble, no
-              "as an AI", no commit hashes. If nothing is user-facing, output a
-              single line summarizing the release at a high level.
-          prompt: |
-            Version: ${{ steps.commits.outputs.version }}
-
-            Raw commit log:
-            ${{ steps.commits.outputs.log }}
-
-      - name: Prepare release body
-        run: |
-          cp "${{ steps.ai.outputs.response-file }}" release_body.md
-          echo "Generated release notes:"
+          echo "Release notes from CHANGELOG.md:"
           cat release_body.md
 
       - name: Create GitHub Release
@@ -75,7 +39,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body_path: release_body.md
-          generate_release_notes: true
+          generate_release_notes: false
 
   publish:
     needs: release
@@ -120,7 +84,18 @@ jobs:
         working-directory: vscode-ext
 
       - name: Publish to VS Code Marketplace
-        run: npx @vscode/vsce publish --no-dependencies
+        run: |
+          set +e
+          output="$(npx @vscode/vsce publish --no-dependencies 2>&1)"
+          status=$?
+          echo "$output"
+          if [ "$status" -ne 0 ]; then
+            if echo "$output" | grep -qi "already exists"; then
+              echo "VS Code Marketplace version already exists; treating duplicate publish as success."
+              exit 0
+            fi
+            exit "$status"
+          fi
         working-directory: vscode-ext
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}

@@ -221,6 +221,10 @@ Push-Location vscode-ext; npx tsc -p ./ --noEmit; npm run compile; Pop-Location
 
 ## Release flow (performed on the release machine `C:\dev\djobs`)
 
+The repeatable release runbook is `docs/RELEASE.md`; follow it rather than
+reconstructing steps from chat history. The GitHub Release body is copied from
+the matching `CHANGELOG.md` version section, not generated from commit logs.
+
 1. Bump `src/djobs/__init__.py` `__version__`; run
    `node vscode-ext/scripts/sync-version.js` (or `npm run compile`).
 2. Move `CHANGELOG.md` `[Unreleased]` to the new `[x.y.z] - <date>` and add a

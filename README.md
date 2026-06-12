@@ -293,7 +293,7 @@ Install the VSIX from `vscode-ext/` or build it yourself:
 
 ```bash
 cd vscode-ext && npm install && npm run package
-# Install: code --install-extension djobs-0.6.0.vsix
+# Install: code --install-extension djobs-X.Y.Z.vsix
 ```
 
 ---

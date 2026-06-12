@@ -35,12 +35,11 @@ Durable Coder agent (`.github/agents/durable-coder.agent.md`) instead.
    checks are `[INFO]`, never `[FAIL]`. A clean `djobs init` shows zero `[FAIL]`.
 10. **Use `rowid`, not `created_at`,** for "earlier tasks" ordering (Windows
     clock-tick collisions miss same-tick rows).
-11. **Before upload/release, check version + artifacts.** New version must be
-   unique (`git tag --list vX.Y.Z` empty), `src/djobs/__init__.py` and
-   `vscode-ext/package.json` must match, `CHANGELOG.md` must have a dated
-   release section, `twine check dist/*` must pass, and the `.vsix` filename
-   must match the same version. Push exactly one tag (`git push origin vX.Y.Z`),
-   not `git push --tags`.
+11. **Before upload/release, follow `docs/RELEASE.md`.** New version must be
+   unique (`git tag --list vX.Y.Z` empty), versions must match, `CHANGELOG.md`
+   must have a dated release section (the GitHub Release body is copied from
+   it), and you push exactly one tag (`git push origin vX.Y.Z`), never
+   `git push --tags`.
 
 ## Verify before done
 

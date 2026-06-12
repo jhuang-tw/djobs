@@ -1,53 +1,53 @@
 # Implementation Notes
 
-這份文件把 Phase 0 狀態與 Phase 1 拆成下一輪可以直接執行的小步驟。
+This document breaks down Phase 0 state and Phase 1 into next-round executable small steps.
 
 ## Phase 0 Implementation Plan
 
-狀態：已完成。
+Status: Completed.
 
-目前已完成：
+Currently completed:
 
-- `.venv`，使用 Python 3.13。
-- `pyproject.toml`，採用 `src` layout、hatchling、pytest、ruff。
-- package init files。
-- `Config` dataclass + environment variables。
-- structured logging helper。
-- `Job` model、`JobStatus`、state transition validator。
-- import / config / logging / job model / state transition tests。
+- `.venv`, using Python 3.13.
+- `pyproject.toml`, using `src` layout, hatchling, pytest, ruff.
+- package init files.
+- `Config` dataclass + environment variables.
+- structured logging helper.
+- `Job` model, `JobStatus`, state transition validator.
+- import / config / logging / job model / state transition tests.
 
-驗證命令：
+Verification command:
 
 ```powershell
 python -m ruff check .
 python -m pytest -v
 ```
 
-最後驗證結果：ruff 0 errors，pytest 32 passed。
+Latest verification: ruff 0 errors, pytest 32 passed.
 
-以下是原本 Phase 0 計畫，保留作為歷史紀錄與交付對照。
+Following is original Phase 0 plan, kept as historical record and delivery reference.
 
 ### Step 1: Python Project Setup
 
-新增：
+Add:
 
 ```text
 pyproject.toml
 ```
 
-建議設定：
+Suggested settings:
 
-- project name: `distributed-job-system`。
-- package source: `src` layout。
-- Python version: 3.13。
-- test dependency: `pytest`。
-- dev dependency: `ruff`。
+- project name: `distributed-job-system`.
+- package source: `src` layout.
+- Python version: 3.13.
+- test dependency: `pytest`.
+- dev dependency: `ruff`.
 
-若不知道使用者 Python 版本，先檢查本機環境再決定。
+If unsure of user's Python version, check local environment first then decide.
 
 ### Step 2: Package Init Files
 
-新增：
+Add:
 
 ```text
 src/djobs/__init__.py
@@ -62,7 +62,7 @@ src/djobs/worker/__init__.py
 
 ### Step 3: Core Types
 
-新增：
+Add:
 
 ```text
 src/djobs/core/states.py
@@ -70,14 +70,14 @@ src/djobs/core/models.py
 src/djobs/core/errors.py
 ```
 
-建議內容：
+Suggested content:
 
-- `JobStatus` enum / `StrEnum`。
-- `Job` dataclass。
-- `InvalidStateTransitionError` exception。
-- `validate_transition(from_status, to_status)`。
+- `JobStatus` enum / `StrEnum`.
+- `Job` dataclass.
+- `InvalidStateTransitionError` exception.
+- `validate_transition(from_status, to_status)`.
 
-Phase 1 只允許：
+Phase 1 only allows:
 
 ```text
 pending -> running
@@ -87,45 +87,45 @@ running -> failed
 
 ### Step 4: Smoke Test
 
-新增：
+Add:
 
 ```text
 tests/unit/test_imports.py
 tests/unit/test_job_state.py
 ```
 
-測試：
+Tests:
 
-- package import works。
-- valid transitions pass。
-- invalid transitions raise error。
+- package import works.
+- valid transitions pass.
+- invalid transitions raise error.
 
 ### Step 5: Run Verification
 
-建議命令：
+Suggested command:
 
 ```powershell
 python -m pytest
 python -m ruff check .
 ```
 
-若環境還沒有安裝 dev dependency，先用可用命令驗證，並在回覆中說明未安裝的部分。
+If environment hasn't installed dev dependency yet, verify with available command, and note in reply which parts are uninstalled.
 
 ## Phase 1 Implementation Plan
 
-狀態：已完成。
+Status: Completed.
 
-目前已完成：
+Currently completed:
 
-- `migrations/001_initial.sql`。
-- `src/djobs/storage/sqlite.py`：SQLite schema initialization、job repository、minimal event log。
-- `src/djobs/queue/service.py`：submit / claim / complete / fail。
-- `src/djobs/worker/registry.py`：handler registry。
-- `src/djobs/worker/runner.py`：`run_once()` worker runner。
-- `examples/run_echo_job.py`：echo job demo。
-- unit / integration tests：repository、queue service、worker registry、worker runner、SQLite end-to-end flow。
+- `migrations/001_initial.sql`.
+- `src/djobs/storage/sqlite.py`: SQLite schema initialization, job repository, minimal event log.
+- `src/djobs/queue/service.py`: submit / claim / complete / fail.
+- `src/djobs/worker/registry.py`: handler registry.
+- `src/djobs/worker/runner.py`: `run_once()` worker runner.
+- `examples/run_echo_job.py`: echo job demo.
+- unit / integration tests: repository, queue service, worker registry, worker runner, SQLite end-to-end flow.
 
-驗證命令：
+Verification command:
 
 ```powershell
 python -m ruff check .
@@ -133,24 +133,24 @@ python -m pytest -v
 $env:DJOBS_EXAMPLE_DB_PATH="$env:TEMP\djobs_phase1_demo.db"; .\.venv\Scripts\python.exe examples\run_echo_job.py
 ```
 
-最後驗證結果：ruff 0 errors，pytest 53 passed，echo demo 可跑到 `succeeded` 並產生 `job_created`、`job_claimed`、`job_succeeded` events。
+Latest verification: ruff 0 errors, pytest 53 passed, echo demo runs to `succeeded` and produces `job_created`, `job_claimed`, `job_succeeded` events.
 
-以下是原本 Phase 1 計畫，保留作為歷史紀錄與交付對照。
+Following is original Phase 1 plan, kept as historical record and delivery reference.
 
-Phase 1 的目標是單機 durable job queue MVP。
+Phase 1's goal is single-node durable job queue MVP.
 
-範圍原則：只做單機、同步、SQLite-backed flow。不要做 retry、lease、heartbeat、scheduler、rate limiting 或 distributed coordination。但 repository interface 要保留未來 atomic claim 的空間。
+Scope principle: Only implement single-node, synchronous, SQLite-backed flow. Do not implement retry, lease, heartbeat, scheduler, rate limiting, or distributed coordination. But repository interface should leave space for future atomic claim evolution.
 
 ### Step 1: SQLite Schema
 
-新增：
+Add:
 
 ```text
 src/djobs/storage/sqlite.py
 migrations/001_initial.sql
 ```
 
-第一版 schema：
+First version schema:
 
 ```sql
 CREATE TABLE jobs (
@@ -178,7 +178,7 @@ CREATE TABLE job_events (
 );
 ```
 
-Phase 1 先記錄 minimal event log：
+Phase 1 records minimal event log:
 
 ```text
 job_created
@@ -187,11 +187,11 @@ job_succeeded
 job_failed
 ```
 
-這不是 event sourcing，只是 audit trail，讓 Phase 6 的 timeline / inspect 可以自然建立在同一份資料上。
+This is not event sourcing, just audit trail, letting Phase 6's timeline / inspect naturally build on same data.
 
 ### Step 2: Repository
 
-建議 repository methods：
+Suggested repository methods:
 
 ```text
 create_job(job)
@@ -202,93 +202,93 @@ mark_failed(job_id, error)
 append_event(job_id, event_type, message, metadata)
 ```
 
-Phase 1 可以先不處理多 process concurrent workers，但 `claim_next_job` 不要散落成「外部先 select、再外部 update」。應由 repository 包成單一 method，內部用 transaction 做出 atomic claim 的形狀。Phase 7 才把 SQLite 實作替換成 PostgreSQL row lock + `SKIP LOCKED`。
+Phase 1 can first skip multi-process concurrent worker handling, but `claim_next_job` should not scatter as "select externally, update externally". Should be wrapped as single repository method, internally use transaction to make atomic claim shape. Phase 7 replaces SQLite implementation with PostgreSQL row lock + `SKIP LOCKED`.
 
-建議 `claim_next_job(worker_id)` 行為：
+Suggested `claim_next_job(worker_id)` behavior:
 
-- 找出最早建立、狀態為 `pending`、且 `run_after IS NULL OR run_after <= now` 的 job。
-- 在同一個 repository operation 中更新為 `running`。
-- 寫入 `job_claimed` event。
-- 回傳 claimed job；若沒有 job，回傳 `None`。
+- Find earliest created, `pending` status, and `run_after IS NULL OR run_after <= now` job.
+- In same repository operation, update to `running`.
+- Write `job_claimed` event.
+- Return claimed job; if no job, return `None`.
 
 ### Step 3: Queue Service
 
-新增：
+Add:
 
 ```text
 src/djobs/queue/service.py
 ```
 
-Queue service 包裝 repository，負責：
+Queue service wraps repository, responsible for:
 
-- submit job。
-- claim job。
-- complete job。
-- fail job。
+- submit job.
+- claim job.
+- complete job.
+- fail job.
 
-Queue service 應負責 lifecycle 語意，不直接暴露 SQL 細節。Phase 1 只處理 `pending -> running -> succeeded/failed`。
+Queue service should handle lifecycle semantics, not expose SQL details directly. Phase 1 only handles `pending -> running -> succeeded/failed`.
 
 ### Step 4: Handler Registry
 
-新增：
+Add:
 
 ```text
 src/djobs/worker/registry.py
 ```
 
-建議 API：
+Suggested API:
 
 ```python
 registry.register("demo.echo", handler)
 registry.get("demo.echo")
 ```
 
-Handler signature 先簡化：
+Handler signature initially simplified:
 
 ```python
 def handler(payload: dict) -> dict:
     ...
 ```
 
-Phase 3 再考慮 context、heartbeat、cancellation。
+Phase 3 consider context, heartbeat, cancellation.
 
 ### Step 5: Worker Runner
 
-新增：
+Add:
 
 ```text
 src/djobs/worker/runner.py
 ```
 
-Worker runner 做：
+Worker runner does:
 
-1. claim next job。
-2. find handler by job type。
-3. execute handler。
-4. mark succeeded or failed。
-5. repository / queue service 寫入對應 event log。
+1. claim next job.
+2. find handler by job type.
+3. execute handler.
+4. mark succeeded or failed.
+5. repository / queue service write corresponding event log.
 
-Phase 1 可以先做 `run_once()`，不要急著做 long-running daemon。
+Phase 1 can first implement `run_once()`, no need to rush into long-running daemon.
 
 ### Step 6: Example
 
-新增：
+Add:
 
 ```text
 examples/run_echo_job.py
 ```
 
-Demo 流程：
+Demo flow:
 
-1. initialize SQLite db。
-2. register `demo.echo` handler。
-3. submit a job。
-4. run worker once。
-5. print final job state。
+1. initialize SQLite db.
+2. register `demo.echo` handler.
+3. submit a job.
+4. run worker once.
+5. print final job state.
 
 ### Step 7: Tests
 
-建議測試：
+Suggested tests:
 
 ```text
 tests/unit/test_queue_service.py
@@ -297,48 +297,48 @@ tests/unit/test_worker_runner.py
 tests/integration/test_sqlite_job_flow.py
 ```
 
-測試重點：
+Test focus:
 
-- submit job creates pending job。
-- worker success marks succeeded。
-- worker exception marks failed。
-- unknown handler marks failed with useful reason。
-- state changes create event log records。
-- `claim_next_job` returns `None` when no job is available。
-- future `run_after` job is not claimed early。
+- submit job creates pending job.
+- worker success marks succeeded.
+- worker exception marks failed.
+- unknown handler marks failed with useful reason.
+- state changes create event log records.
+- `claim_next_job` returns `None` when no job available.
+- future `run_after` job is not claimed early.
 
 ## Coding Principles
 
-請下一輪遵守：
+Please next round follow:
 
-- 小步提交概念，不要一次塞完整平台。
-- 先 domain model，再 storage，再 worker。
-- 每個 state mutation 都應該可測。
-- Phase 1 不需要 async。
-- Phase 1 不需要 retry。
-- Phase 1 不需要 scheduler loop。
-- Phase 1 不需要 Redis / Kafka。
-- Phase 1 不需要 HTTP server。
-- 不要把 business handler 和 queue internals 混在一起。
-- 每個 job state mutation 都要有 state transition validation 與 event log。
+- Small submission concepts, do not stuff complete platform at once.
+- First domain model, then storage, then worker.
+- Every state mutation should be testable.
+- Phase 1 needs no async.
+- Phase 1 needs no retry.
+- Phase 1 needs no scheduler loop.
+- Phase 1 needs no Redis / Kafka.
+- Phase 1 needs no HTTP server.
+- Do not mix business handler and queue internals.
+- Every job state mutation should have state transition validation and event log.
 
 ## Phase 2 Implementation Notes
 
-狀態：已完成。
+Status: Completed.
 
-目前已完成：
+Currently completed:
 
-- `src/djobs/core/retry.py`：`RetryPolicy` 與 exponential backoff。
-- `src/djobs/core/states.py`：新增 `retry_scheduled`、`dead_lettered`。
-- `src/djobs/core/errors.py`：新增 `RetryableJobError`、`NonRetryableJobError`。
-- `src/djobs/storage/sqlite.py`：retry scheduling、retry promotion、DLQ、active idempotency key lookup。
-- `migrations/002_active_idempotency_key.sql`。
-- `src/djobs/queue/service.py`：`retry_or_dead_letter()`、`promote_due_retries()`。
-- `src/djobs/worker/runner.py`：retryable error 進 retry / DLQ，non-retryable error 進 failed。
-- `examples/run_retry_job.py`：retry -> promote -> rerun -> succeeded demo。
-- unit / integration tests：retry policy、state machine、idempotency、retry scheduling、DLQ、retry promotion、worker retry flow。
+- `src/djobs/core/retry.py`: `RetryPolicy` and exponential backoff.
+- `src/djobs/core/states.py`: new `retry_scheduled`, `dead_lettered`.
+- `src/djobs/core/errors.py`: new `RetryableJobError`, `NonRetryableJobError`.
+- `src/djobs/storage/sqlite.py`: retry scheduling, retry promotion, DLQ, active idempotency key lookup.
+- `migrations/002_active_idempotency_key.sql`.
+- `src/djobs/queue/service.py`: `retry_or_dead_letter()`, `promote_due_retries()`.
+- `src/djobs/worker/runner.py`: retryable error goes to retry / DLQ, non-retryable error goes to failed.
+- `examples/run_retry_job.py`: retry -> promote -> rerun -> succeeded demo.
+- unit / integration tests: retry policy, state machine, idempotency, retry scheduling, DLQ, retry promotion, worker retry flow.
 
-驗證命令：
+Verification command:
 
 ```powershell
 python -m ruff check .
@@ -346,11 +346,11 @@ python -m pytest -v
 $env:DJOBS_RETRY_EXAMPLE_DB_PATH="$env:TEMP\djobs_phase2_retry_demo.db"; .\.venv\Scripts\python.exe examples\run_retry_job.py
 ```
 
-最後驗證結果：ruff 0 errors，pytest 78 passed，retry demo 可跑到 `succeeded`，事件序列為 `job_created`、`job_claimed`、`retry_scheduled`、`retry_promoted`、`job_claimed`、`job_succeeded`。
+Latest verification: ruff 0 errors, pytest 78 passed, retry demo runs to `succeeded`, event sequence is `job_created`, `job_claimed`, `retry_scheduled`, `retry_promoted`, `job_claimed`, `job_succeeded`.
 
 ## Naming Suggestions
 
-建議使用清楚名稱：
+Suggested clear names:
 
 - `JobStatus.PENDING`
 - `JobStatus.RUNNING`
@@ -365,24 +365,24 @@ $env:DJOBS_RETRY_EXAMPLE_DB_PATH="$env:TEMP\djobs_phase2_retry_demo.db"; .\.venv
 
 ### Scope Creep
 
-這個 project 很容易一次想做太多。每輪只選一個可測 slice。
+This project easily wants to do too much at once. Each round pick one testable slice.
 
 ### Fake Distributed Claims
 
-如果還沒做 atomic claim，不要在 README 宣稱支援 distributed workers。
+If not yet implementing atomic claim, do not claim distributed worker support in README.
 
 ### Missing Event Log
 
-如果沒有 event log，後面 observability story 會變弱。Phase 1 可以先簡單記錄 created / claimed / succeeded / failed。
+Without event log, later observability story weakens. Phase 1 can first simply record created / claimed / succeeded / failed.
 
 ### Over-Abstraction
 
-不要太早做 plugin framework、DAG engine、multi-backend storage abstraction。先讓單一路徑穩定。
+Do not too early implement plugin framework, DAG engine, multi-backend storage abstraction. First stabilize single path.
 
 ## Suggested Next Response To User Before Phase 3
 
-開始 Phase 3 前，可以回覆：
+Before starting Phase 3, can reply:
 
 ```text
-Phase 0 到 Phase 2 已完成，下一步建議進 Phase 3：加入 lease、visibility timeout、worker heartbeat、expired lease detection 和 stale running job recovery。範圍先鎖在 crash recovery，不碰 scheduler daemon、rate limiter 或 PostgreSQL distributed mode。
+Phase 0 to Phase 2 completed, next recommendation is Phase 3: add lease, visibility timeout, worker heartbeat, expired lease detection, and stale running job recovery. First lock scope to crash recovery, don't touch scheduler daemon, rate limiter, or PostgreSQL distributed mode.
 ```

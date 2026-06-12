@@ -5,11 +5,11 @@ build-backend = "hatchling.build"
 [project]
 name = "djobs"
 dynamic = ["version"]
-description = "Crash-proof task memory for Claude Code, Cursor, Cline, Copilot agents via MCP."
+description = "Token-saving durable context for Codex, Claude, Gemini, Copilot, Cursor, Cline, and any MCP coding agent."
 requires-python = ">=3.11"
 license = "MIT"
 readme = "README.md"
-keywords = ["mcp", "mcp-server", "ai-agent", "ai-coding-agent", "crash-recovery", "task-queue", "workflow-state", "durable", "sqlite", "claude-code", "copilot", "cursor", "cline", "audit-log"]
+keywords = ["mcp", "mcp-server", "ai-agent", "ai-coding-agent", "codex", "claude-code", "gemini", "copilot", "cursor", "cline", "token-savings", "crash-recovery", "workflow-state", "durable", "sqlite", "audit-log"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -38,6 +38,7 @@ Issues = "https://github.com/jhuang-tw/djobs/issues"
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    "PyYAML>=6.0",
     "ruff>=0.4",
     "mypy>=1.10",
     "pre-commit>=3.5",

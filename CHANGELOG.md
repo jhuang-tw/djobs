@@ -20,6 +20,30 @@ artifact.
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-06-12
+
+### Added
+- `[ext]` **Start Tracked Workflow is copy-first.** The sidebar Start action now
+  copies the tracking prompt and offers an explicit Open Chat action instead of
+  immediately opening Chat, so preparing the workflow never spends tokens by
+  itself.
+- `[docs]` **Vendor-neutral token-saving positioning.** Public metadata, README,
+  and the landing page now lead with djobs as token-saving durable context for
+  Codex, Claude, Gemini, Copilot, Cursor, Cline, and any MCP-compatible coding
+  agent, instead of reading as a VS Code/Copilot-specific helper.
+- `[docs]` **Compatibility matrix and tested-on disclaimer.** Public docs now
+  state that the current implementation is developed and tested with GitHub
+  Copilot in VS Code, while Claude Code, Cursor, Cline, Codex, and Gemini are
+  intended through MCP-capable hosts but still need broader end-to-end testing.
+- `[docs]` **Search indexing support for GitHub Pages.** Added `robots.txt` and
+  `sitemap.xml`, and updated the Pages workflow to publish them alongside the
+  landing page and demo SVG. This gives Google Search Console a concrete sitemap
+  URL and makes the new site easier to crawl.
+- `[release]` **CI guards for publishable surfaces.** Added pytest checks that
+  fail CI if Pages stops publishing `robots.txt` / `sitemap.xml`, if the release
+  workflow falls back to generated notes instead of `CHANGELOG.md`, or if the
+  current package version is missing a dated changelog section.
+
 ## [0.8.3] - 2026-06-12
 
 ### Changed
@@ -351,4 +375,9 @@ Foundational releases, developed in phases:
 
 [Unreleased]: https://github.com/jhuang-tw/djobs/compare/v0.5.0...HEAD
 [0.5.0]: https://github.com/jhuang-tw/djobs/releases/tag/v0.5.0
+
+
+
+
+
 

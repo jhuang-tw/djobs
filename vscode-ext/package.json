@@ -2,7 +2,7 @@
   "name": "djobs",
   "displayName": "djobs — Crash-Proof Task Memory",
   "description": "Sidebar view for djobs: see task status, one-click resume, audit trail.",
-  "version": "0.8.3",
+  "version": "0.8.4",
   "publisher": "jhuang-tw",
   "license": "MIT",
   "icon": "media/icon-128.png",

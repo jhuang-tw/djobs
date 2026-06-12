@@ -1,8 +1,8 @@
 # Internals
 
-djobs 的核心是一個完整的 durable job queue。本文件描述進階架構、設定、後端選項與模組細節。
+The core of djobs is a full durable job queue. This document covers the advanced architecture, configuration, backend options, and module details.
 
-如果你只是想讓 AI coding agent 能在 IDE crash 後接續工作，只需要看 [README](../README.md) 的 Quick Start。
+If you just want an AI coding agent that can resume after an IDE crash, see the [README](../README.md) Quick Start instead.
 
 ---
 

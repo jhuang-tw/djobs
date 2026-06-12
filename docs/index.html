@@ -3,9 +3,9 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>djobs — Crash-proof task memory for AI coding agents</title>
-    <meta name="description" content="djobs is an open-source MCP server that gives Claude Code, Cursor, Cline, and Copilot crash-proof task memory — durable, resumable workflows that survive IDE crashes, context loss, and repeated token spend. Local SQLite, zero infra.">
-    <meta name="keywords" content="Claude Code, Cursor, Cline, Copilot, MCP server, AI coding agents, resumable workflows, workflow state, crash recovery, durable task queue, token savings">
+    <title>djobs — Token-saving durable context for AI coding agents</title>
+    <meta name="description" content="djobs is an open-source MCP server that gives Codex, Claude, Gemini, Copilot, Cursor, Cline, and any MCP coding agent token-saving durable context — resumable workflows that survive crashes and avoid repeated context replay. Local SQLite, zero infra.">
+    <meta name="keywords" content="Codex, Claude Code, Gemini, Cursor, Cline, Copilot, MCP server, AI coding agents, token savings, durable context, resumable workflows, workflow state, crash recovery, durable task queue">
     <meta name="author" content="jhuang-tw">
     <meta name="robots" content="index, follow, max-image-preview:large">
     <meta name="theme-color" content="#272a3a">
@@ -15,17 +15,17 @@
     <meta property="og:type" content="website">
     <meta property="og:site_name" content="djobs">
     <meta property="og:url" content="https://jhuang-tw.github.io/djobs/">
-    <meta property="og:title" content="djobs — Crash-proof task memory for AI coding agents">
-    <meta property="og:description" content="An open-source MCP server giving Claude Code, Cursor, Cline, and Copilot durable, resumable workflows that survive crashes, context loss, and repeated token spend.">
+    <meta property="og:title" content="djobs — Token-saving durable context for AI coding agents">
+    <meta property="og:description" content="An open-source MCP server giving Codex, Claude, Gemini, Copilot, Cursor, Cline, and any MCP coding agent resumable workflows that avoid repeated context replay.">
     <meta property="og:image" content="https://raw.githubusercontent.com/jhuang-tw/djobs/main/vscode-ext/media/banner.png">
-    <meta property="og:image:alt" content="djobs — Crash-proof task memory for AI coding agents">
+    <meta property="og:image:alt" content="djobs — Token-saving durable context for AI coding agents">
 
     <!-- Twitter -->
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="djobs — Crash-proof task memory for AI coding agents">
-    <meta name="twitter:description" content="An open-source MCP server giving Claude Code, Cursor, Cline, and Copilot durable, resumable workflows that survive crashes, context loss, and repeated token spend.">
+    <meta name="twitter:title" content="djobs — Token-saving durable context for AI coding agents">
+    <meta name="twitter:description" content="An open-source MCP server giving Codex, Claude, Gemini, Copilot, Cursor, Cline, and any MCP coding agent resumable workflows that avoid repeated context replay.">
     <meta name="twitter:image" content="https://raw.githubusercontent.com/jhuang-tw/djobs/main/vscode-ext/media/banner.png">
-    <meta name="twitter:image:alt" content="djobs — Crash-proof task memory for AI coding agents">
+    <meta name="twitter:image:alt" content="djobs — Token-saving durable context for AI coding agents">
 
     <link rel="preconnect" href="https://raw.githubusercontent.com" crossorigin>
 
@@ -34,7 +34,7 @@
       "@context": "https://schema.org",
       "@type": "SoftwareApplication",
       "name": "djobs",
-      "description": "Crash-proof task memory for Claude Code, Cursor, Cline, Copilot, and other AI coding agents via an MCP server with durable, resumable workflows.",
+      "description": "Token-saving durable context for Codex, Claude, Gemini, Copilot, Cursor, Cline, and other AI coding agents via an MCP server with durable, resumable workflows.",
       "applicationCategory": "DeveloperApplication",
       "operatingSystem": "Windows, macOS, Linux",
       "url": "https://jhuang-tw.github.io/djobs/",
@@ -57,7 +57,7 @@
           "name": "What is djobs?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "djobs is an open-source MCP server that gives AI coding agents crash-proof task memory. It saves each step of long-running work as a durable task so the agent can resume exactly where it left off after an IDE crash, context loss, or interrupted session."
+            "text": "djobs is an open-source MCP server that gives AI coding agents token-saving durable context. It saves each step of long-running work as a durable task so the agent can resume exactly where it left off after a crash, context loss, or interrupted session without replaying completed work."
           }
         },
         {
@@ -65,7 +65,7 @@
           "name": "Which AI coding agents work with djobs?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Any MCP-compatible client, including Claude Code, Cursor, Cline, and GitHub Copilot. djobs exposes its tools over the Model Context Protocol, so agents call resume_session, enqueue_task, complete_task, and fail_task directly."
+            "text": "Any MCP-compatible client, including Codex, Claude Code, Gemini, Cursor, Cline, and GitHub Copilot when MCP tools are available. djobs exposes its tools over the Model Context Protocol, so agents call resume_session, enqueue_task, complete_task, and fail_task directly."
           }
         },
         {
@@ -847,12 +847,12 @@
       <section class="wrap hero">
         <div>
           <p class="eyebrow"><span class="pip"></span> Workflow state for AI coding agents</p>
-          <h1>Crash-proof task memory for <span class="accent">AI coding agents</span></h1>
+          <h1>Token-saving durable context for <span class="accent">AI coding agents</span></h1>
           <p class="lead">
-            djobs gives Claude Code, Cursor, Cline, Copilot, and other AI coding agents durable,
-            resumable task memory over MCP. It saves every step of long-running work as workflow
-            state, so your agent resumes cleanly after IDE crashes, context loss, or interrupted chat
-            sessions - nothing lost, nothing redone, fewer tokens spent replaying finished work.
+            djobs gives Codex, Claude, Gemini, Copilot, Cursor, Cline, and any MCP-compatible
+            coding agent durable, resumable task memory. It saves every step of long-running work
+            as workflow state, so your agent resumes cleanly after crashes or context loss -
+            nothing lost, nothing redone, fewer tokens spent replaying finished work.
           </p>
           <div class="actions">
             <a class="button primary" href="https://marketplace.visualstudio.com/items?itemName=jhuang-tw.djobs">
@@ -872,7 +872,9 @@
             <span><span class="ok">&check;</span> Token savings estimate</span>
           </div>
           <div class="tags" aria-label="Search keywords">
+            <span class="tag">Codex</span>
             <span class="tag">Claude Code</span>
+            <span class="tag">Gemini</span>
             <span class="tag">Cursor</span>
             <span class="tag">Cline</span>
             <span class="tag">Copilot</span>
@@ -889,9 +891,12 @@
 
       <div class="compat">
         <div class="wrap">
-          <span class="label">Works with</span>
+          <span class="label">Built on MCP</span>
           <ul>
+            <li>Tested: Copilot in VS Code</li>
             <li>Claude Code</li>
+            <li>Codex</li>
+            <li>Gemini</li>
             <li>Cursor</li>
             <li>Cline</li>
             <li>GitHub Copilot</li>
@@ -987,7 +992,7 @@
             <pre><code><span class="c"># VS Code / Copilot:</span>
 <span class="c"># install extension -&gt; run "Set up djobs"</span>
 
-<span class="c"># Claude Code / Cursor / Cline:</span>
+<span class="c"># Codex / Claude / Gemini / Cursor / Cline:</span>
 <span class="p">djobs</span> init</code></pre>
             <div class="code-status">
               <span class="g">&check;</span>
@@ -1027,8 +1032,8 @@
           <a href="https://marketplace.visualstudio.com/items?itemName=jhuang-tw.djobs">VS Code Marketplace</a>
         </div>
         <p class="kw">
-          Crash recovery, resumable workflows, and durable task memory for Claude Code, Cursor,
-          Cline, GitHub Copilot, and any MCP coding agent. MIT licensed.
+          Token-saving durable context, crash recovery, and resumable workflows for Codex,
+          Claude, Gemini, Cursor, Cline, GitHub Copilot, and any MCP coding agent. MIT licensed.
         </p>
       </div>
     </footer>

@@ -6,6 +6,8 @@ on:
     paths:
       - "docs/index.html"
       - "docs/demo.svg"
+      - "docs/robots.txt"
+      - "docs/sitemap.xml"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -32,6 +34,8 @@ jobs:
           mkdir _site
           cp docs/index.html _site/index.html
           cp docs/demo.svg _site/demo.svg
+          cp docs/robots.txt _site/robots.txt
+          cp docs/sitemap.xml _site/sitemap.xml
           touch _site/.nojekyll
 
       - uses: actions/configure-pages@v5

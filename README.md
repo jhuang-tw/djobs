@@ -2,7 +2,7 @@
 
 <!-- mcp-name: io.github.jhuang-tw/djobs -->
 
-**Crash-proof workflow state for AI coding agents.** djobs gives Claude Code, Cursor, Cline, Copilot, and other AI coding agents durable, resumable task memory over MCP — so long, multi-file work survives IDE crashes, context loss, or session interruptions instead of being lost or redone. It ships MCP tools, agent instructions, and a VS Code sidebar; the runtime installs and manages itself.
+**Token-saving durable context for AI coding agents.** djobs gives Codex, Claude Code, Gemini, Copilot, Cursor, Cline, and any MCP-compatible coding agent durable, resumable task memory — so long, multi-file work survives crashes, context loss, or session interruptions without replaying completed work. It ships MCP tools, agent instructions, and a VS Code sidebar; the runtime installs and manages itself.
 
 [![CI](https://github.com/jhuang-tw/djobs/actions/workflows/ci.yml/badge.svg)](https://github.com/jhuang-tw/djobs/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/djobs.svg)](https://pypi.org/project/djobs/)
@@ -18,9 +18,9 @@
 
 ## The Problem
 
-AI coding agents (GitHub Copilot, Cursor, Cline, Claude Code) often run multi-file tasks: add docstrings to 40 files, migrate a framework version, batch-refactor an API. These can take minutes.
+AI coding agents (Codex, Claude Code, Gemini, GitHub Copilot, Cursor, Cline) often run multi-file tasks: add docstrings to 40 files, migrate a framework version, batch-refactor an API. These can take minutes.
 
-When the IDE crashes, the chat disconnects, or you accidentally close the window — **all in-flight progress is lost.** The agent's state lives only in chat history. You have to start over and guess which files were already done.
+When the IDE crashes, the chat disconnects, or you accidentally close the window — **all in-flight progress is lost.** The agent's state lives only in chat history. You spend tokens re-reading, re-planning, and guessing which files were already done.
 
 ## The Fix
 
@@ -53,12 +53,31 @@ You reopen VS Code, start a new chat: "hi"
 
 Everything is stored in a local SQLite file. No Redis, no Docker, no cloud service.
 
+**Measured on this repo:** `djobs token-savings` estimated 12,136 replay/re-plan tokens avoided across 20 completed workflow tasks (82.6% less context to replay). The model is explicit and reproducible: `djobs token-savings --correlation-id <workspace> --format json`.
+
+## Compatibility Status
+
+Current implementation and day-to-day testing are done with **GitHub Copilot in
+VS Code**. djobs is designed around MCP, so it should apply to any
+MCP-compatible coding-agent host, but the non-Copilot hosts below still need
+broader real-world validation.
+
+| Agent / host | Status |
+|--------------|--------|
+| GitHub Copilot in VS Code | Implemented and tested through the VS Code extension + MCP registration. |
+| Claude Code | Intended via `djobs init` / MCP config; not yet fully end-to-end tested. |
+| Cursor | Intended via `djobs init` / MCP config; not yet fully end-to-end tested. |
+| Cline | Intended via `djobs init` / MCP config; not yet fully end-to-end tested. |
+| Codex | Intended when used through an MCP-capable client; not yet fully end-to-end tested. |
+| Gemini | Intended when used through an MCP-capable client; not yet fully end-to-end tested. |
+| Plain browser chat without tools | Not automatic; djobs needs MCP/tool access or installed agent guidance. |
+
 > **How is this different from Celery / RQ / Dramatiq?** Those are general-purpose task queues
 > built for backend workers and high throughput. djobs is purpose-built for **AI coding agents**:
 > it speaks MCP natively, optimizes for crash-recovery and human-inspectable audit trails over raw
 > throughput, and runs with zero infrastructure — one local SQLite file, no broker, no daemon.
 
-> **Maturity — early but tested.** 369 passing tests, CI across Python 3.11–3.13, SQLite and optional
+> **Maturity — early but tested.** 379 passing tests, CI across Python 3.11–3.13, SQLite and optional
 > PostgreSQL backends. Marked Alpha while the public API stabilizes; the core enqueue → complete →
 > resume flow is stable and used daily.
 
@@ -71,7 +90,7 @@ Everything is stored in a local SQLite file. No Redis, no Docker, no cloud servi
 > the agent uses, not a library your project imports. djobs installs and manages
 > its own runtime; you just pick how to set it up.
 
-### 1. VS Code / GitHub Copilot (recommended)
+### 1. VS Code / GitHub Copilot (easiest)
 
 Install the
 **[djobs extension](https://marketplace.visualstudio.com/items?itemName=jhuang-tw.djobs)**
@@ -88,11 +107,14 @@ sessions open Chat with a prompt that tells the agent to call `resume_session`,
 create durable tasks before multi-step edits, and finish each unit with
 evidence. You can switch this between `askOnce`, `openChat`, `prompt`, and `off`
 with `djobs.autoTakeoverMode`.
-After that, you keep talking normally — “continue”, “fix this”, “run tests”, or
-“release” are enough. The installed agent guidance tells the AI to bring djobs
-in before editing; you do not need to mention djobs in every prompt.
+The sidebar's **Start a tracked workflow** button only copies/prepares the
+prompt; it does not spend tokens unless you open or paste it into Chat. After
+that, you keep talking normally — “continue”, “fix this”, “run tests”, “retry”,
+“the previous run failed”, or “release” are enough. The installed agent guidance
+tells the AI to bring djobs in before editing; you do not need to mention djobs
+in every prompt.
 
-### 2. Any MCP agent (Claude Code, Cursor, Cline, …)
+### 2. Any MCP agent (Codex, Claude Code, Gemini, Cursor, Cline, …)
 
 One command wires the current project for any MCP-compatible agent:
 
@@ -284,7 +306,7 @@ cd djobs
 python -m venv .venv && .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest -q              # 369 tests (18 skipped without Postgres)
+pytest -q              # 379 tests (18 skipped without Postgres)
 ruff check src/ tests/ # lint
 ```
 
@@ -333,3 +355,4 @@ cd vscode-ext && npm install && npm run package
 ## License
 
 [MIT](LICENSE)
+

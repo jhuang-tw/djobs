@@ -37,6 +37,10 @@ steps at the end before claiming done.
 - Never reuse a version that already has a git tag (e.g. v0.7.0-v0.7.3 exist):
   PyPI and the Marketplace reject a same/older number, so the fix silently never
   ships. New features that are backward compatible = minor bump (0.7.x -> 0.8.0).
+- Once a version is pushed/tagged/released, **do not keep patching under that
+  version**. Bump again (0.8.0 -> 0.8.1 -> 0.8.2...) for follow-up fixes such as
+  release workflow repairs, SEO files, or UX tweaks. We repeatedly hit duplicate
+  Marketplace/PyPI publish failures by trying to reuse a published version.
 
 ## Two-machine workflow (do NOT commit here)
 
@@ -46,6 +50,12 @@ steps at the end before claiming done.
 - Make changes on the work machine and leave them uncommitted; the human syncs
   and commits/pushes from the release machine. Do not run `git commit`/`git push`
   here unless explicitly told to.
+- Before building a sync zip, verify it contains every changed/new repo file and
+  excludes machine-local files. The files that caused real trouble: include new
+  `src/djobs/core/*.py`, `tests/unit/test_release_site_guards.py`,
+  `docs/robots.txt`, `docs/sitemap.xml`; exclude `.vscode/mcp.json`,
+  `.vscode/settings.json`, `.github/copilot-instructions.md`, `node-runtime/`,
+  and one-off `release-v*.md` scratch files.
 
 ## PowerShell on Windows (recurring foot-guns)
 
@@ -57,6 +67,11 @@ steps at the end before claiming done.
   Always run BOTH before claiming green. Apply with `ruff format src/ tests/`.
 - Chain gated steps with `&&` (stop on failure), never `;` (continues on error
   and can deploy broken code).
+- PowerShell string replacement is dangerous with backticks and Markdown. A bad
+  `-replace` once inserted a literal `` `r`n`` and duplicated a changelog bullet
+  into many old release sections. For CHANGELOG/release notes prefer
+  `apply_patch` or a carefully reviewed temp script, then grep for `` `r`n`` and
+  duplicate release-note text.
 
 ## Editing files with CJK / emoji (data-loss risk)
 
@@ -66,6 +81,11 @@ steps at the end before claiming done.
 - Do not put 4-byte emoji in a replacement `newString` in `.md` files - they
   turn into the U+FFFD replacement character. Use ASCII tags instead. (The djobs
   repo is English-only, which sidesteps this - keep new repo files English.)
+- Beware stale editor buffers. During 0.8.x, `CHANGELOG.md` had an unsaved editor
+  buffer missing all 0.8 sections while the on-disk file was correct; saving it
+  would have destroyed release notes. If `read_file` and terminal `Get-Content`
+  disagree, trust the terminal/on-disk content, close or revert the stale buffer,
+  and do not edit that file through the stale buffer.
 
 ## argparse: flag dest vs subparser dest collision (real bug fixed here)
 
@@ -105,6 +125,12 @@ steps at the end before claiming done.
   be installed with Python <3.11; `installPackage()` therefore tries all
   installer candidates and collapses Requires-Python failures into a concise
   uv / Python 3.11+ recovery message.
+- Auto-takeover must not spend tokens on mere consent. `Allow auto takeover`
+  only persists `djobs.autoTakeoverMode=openChat`; it must not immediately open
+  Chat or send a prompt. Immediate model work requires an explicit action such
+  as `Resume now` / `Open Chat`. Keep `tests/unit/test_install_instructions.py`
+  aligned with natural-language triggers such as "continue", "fix", "retry",
+  "previous run failed", "run tests", and "release".
 
 ## doctor output (src/djobs/cli.py)
 
@@ -128,6 +154,10 @@ CI is the contract. `.github/workflows/ci.yml` runs four jobs on every push and
 PR to `main`; your local gate must reproduce all four before you say "done".
 The single source of truth for lint/type/test is `.pre-commit-config.yaml`
 (shared by the local pre-push hook AND CI), so local and CI cannot drift.
+Release/site invariants are also normal pytest tests now:
+`tests/unit/test_server_json.py` and `tests/unit/test_release_site_guards.py`
+must catch version drift, missing changelog release sections, generated release
+notes, and Pages sitemap/robots deployment before publishing.
 
 1. `lint` (Python 3.13): `ruff check` then `ruff format --check`. CI runs these
    via pinned pre-commit (`pre-commit run ruff-check --all-files` then
@@ -160,7 +190,7 @@ $env:PYTHONPATH = "$PWD/src"
 .\.venv\Scripts\python.exe -m ruff check src/ tests/
 .\.venv\Scripts\python.exe -m ruff format --check src/ tests/    # SEPARATE gate from ruff check
 .\.venv\Scripts\python.exe -m mypy                               # needs psycopg installed
-.\.venv\Scripts\python.exe -m pytest -q                          # expect ~348 passed / 18 skipped
+.\.venv\Scripts\python.exe -m pytest -q                          # expect ~379 passed / 18 skipped
 
 # Or reproduce CI's exact lint/type/test in one shot:
 .\.venv\Scripts\python.exe -m pre_commit run --all-files
@@ -233,9 +263,11 @@ the matching `CHANGELOG.md` version section, not generated from commit logs.
 4. Commit, then `git tag vX.Y.Z` and push the branch then the tag
    (`git push origin main` then `git push origin vX.Y.Z` - not `--tags`, to
    avoid pushing stray local tags).
-5. The tag triggers `.github/workflows/publish.yml` -> PyPI via trusted
-   publishing. The extension `.vsix` (`npx @vscode/vsce package`) is uploaded to
-   the VS Code Marketplace separately.
+5. The tag triggers `.github/workflows/publish.yml` -> GitHub Release body from
+  `CHANGELOG.md`, PyPI via trusted publishing, and VS Code Marketplace via
+  `npx @vscode/vsce publish`. If the Marketplace version already exists on a
+  rerun, the workflow treats that duplicate publish as success; still avoid
+  rerunning duplicate tags unless you know why.
 6. `scripts/release.ps1 -Version X.Y.Z` automates the bump+test+build steps.
 7. **MCP Registry (optional, after PyPI is live).** `server.json` describes djobs
    for the official registry. Its version is synced by `sync-version.js`, and the
@@ -244,6 +276,34 @@ the matching `CHANGELOG.md` version section, not generated from commit logs.
    CLI (`mcp-publisher login github` then `mcp-publisher publish`) once the
    matching `djobs` version is on PyPI - the registry rejects a version that is
    not yet published. The server is launched as `uvx djobs mcp`.
+
+### Release failure patterns that already happened
+
+- **Tag on the wrong commit:** v0.8.0 was accidentally tagged on the previous
+  v0.7.3 commit. Always check `git log --oneline --decorate -3`, then after
+  tagging verify `git rev-parse HEAD`, `git rev-parse vX.Y.Z`, and
+  `git ls-remote --tags origin vX.Y.Z` all match. If wrong and safe to fix,
+  delete local/remote tag and recreate it on `HEAD`.
+- **Pushing main rejected:** release machine can be behind `origin/main` because
+  bot commits update generated assets. Use `git fetch origin` and
+  `git rebase origin/main` (not a merge pull), then re-run gates and tag only
+  after main is pushed.
+- **Duplicate publish red run:** If a tag is re-pushed after a successful
+  release, PyPI/Marketplace may say the version already exists. Do not treat
+  that as a code failure; the publish workflow should tolerate Marketplace
+  duplicates, but PyPI still cannot be overwritten. Prefer a new patch version.
+- **Bad GitHub Release notes:** GitHub/generated/AI notes collapsed a huge
+  release into one stale bullet. The workflow must keep
+  `generate_release_notes: false` and copy from `CHANGELOG.md`; the guard test
+  asserts this.
+- **Pages failed before being enabled:** GitHub Pages can fail with "Get Pages
+  site failed" until repo Settings -> Pages -> Source is GitHub Actions. Pages
+  is not a package release blocker, but `docs/robots.txt` and `docs/sitemap.xml`
+  must be deployed once Pages is enabled; guard tests assert workflow coverage.
+- **VS Code marketplace looks stale:** Marketplace web/API may show a newer
+  version while VS Code UI still shows an older compatible/cached version. Check
+  `code --version`, `code --list-extensions --show-versions`, and the public
+  Marketplace API before assuming publishing failed.
 
 ### Pre-upload checklist (run before PyPI / Marketplace / Pages)
 

@@ -79,8 +79,11 @@ export class DjobsTasksProvider implements vscode.TreeDataProvider<DashItem> {
         return [
           card('inbox', `No ${active}tasks for this workspace`),
           card('add', 'Start a tracked workflow',
-            'Copies an agent prompt that resumes first, then creates djobs tasks before editing.',
+            'Copies a prompt only; it does not run Chat or spend tokens until you paste/open it.',
             { command: 'djobs.startWorkflow', title: 'Start Workflow' }),
+          hint(options.showCompleted
+            ? 'Completed tasks are shown because showCompleted is on.'
+            : 'Completed tasks are hidden, not deleted. Turn on djobs.showCompleted to inspect them.'),
           hint('Use the globe toolbar button to show all workspaces.'),
         ];
       }

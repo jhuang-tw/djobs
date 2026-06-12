@@ -361,7 +361,7 @@ def _cmd_status(args: argparse.Namespace) -> None:
                 "created_at, updated_at, attempt, max_attempts, last_error, "
                 "depends_on_json "
                 f"FROM jobs WHERE correlation_id IN ({cid_ph}) AND status != ? "
-                "ORDER BY created_at",
+                "ORDER BY rowid ASC",
                 (*cids, "archived"),
             ).fetchall()
         else:
@@ -369,7 +369,7 @@ def _cmd_status(args: argparse.Namespace) -> None:
                 "SELECT id, type, status, payload_json, correlation_id, "
                 "created_at, updated_at, attempt, max_attempts, last_error, "
                 "depends_on_json "
-                "FROM jobs WHERE status != ? ORDER BY created_at",
+                "FROM jobs WHERE status != ? ORDER BY rowid ASC",
                 ("archived",),
             ).fetchall()
     for row in rows:
@@ -452,13 +452,16 @@ def _cmd_archive_workflow(args: argparse.Namespace) -> None:
 
     with repo._lock:
         if args.correlation_id:
+            cids = _correlation_id_variants(args.correlation_id)
+            cid_ph = ",".join("?" for _ in cids)
             rows = repo._connection.execute(
-                "SELECT id, status FROM jobs WHERE correlation_id = ? ORDER BY created_at ASC",
-                (args.correlation_id,),
+                "SELECT id, status FROM jobs "
+                f"WHERE correlation_id IN ({cid_ph}) ORDER BY rowid ASC",
+                (*cids,),
             ).fetchall()
         else:
             rows = repo._connection.execute(
-                "SELECT id, status FROM jobs ORDER BY created_at ASC"
+                "SELECT id, status FROM jobs ORDER BY rowid ASC"
             ).fetchall()
 
     archived: list[str] = []
@@ -504,17 +507,19 @@ def _cmd_explain(args: argparse.Namespace) -> None:
     )
     with repo._lock:
         if args.correlation_id:
+            cids = _correlation_id_variants(args.correlation_id)
+            cid_ph = ",".join("?" for _ in cids)
             rows = repo._connection.execute(
                 f"SELECT {columns} FROM jobs "
-                "WHERE status NOT IN ('succeeded', 'archived') AND correlation_id = ? "
-                "ORDER BY created_at",
-                (args.correlation_id,),
+                f"WHERE status NOT IN ('succeeded', 'archived') AND correlation_id IN ({cid_ph}) "
+                "ORDER BY rowid ASC",
+                (*cids,),
             ).fetchall()
         else:
             rows = repo._connection.execute(
                 f"SELECT {columns} FROM jobs "
                 "WHERE status NOT IN ('succeeded', 'archived') "
-                "ORDER BY correlation_id, created_at",
+                "ORDER BY correlation_id, rowid ASC",
             ).fetchall()
 
         # Resolve every dependency's status and which running task holds each
@@ -647,13 +652,13 @@ def _cmd_token_savings(args: argparse.Namespace) -> None:
             rows = repo._connection.execute(
                 "SELECT id, type, status, payload_json, correlation_id, last_error "
                 f"FROM jobs WHERE correlation_id IN ({placeholders}) AND status != ? "
-                "ORDER BY created_at",
+                "ORDER BY rowid ASC",
                 (*cids, "archived"),
             ).fetchall()
         else:
             rows = repo._connection.execute(
                 "SELECT id, type, status, payload_json, correlation_id, last_error "
-                "FROM jobs WHERE status != ? ORDER BY correlation_id, created_at",
+                "FROM jobs WHERE status != ? ORDER BY correlation_id, rowid ASC",
                 ("archived",),
             ).fetchall()
 
@@ -769,8 +774,10 @@ chat context, so long multi-step tasks stay cheap and avoid context overflow.
     durable plan for larger work.
 - **Treat natural work requests as the trigger.** If the user says anything like
     "continue", "go on", "start", "fix this", "implement it", "run tests",
-    "release", or asks you to keep working, do not wait for them to mention
-    djobs. First call `resume_session`; for new multi-step work, enqueue a
+    "release", "debug this", "retry", "the previous run failed", or asks you
+    to keep working, do not wait for them to mention djobs. First call
+    `resume_session`; if there are failed or unfinished tasks, inspect/audit
+    them and continue from durable state. For new multi-step work, enqueue a
     durable plan before edits, then continue normally.
 - **Plan before editing long or multi-step work.** When a request touches
     multiple files, has several steps, needs tests/docs/release packaging, or

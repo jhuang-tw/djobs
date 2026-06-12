@@ -1,10 +1,10 @@
 # Architecture Notes
 
-這份文件描述目標架構與模組邊界。請注意，目前多數內容是設計方向，不代表已經實作完成。
+This document describes target architecture and module boundaries. Please note that most current content is design direction, not completed implementation.
 
 ## System Overview
 
-Distributed Job System 的核心流程：
+Distributed Job System core flow:
 
 ```text
 Client / API
@@ -18,229 +18,230 @@ Client / API
   -> expose logs / metrics / timeline
 ```
 
-初版採用單機 SQLite，後續再演進到 PostgreSQL 與多 worker。
+Initial version uses single-machine SQLite, later evolves to PostgreSQL and multiple workers.
 
 ## Core Concepts
 
 ### Job
 
-Job 是一個 durable unit of work。
+Job is a durable unit of work.
 
-Job 應該包含：
+Job should contain:
 
-- identity: `id`。
-- routing: `type`。
-- input: `payload`。
-- state: `status`。
-- retry: `attempt`、`max_attempts`。
-- time: `created_at`、`updated_at`、`run_after`。
-- safety: `idempotency_key`。
-- execution: `leased_by`、`lease_expires_at`，Phase 3 開始需要。
-- coordination: `depends_on`（依賴的 job id 列表，全部 succeeded 後才可被 claim）、`resource_key`（同一 key 同時只跑一個 task），multi-agent（M2 / M3）開始。
+- identity: `id`.
+- routing: `type`.
+- input: `payload`.
+- state: `status`.
+- retry: `attempt`, `max_attempts`.
+- time: `created_at`, `updated_at`, `run_after`.
+- safety: `idempotency_key`.
+- execution: `leased_by`, `lease_expires_at`, needed starting Phase 3.
+- coordination: `depends_on` (list of job ids that must succeed before this can be claimed), `resource_key` (only one task with this key runs at a time), multi-agent (M2 / M3) beginning.
+
 ### Handler
 
-Handler 是真正執行 job 的 function 或 class。
+Handler is the function or class that actually executes the job.
 
-Handler 設計原則：
+Handler design principles:
 
-- 盡量 idempotent。
-- 不直接改 job table，透過 worker / queue service 回報結果。
-- 錯誤要能被分類為 retryable 或 non-retryable。
-- 長任務要能配合 heartbeat，Phase 3 開始。
+- Should be idempotent as much as possible.
+- Do not directly modify job table; report results through worker / queue service.
+- Errors should be categorizable as retryable or non-retryable.
+- Long tasks should support heartbeat starting Phase 3.
 
 ### Worker
 
-Worker 負責：
+Worker is responsible for:
 
-- 從 queue claim job。
-- 找到對應 handler。
-- 執行 handler。
-- 更新 job status。
-- 寫入 event log。
-- 維護 heartbeat，Phase 3 開始。
-- graceful shutdown，Phase 3 到 Phase 5 強化。
+- Claiming job from queue.
+- Finding corresponding handler.
+- Executing handler.
+- Updating job status.
+- Writing event log.
+- Maintaining heartbeat starting Phase 3.
+- Graceful shutdown, strengthened Phase 3 to Phase 5.
 
 ### Queue
 
-Queue 不是單純 in-memory list，而是「可持久化、可被 recovery 的 job selection mechanism」。
+Queue is not simply in-memory list, but "persistable, recoverable job selection mechanism".
 
-Queue service 負責：
+Queue service is responsible for:
 
-- enqueue。
-- claim next job。
-- complete job。
-- fail job。
-- schedule retry。
-- move to DLQ。
-- recover expired lease。
+- enqueue.
+- claim next job.
+- complete job.
+- fail job.
+- schedule retry.
+- move to DLQ.
+- recover expired lease.
 
 ### Storage
 
-Storage 是 durable source of truth。
+Storage is the durable source of truth.
 
-Phase 1 到 Phase 3：SQLite。
+Phase 1 to Phase 3: SQLite.
 
-Phase 7：PostgreSQL。
+Phase 7: PostgreSQL.
 
-Storage 要避免讓其他模組直接寫 SQL。建議透過 repository 或 storage adapter 封裝。
+Storage should avoid letting other modules write SQL directly. Recommend encapsulation through repository or storage adapter.
 
 ### Event Log
 
-Event log 是 observability 與 debugging 的基礎。
+Event log is the foundation of observability and debugging.
 
-Phase 1 先建立 minimal event log，只記錄核心 lifecycle 事件。Phase 2 之後再加入 retry / DLQ 事件，Phase 6 則把 event log 整理成 timeline、inspect command 與 metrics 來源。
+Phase 1 builds minimal event log, only records core lifecycle events. Phase 2 onwards adds retry / DLQ events; Phase 6 organizes event log into timeline, inspect command, and metrics source.
 
-每次重要事件都應記錄：
+Important events should be recorded:
 
-- job created。
-- job claimed。
-- job started。
-- job succeeded。
-- job failed。
-- retry scheduled。
-- job dead-lettered。
-- lease expired。
-- job recovered。
+- job created.
+- job claimed.
+- job started.
+- job succeeded.
+- job failed.
+- retry scheduled.
+- job dead-lettered.
+- lease expired.
+- job recovered.
 
-Event log 不一定是 event sourcing。初版可以只是 audit trail。
+Event log is not necessarily event sourcing. Initial version can just be audit trail.
 
-### Agent（multi-agent，已實作）
+### Agent (multi-agent, implemented)
 
-Agent 代表一個共用同一個 queue 的工作者（通常是一個 AI coding agent）。
+Agent represents a worker (usually an AI coding agent) sharing the same queue.
 
-Agent registry 負責：
+Agent registry is responsible for:
 
-- `register_agent`：註冊 / 更新 agent（capabilities + metadata），標記 ONLINE。
-- `agent_heartbeat`：維持 agent ONLINE。
-- `list_agents`：列出 agent，可依狀態過濾。
-- 超時未 heartbeat 的 agent 會被標記為 OFFLINE：`SchedulerLoop.tick()` 每個週期主動呼叫 `reap_stale_agents`（不再只在 `list_agents` / dashboard 讀取時才 lazy 回收）。
+- `register_agent`: register / update agent (capabilities + metadata), mark ONLINE.
+- `agent_heartbeat`: maintain agent ONLINE.
+- `list_agents`: list agents, can filter by status.
+- Agents without heartbeat timeout marked OFFLINE: `SchedulerLoop.tick()` actively calls `reap_stale_agents` each period (not just lazy cleanup when `list_agents` / dashboard read).
 
-搭配 Job 的 `leased_by` / `lease_expires_at`，多個 agent 可以安全共用同一個 DB：`claim` 透過原子租用確保同一個 task 不會被兩個 agent 同時領取。
+Combined with Job's `leased_by` / `lease_expires_at`, multiple agents can safely share same DB: `claim` ensures same task not claimed by two agents simultaneously via atomic lease.
 
-### Dashboard（已實作，唯讀）
+### Dashboard (Implemented, Read-Only)
 
-Dashboard 是給人看的 local-first 唯讀檢視，不參與排程決策。
+Dashboard is human-readable local-first read-only view, does not participate in scheduling decisions.
 
-- `djobs dashboard` 啟動 stdlib HTTP server（預設 http://127.0.0.1:8787）。
-- 顯示 queue health、agent fleet（ONLINE / OFFLINE）、active tasks 與其 lease holder。
-- `GET /api/state` 提供 JSON snapshot。
-- 無新依賴；agent 不會自己啟動 dashboard。
-- **安全性**：dashboard 沒有任何驗證機制，預設只綁定 `127.0.0.1`。請勿綁定到 `0.0.0.0` 或對外網路；遠端存取請改用 SSH tunnel。綁到非 loopback 位址時會印出警告。
+- `djobs dashboard` starts stdlib HTTP server (default http://127.0.0.1:8787).
+- Shows queue health, agent fleet (ONLINE / OFFLINE), active tasks and their lease holder.
+- `GET /api/state` provides JSON snapshot.
+- No new dependencies; agent does not auto-start dashboard.
+- **Security**: dashboard has no authentication, default only binds to `127.0.0.1`. Do not bind to `0.0.0.0` or external network; for remote access use SSH tunnel instead. Binding to non-loopback address prints warning.
 
 ## Module Boundaries
 
 ### `src/djobs/core`
 
-放 domain model 與規則。
+Place domain model and rules.
 
-適合包含：
+Appropriate to include:
 
-- Job dataclass / model。
-- JobStatus enum。
-- state transition validator。
-- retry policy dataclass。
-- domain exceptions。
-- `Agent` dataclass 與 `AgentStatus` enum（multi-agent）。
+- Job dataclass / model.
+- JobStatus enum.
+- state transition validator.
+- retry policy dataclass.
+- domain exceptions.
+- `Agent` dataclass and `AgentStatus` enum (multi-agent).
 
-不應包含：
+Should not include:
 
-- SQL。
-- worker loop。
-- CLI parsing。
+- SQL.
+- worker loop.
+- CLI parsing.
 
 ### `src/djobs/storage`
 
-放 persistence adapter。
+Place persistence adapter.
 
-適合包含：
+Appropriate to include:
 
-- SQLite connection helper。
-- schema initialization。
-- job repository。
-- event repository。
+- SQLite connection helper.
+- schema initialization.
+- job repository.
+- event repository.
 
-不應包含：
+Should not include:
 
-- handler execution。
-- retry policy business decisions，除非只是儲存欄位。
+- handler execution.
+- retry policy business decisions, except for storing fields.
 
 ### `src/djobs/queue`
 
-放 queue operations 與 job lifecycle coordination。
+Place queue operations and job lifecycle coordination.
 
-適合包含：
+Appropriate to include:
 
-- enqueue job。
-- claim next job。
-- mark succeeded。
-- mark failed。
-- schedule retry。
-- DLQ transition。
-- lease recovery。
+- enqueue job.
+- claim next job.
+- mark succeeded.
+- mark failed.
+- schedule retry.
+- DLQ transition.
+- lease recovery.
 
-不應包含：
+Should not include:
 
-- 具體 handler business logic。
-- HTTP routes。
+- Concrete handler business logic.
+- HTTP routes.
 
 ### `src/djobs/worker`
 
-放 worker runtime。
+Place worker runtime.
 
-適合包含：
+Appropriate to include:
 
-- worker loop。
-- handler registry。
-- execution result mapping。
-- heartbeat loop。
-- shutdown handling。
+- worker loop.
+- handler registry.
+- execution result mapping.
+- heartbeat loop.
+- shutdown handling.
 
-不應包含：
+Should not include:
 
-- raw SQL。
-- scheduler policy。
+- Raw SQL.
+- scheduler policy.
 
 ### `src/djobs/scheduler`
 
-放 time-based promotion。
+Place time-based promotion.
 
-適合包含：
+Appropriate to include:
 
-- delayed job promotion。
-- recurring job expansion。
-- retry due job promotion。
+- delayed job promotion.
+- recurring job expansion.
+- retry due job promotion.
 
-不應包含：
+Should not include:
 
-- handler execution。
+- handler execution.
 
 ### `src/djobs/observability`
 
-放 logs、metrics、timeline helpers。
+Place logs, metrics, timeline helpers.
 
-適合包含：
+Appropriate to include:
 
-- structured logging config。
-- metrics collector interface。
-- event timeline formatter。
-- correlation id utilities。
+- structured logging config.
+- metrics collector interface.
+- event timeline formatter.
+- correlation id utilities.
 
-不應包含：
+Should not include:
 
-- job state mutation business logic。
+- Job state mutation business logic.
 
 ### `src/djobs/api`
 
-放對外入口。
+Place external entry point.
 
-初版可以是 CLI，後續才加 HTTP API。
+Initial version can be CLI, add HTTP API later.
 
-適合包含：
+Appropriate to include:
 
-- submit command。
-- worker command。
-- inspect job command。
-- list queue command。
+- submit command.
+- worker command.
+- inspect job command.
+- list queue command.
 
 ## State Machine
 
@@ -251,12 +252,12 @@ pending -> running -> succeeded
 pending -> running -> failed
 ```
 
-規則：
+Rules:
 
-- 只有 pending job 可以被 claim 成 running。
-- running job 可以 succeeded 或 failed。
-- succeeded 是 terminal state。
-- failed 在 Phase 1 可以是 terminal state。
+- Only pending job can be claimed as running.
+- Running job can become succeeded or failed.
+- Succeeded is terminal state.
+- Failed in Phase 1 can be terminal state.
 
 ### Phase 2 Retry State Machine
 
@@ -267,12 +268,12 @@ pending -> running -> dead_lettered
 pending -> running -> failed
 ```
 
-規則：
+Rules:
 
-- retryable failure 且 attempt 未達上限時，進入 `retry_scheduled`。
-- retry due 後回到 `pending`。
-- attempt 達上限後進入 `dead_lettered`。
-- non-retryable failure 可以直接 `failed` 或 `dead_lettered`，需在 Phase 2 決定。
+- On retryable failure and attempts not reached limit, enter `retry_scheduled`.
+- After retry due, return to `pending`.
+- After attempts reach limit, enter `dead_lettered`.
+- Non-retryable failure can directly `failed` or `dead_lettered`, decide in Phase 2.
 
 ### Phase 3 Lease Recovery
 
@@ -280,17 +281,17 @@ pending -> running -> failed
 running -> pending
 ```
 
-規則：
+Rules:
 
-- 只有 lease expired / worker stale 時可以發生。
-- 必須寫 event log，否則很難 debug duplicate execution。
-- 這代表系統語義是 at-least-once，不是 exactly-once。
+- Only happens when lease expired / worker stale.
+- Must write event log, otherwise very hard to debug duplicate execution.
+- This means system semantics is at-least-once, not exactly-once.
 
 ## Data Model Draft
 
-Phase 1 可以先用一張 `jobs` 表與一張 `job_events` 表。
+Phase 1 can start with one `jobs` table and one `job_events` table.
 
-`jobs` draft：
+`jobs` draft:
 
 ```text
 id TEXT PRIMARY KEY
@@ -306,7 +307,7 @@ created_at TEXT NOT NULL
 updated_at TEXT NOT NULL
 ```
 
-Phase 3 再加入：
+Phase 3 adds:
 
 ```text
 leased_by TEXT NULL
@@ -314,7 +315,7 @@ lease_expires_at TEXT NULL
 heartbeat_at TEXT NULL
 ```
 
-`job_events` draft：
+`job_events` draft:
 
 ```text
 id TEXT PRIMARY KEY
@@ -327,58 +328,59 @@ created_at TEXT NOT NULL
 
 ## Delivery Semantics
 
-初版應明確採用 at-least-once delivery。
+Initial version should clearly adopt at-least-once delivery.
 
-意思是：
+Means:
 
-- job 可能被執行超過一次。
-- 系統會盡力避免重複 claim。
-- crash recovery 可能讓同一 job 被重新執行。
-- handler 必須考慮 idempotency。
+- Job may be executed more than once.
+- System tries to avoid duplicate claim.
+- Crash recovery may cause same job to re-execute.
+- Handler must consider idempotency.
 
-不要宣稱 exactly-once。真正 exactly-once 需要非常嚴格的外部 side effect 協調，通常不實際。
+Do not claim exactly-once. True exactly-once requires very strict external side effect coordination, usually impractical.
 
 ## Failure Handling Philosophy
 
-失敗不應只是一個 boolean。
+Failure should not just be a boolean.
 
-需要分辨：
+Need to distinguish:
 
-- handler business failure。
-- transient infrastructure failure。
-- worker crash。
-- timeout。
-- poison message。
-- downstream rate limit。
+- handler business failure.
+- transient infrastructure failure.
+- worker crash.
+- timeout.
+- poison message.
+- downstream rate limit.
 
-Phase 1 可以先簡化為 success / failure。Phase 2 開始再分類 retryable / non-retryable。
+Phase 1 can first simplify to success / failure. Phase 2 onwards classify retryable / non-retryable.
 
 ## Observability Philosophy
 
-每個 job 都要能回答：
+Every job should answer:
 
-- 它什麼時候被建立？
-- 被哪個 worker claim？
-- 跑了幾次？
-- 每次 attempt 發生什麼？
-- 現在卡在哪個 state？
-- 最後一次錯誤是什麼？
+- When was it created?
+- Which worker claimed it?
+- How many times has it run?
+- What happened each attempt?
+- Which state is it stuck in now?
+- What was the last error?
 
-這些答案應來自 event log、job table、structured logs，而不是憑記憶或 console print。
+These answers should come from event log, job table, structured logs, not memory or console print.
 
 ## Future Distributed Design
 
-PostgreSQL distributed mode 時，claim job 應該是 atomic。
+When PostgreSQL distributed mode, claiming job should be atomic.
 
-可能策略：
+Possible strategies:
 
-- `SELECT ... FOR UPDATE SKIP LOCKED`。
-- single `UPDATE ... WHERE id = (...) RETURNING *`。
-- advisory lock for scheduler leader。
-- transaction per claim。
+- `SELECT ... FOR UPDATE SKIP LOCKED`.
+- Single `UPDATE ... WHERE id = (...) RETURNING *`.
+- Advisory lock for scheduler leader.
+- Transaction per claim.
 
-需要避免：
+Must avoid:
 
-- 先 select pending job，再單獨 update，導致 race condition。
-- worker local memory 作為 source of truth。
-- 沒有 lease 的 long-running job。
+- First select pending job externally, then update separately, causing race condition.
+- Worker local memory as source of truth.
+- Long-running job without lease.
+

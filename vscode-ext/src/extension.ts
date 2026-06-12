@@ -120,10 +120,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const startWorkflow = vscode.commands.registerCommand('djobs.startWorkflow', async () => {
     const prompt = client.buildStartWorkflowPrompt();
     await vscode.env.clipboard.writeText(prompt);
-    await openChatWithPrompt(prompt);
-    vscode.window.showInformationMessage(
-      'djobs tracking prompt opened. The prompt was also copied to clipboard.',
+    const selected = await vscode.window.showInformationMessage(
+      'djobs tracking prompt copied. Paste it into Chat when you are ready; this does not spend tokens yet.',
+      'Open Chat',
     );
+    if (selected === 'Open Chat') {
+      await openChatWithPrompt(prompt);
+    }
   });
 
   const copyTaskId = vscode.commands.registerCommand('djobs.copyTaskId', async (item?: TaskItem) => {

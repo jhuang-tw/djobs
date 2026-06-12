@@ -927,7 +927,7 @@ def main() -> None:
         n = create_files()
         print(f"\nGenerated {n} files in {DEMO_DIR}")
         print("\nNow open a Durable Coder chat and paste:")
-        print('  "幫 examples/demo_workspace/ 底下所有 Python 檔案加上 module docstring"')
+        print('  "Add module docstrings to all Python files under examples/demo_workspace/"')
 
 
 if __name__ == "__main__":

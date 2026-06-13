@@ -48,10 +48,15 @@ diagnostics, and the task sidebar. It also checks the VS Code Marketplace at
 most once per day and tells you when a newer djobs extension version is
 available, because VS Code auto-update can lag or be disabled.
 
+Version 0.8.6 adds visible **Enable Prompt Actions** and **Disable Prompt
+Actions** commands to the sidebar toolbar and Command Palette.
+
 Prompt actions are available only if you explicitly enable
 `djobs.promptActions.enabled`. When enabled, the sidebar shows **Prompt Agent to
 Finish Workflow**; when disabled (the default), djobs never opens Chat or asks
-whether to enable prompt actions.
+whether to enable prompt actions. Use the sidebar toolbar command **Enable
+Prompt Actions** (play-circle icon) or the Command Palette command **djobs:
+Enable Prompt Actions** to turn it on for the current workspace.
 
 ## What the sidebar shows
 

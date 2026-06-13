@@ -226,16 +226,25 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         if (selected !== enable) {
           return;
         }
-        await vscode.workspace
-          .getConfiguration('djobs')
-          .update('promptActions.enabled', true, vscode.ConfigurationTarget.Workspace);
-        await vscode.commands.executeCommand('setContext', 'djobs.promptActionsEnabled', true);
+        await setPromptActionsEnabled(true);
       }
       const correlationId = workflowCorrelationId(item, workspaceRoot);
       const startTaskId = item instanceof TaskItem ? item.task.id : undefined;
       await openChatQuery(buildFinishWorkflowQuery(correlationId, startTaskId));
     },
   );
+
+  const enablePromptActions = vscode.commands.registerCommand('djobs.enablePromptActions', async () => {
+    await setPromptActionsEnabled(true);
+    vscode.window.showInformationMessage(
+      'djobs prompt actions enabled for this workspace. Use the play actions in the sidebar to prompt an agent manually.',
+    );
+  });
+
+  const disablePromptActions = vscode.commands.registerCommand('djobs.disablePromptActions', async () => {
+    await setPromptActionsEnabled(false);
+    vscode.window.showInformationMessage('djobs prompt actions disabled for this workspace.');
+  });
 
   const toggleScope = vscode.commands.registerCommand('djobs.toggleScope', async () => {
     const config = vscode.workspace.getConfiguration('djobs');
@@ -362,6 +371,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     deleteTask,
     archiveWorkflow,
     promptFinishWorkflow,
+    enablePromptActions,
+    disablePromptActions,
     toggleScope,
     toggleQueueLocation,
     diagnose,
@@ -590,6 +601,13 @@ function promptActionsEnabled(): boolean {
   return vscode.workspace
     .getConfiguration('djobs')
     .get<boolean>('promptActions.enabled', false);
+}
+
+async function setPromptActionsEnabled(enabled: boolean): Promise<void> {
+  await vscode.workspace
+    .getConfiguration('djobs')
+    .update('promptActions.enabled', enabled, vscode.ConfigurationTarget.Workspace);
+  await vscode.commands.executeCommand('setContext', 'djobs.promptActionsEnabled', enabled);
 }
 
 function workflowCorrelationId(

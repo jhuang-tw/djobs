@@ -125,6 +125,20 @@ def test_extension_prompt_actions_are_opt_in() -> None:
     ]
     assert prompt_setting["default"] is False
 
+    commands = {item["command"] for item in package["contributes"]["commands"]}
+    assert "djobs.enablePromptActions" in commands
+    assert "djobs.disablePromptActions" in commands
+
+    title_menus = package["contributes"]["menus"]["view/title"]
+    enable_menu = next(
+        item for item in title_menus if item["command"] == "djobs.enablePromptActions"
+    )
+    disable_menu = next(
+        item for item in title_menus if item["command"] == "djobs.disablePromptActions"
+    )
+    assert "!djobs.promptActionsEnabled" in enable_menu["when"]
+    assert "djobs.promptActionsEnabled" in disable_menu["when"]
+
     task_menus = package["contributes"]["menus"]["view/item/context"]
     prompt_menus = [item for item in task_menus if item["command"] == "djobs.promptFinishWorkflow"]
     assert prompt_menus

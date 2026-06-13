@@ -20,6 +20,15 @@ artifact.
 
 ## [Unreleased]
 
+## [0.8.6] - 2026-06-13
+
+### Added
+- `[ext]` **Visible prompt-action toggle.** Added explicit **Enable Prompt
+  Actions** and **Disable Prompt Actions** commands in the sidebar toolbar and
+  Command Palette, so users can discover the opt-in prompt workflow without
+  digging through settings. Prompt actions still default to off, and djobs never
+  asks on startup whether to enable them.
+
 ## [0.8.5] - 2026-06-13
 
 ### Removed
@@ -42,8 +51,8 @@ artifact.
   audit history. Archive keeps history; delete removes the task and its events.
 - `[ext]` **Opt-in prompt actions.** Users who explicitly enable
   `djobs.promptActions.enabled` get a manual **Prompt Agent to Finish Workflow**
-  action. It is off by default and djobs never asks on startup whether to enable
-  it.
+  action. It is off by default, and djobs never asks on startup whether to
+  enable it.
 
 ## [0.8.4] - 2026-06-12
 

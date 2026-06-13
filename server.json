@@ -3,7 +3,7 @@
   "name": "io.github.jhuang-tw/djobs",
   "title": "djobs",
   "description": "Token-saving durable context for any MCP-compatible coding agent.",
-  "version": "0.8.5",
+  "version": "0.8.6",
   "repository": {
     "url": "https://github.com/jhuang-tw/djobs",
     "source": "github"
@@ -14,7 +14,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "djobs",
-      "version": "0.8.5",
+      "version": "0.8.6",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"

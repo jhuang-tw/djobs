@@ -100,19 +100,11 @@ Command Palette (or click **Set up djobs** when the extension offers).
 That one step installs the runtime, wires the MCP server, installs the agent
 instructions, and adds the task sidebar. No terminal, no manual config.
 
-When djobs is ready, the extension asks once per workspace whether it may
-auto-take over future AI work. Choosing **Allow auto takeover** only changes the
-workspace setting; it does not open Chat or spend tokens immediately. Later
-sessions open Chat with a prompt that tells the agent to call `resume_session`,
-create durable tasks before multi-step edits, and finish each unit with
-evidence. You can switch this between `askOnce`, `openChat`, `prompt`, and `off`
-with `djobs.autoTakeoverMode`.
-The sidebar's **Start a tracked workflow** button only copies/prepares the
-prompt; it does not spend tokens unless you open or paste it into Chat. After
-that, you keep talking normally — “continue”, “fix this”, “run tests”, “retry”,
-“the previous run failed”, or “release” are enough. The installed agent guidance
-tells the AI to bring djobs in before editing; you do not need to mention djobs
-in every prompt.
+After setup, you keep talking normally — “continue”, “fix this”, “run tests”,
+“retry”, “the previous run failed”, or “release” are enough. The extension does
+not generate, copy, or open Chat prompts. It registers MCP tools, installs the
+agent guidance, and shows the durable task state; the agent decides when to call
+`resume_session`, enqueue multi-step work, and finish each unit with evidence.
 
 ### 2. Any MCP agent (Codex, Claude Code, Gemini, Cursor, Cline, …)
 
@@ -319,10 +311,13 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 djobs includes a VS Code sidebar extension for visual workflow control:
 
 - **Workflow dashboard** — tasks grouped by workflow and action type with progress indicators
-- **Start tracked workflow** — copies an agent prompt that resumes first and
-  creates durable djobs tasks before multi-step edits
-- **Resume from any step** — expand a workflow, pick a file, and the previous steps are auto-accepted
-- **Skip / Archive** — mark tasks done without editing, or archive stale workflows
+- **Native MCP setup** — registers the djobs MCP server without manual config in VS Code
+- **Agent guidance installer** — teaches compatible agents to resume first and
+  create durable djobs tasks before multi-step edits
+- **Task cleanup controls** — right-click a task to archive it, delete it, view
+  audit history, copy its ID, or inspect raw JSON
+- **Optional prompt actions** — off by default; enable `djobs.promptActions.enabled`
+  to show a manual prompt action for finishing a workflow in Chat
 - **Evidence trail** — see what the agent actually changed in each completed task
 
 Install the VSIX from `vscode-ext/` or build it yourself:
@@ -342,8 +337,8 @@ cd vscode-ext && npm install && npm run package
 - [x] `pip install djobs && djobs install-mcp` — two-command setup
 - [x] Published on PyPI
 - [x] `complete_task` evidence field — agent records what it changed
-- [x] VS Code sidebar — workflow dashboard, resume from any step, skip/archive
-- [x] Start Tracked Workflow prompt — nudges agents to resume/enqueue before editing
+- [x] VS Code sidebar — workflow dashboard, skip/archive, inspect evidence
+- [x] Agent guidance installer — nudges agents to resume/enqueue before editing
 - [x] CLI workflow control — `djobs skip`, `djobs accept-before`, `djobs archive-workflow`
 - [x] Multi-agent coordination — shared-queue claim, dependencies, resource locks, agent registry
 - [x] Web dashboard — `djobs dashboard` cross-agent global view

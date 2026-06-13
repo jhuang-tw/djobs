@@ -481,6 +481,81 @@ def _cmd_archive_workflow(args: argparse.Namespace) -> None:
     )
 
 
+def _cmd_archive_task(args: argparse.Namespace) -> None:
+    """Archive one task while preserving its audit history."""
+    import json
+
+    from djobs.queue.service import QueueService
+    from djobs.storage.sqlite import SQLiteJobRepository
+
+    repo = SQLiteJobRepository.from_path(args.db)
+    queue = QueueService(repo)
+    job = queue.archive(args.job_id, reason=args.reason or "Archived by user/operator")
+    print(
+        json.dumps(
+            {"id": job.id, "status": job.status.value, "reason": args.reason},
+            indent=2,
+        )
+    )
+
+
+def _cmd_delete_task(args: argparse.Namespace) -> None:
+    """Permanently delete one task and its audit events."""
+    import json
+
+    from djobs.storage.sqlite import SQLiteJobRepository
+
+    repo = SQLiteJobRepository.from_path(args.db)
+    job = repo.get_job(args.job_id)
+    if job is None:
+        raise SystemExit(f"Job not found: {args.job_id}")
+
+    with repo._lock:
+        event_count = repo._connection.execute(
+            "SELECT COUNT(*) FROM job_events WHERE job_id = ?",
+            (args.job_id,),
+        ).fetchone()[0]
+        repo._connection.execute("DELETE FROM job_events WHERE job_id = ?", (args.job_id,))
+        repo._connection.execute("DELETE FROM jobs WHERE id = ?", (args.job_id,))
+        repo._connection.commit()
+
+    print(
+        json.dumps(
+            {
+                "id": args.job_id,
+                "deleted": True,
+                "previous_status": job.status.value,
+                "events_deleted": event_count,
+            },
+            indent=2,
+        )
+    )
+
+
+def _cmd_task_history(args: argparse.Namespace) -> None:
+    """Print one task plus its audit events as JSON."""
+    import dataclasses
+    import json
+
+    from djobs.storage.sqlite import SQLiteJobRepository
+
+    repo = SQLiteJobRepository.from_path(args.db)
+    job = repo.get_job(args.job_id)
+    if job is None:
+        raise SystemExit(f"Job not found: {args.job_id}")
+    events = repo.list_events(args.job_id)
+    print(
+        json.dumps(
+            {
+                "task": dataclasses.asdict(job),
+                "events": [dataclasses.asdict(event) for event in events],
+            },
+            indent=2,
+            default=str,
+        )
+    )
+
+
 def _cmd_explain(args: argparse.Namespace) -> None:
     """Explain, in plain language, why each still-visible task is in the queue.
 
@@ -1459,6 +1534,38 @@ def main(argv: list[str] | None = None) -> None:
         help="Reason recorded in the audit log",
     )
     archive_workflow_parser.set_defaults(func=_cmd_archive_workflow)
+
+    # --- archive-task ---
+    archive_task_parser = subparsers.add_parser(
+        "archive-task",
+        help="Archive one task while preserving its audit history",
+    )
+    archive_task_parser.add_argument("job_id", help="Task/job ID to archive")
+    archive_task_parser.add_argument("--db", default=None, help="SQLite database path")
+    archive_task_parser.add_argument(
+        "--reason",
+        default="Archived by user/operator",
+        help="Reason recorded in the audit log",
+    )
+    archive_task_parser.set_defaults(func=_cmd_archive_task)
+
+    # --- delete-task ---
+    delete_task_parser = subparsers.add_parser(
+        "delete-task",
+        help="Permanently delete one task and its audit events",
+    )
+    delete_task_parser.add_argument("job_id", help="Task/job ID to delete")
+    delete_task_parser.add_argument("--db", default=None, help="SQLite database path")
+    delete_task_parser.set_defaults(func=_cmd_delete_task)
+
+    # --- task-history ---
+    task_history_parser = subparsers.add_parser(
+        "task-history",
+        help="Print one task and its audit history as JSON",
+    )
+    task_history_parser.add_argument("job_id", help="Task/job ID to inspect")
+    task_history_parser.add_argument("--db", default=None, help="SQLite database path")
+    task_history_parser.set_defaults(func=_cmd_task_history)
 
     # --- explain ---
     explain_parser = subparsers.add_parser(

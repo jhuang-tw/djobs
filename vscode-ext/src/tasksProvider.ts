@@ -78,9 +78,7 @@ export class DjobsTasksProvider implements vscode.TreeDataProvider<DashItem> {
       if (options.scope === 'currentWorkspace') {
         return [
           card('inbox', `No ${active}tasks for this workspace`),
-          card('add', 'Start a tracked workflow',
-            'Copies a prompt only; it does not run Chat or spend tokens until you paste/open it.',
-            { command: 'djobs.startWorkflow', title: 'Start Workflow' }),
+          hint('djobs records work when an MCP-enabled agent calls enqueue_task or resume_session.'),
           hint(options.showCompleted
             ? 'Completed tasks are shown because showCompleted is on.'
             : 'Completed tasks are hidden, not deleted. Turn on djobs.showCompleted to inspect them.'),
@@ -100,11 +98,6 @@ export class DjobsTasksProvider implements vscode.TreeDataProvider<DashItem> {
 
   getIncompleteCount(): number {
     return this.snapshot?.tasks.filter((t) => !isTerminal(t.status)).length ?? 0;
-  }
-
-  /** True once a status snapshot has loaded (so callers can avoid acting on no data). */
-  hasSnapshot(): boolean {
-    return this.snapshot !== undefined;
   }
 
   getVisibleWorkflowCorrelationIds(): string[] {

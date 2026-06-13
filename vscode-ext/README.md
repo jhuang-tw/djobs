@@ -17,17 +17,12 @@ a task sidebar. You do not manage Python or config by hand.
 1. Install this extension.
 2. Run **djobs: Set up / Repair djobs** from the Command Palette (or click
    **Set up djobs** when the extension offers).
-3. Start a new agent session - it will resume unfinished work automatically.
-   For new multi-step work, run **djobs: Start Tracked Workflow** so the agent
-   resumes first, then creates djobs tasks before editing. The command copies a
-   prompt first; it does not spend tokens unless you open or paste it into Chat.
+3. Start a new agent session and keep talking normally.
 
-When djobs is ready, the extension asks once per workspace whether it may
-auto-take over future AI work. Choosing **Allow auto takeover** only changes the
-workspace setting; it does not open Chat or spend tokens immediately. Later
-sessions open Chat with the right resume/enqueue prompt before multi-step edits.
-It cannot silently intercept every AI chat message; instead it wires MCP tools,
-installs agent guidance, and brings Chat to the correct starting prompt.
+The extension does not generate, copy, or open Chat prompts. It wires MCP tools,
+installs agent guidance, and shows durable task state in the sidebar. A
+compatible MCP agent can then call `resume_session`, create djobs tasks before
+multi-step edits, and finish each unit with evidence.
 
 After that, keep talking normally: "continue", "fix this", "run tests", "retry",
 "the previous run failed", or "release" are enough. The installed agent guidance
@@ -47,20 +42,27 @@ not yet fully end-to-end tested.
 
 ## Upgrading from an older version
 
-After upgrade, djobs asks once per workspace whether it may automatically open
-Chat with the right resume/enqueue prompt in future sessions. Choose **Allow
-auto takeover** for the most hands-off flow (no tokens are spent immediately),
-**Ask each time** if you want a prompt before Chat opens, or turn it off later
-with `djobs.autoTakeoverMode`.
+Version 0.8.5 removes the older prompt-driving commands and auto-takeover
+settings. After upgrade, the extension only manages setup, MCP registration,
+diagnostics, and the task sidebar. It also checks the VS Code Marketplace at
+most once per day and tells you when a newer djobs extension version is
+available, because VS Code auto-update can lag or be disabled.
+
+Prompt actions are available only if you explicitly enable
+`djobs.promptActions.enabled`. When enabled, the sidebar shows **Prompt Agent to
+Finish Workflow**; when disabled (the default), djobs never opens Chat or asks
+whether to enable prompt actions.
 
 ## What the sidebar shows
 
 - djobs tasks grouped by workflow and status.
 - Stale (long-unfinished) and blocked tasks flagged, with one-click archive.
-- Copy task IDs and open task JSON for inspection.
-- Resume and Start Workflow commands that hand your agent ready-to-use prompts.
-- When the current workspace has no active tasks, the empty state offers a
-   tracked-workflow prompt instead of leaving the sidebar looking broken.
+- Right-click a task to archive it, permanently delete it, view its audit
+   history, copy its ID, or inspect its raw JSON.
+- Skip or archive stale work without asking an agent to do it. Archive keeps the
+   audit trail; delete removes the task and its events.
+- When the current workspace has no active tasks, the empty state explains that
+   tasks appear when an MCP-enabled agent records them.
 
 ## Advanced
 

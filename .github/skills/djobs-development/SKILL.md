@@ -125,12 +125,16 @@ steps at the end before claiming done.
   be installed with Python <3.11; `installPackage()` therefore tries all
   installer candidates and collapses Requires-Python failures into a concise
   uv / Python 3.11+ recovery message.
-- Auto-takeover must not spend tokens on mere consent. `Allow auto takeover`
-  only persists `djobs.autoTakeoverMode=openChat`; it must not immediately open
-  Chat or send a prompt. Immediate model work requires an explicit action such
-  as `Resume now` / `Open Chat`. Keep `tests/unit/test_install_instructions.py`
-  aligned with natural-language triggers such as "continue", "fix", "retry",
-  "previous run failed", "run tests", and "release".
+- VS Code extension prompt actions are opt-in only. Default settings must not
+  generate/copy/open Chat prompts, and activation must never ask the user to
+  enable auto prompt behavior. Manual prompt actions may exist only behind
+  `djobs.promptActions.enabled=false` by default and context-gated menus. Keep
+  `tests/unit/test_release_site_guards.py::test_extension_prompt_actions_are_opt_in`
+  aligned with this rule.
+- Managed agent instructions still carry the natural-language triggers (such as
+  "continue", "fix", "retry", "previous run failed", "run tests", and
+  "release"). Keep `tests/unit/test_install_instructions.py` aligned when
+  changing that guidance block.
 
 ## doctor output (src/djobs/cli.py)
 

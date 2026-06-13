@@ -1,3 +1,4 @@
+import * as https from 'https';
 import * as vscode from 'vscode';
 import { DjobsClient } from './djobsClient';
 import { DjobsTasksProvider, TaskItem, ActionGroup, WorkflowGroup } from './tasksProvider';
@@ -90,6 +91,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // Set initial scope context for conditional icon
   const initialScope = vscode.workspace.getConfiguration('djobs').get<string>('scope', 'currentWorkspace');
   vscode.commands.executeCommand('setContext', 'djobs.scope', initialScope);
+  vscode.commands.executeCommand('setContext', 'djobs.promptActionsEnabled', promptActionsEnabled());
 
   const treeView = vscode.window.createTreeView('djobsTasks', {
     treeDataProvider: provider,
@@ -98,35 +100,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const refresh = vscode.commands.registerCommand('djobs.refresh', async () => {
     await provider.refresh();
-  });
-
-  const resumeAll = vscode.commands.registerCommand('djobs.resumeAll', async () => {
-    const prompt = client.buildResumePrompt();
-    await vscode.env.clipboard.writeText(prompt);
-
-    const count = provider.getIncompleteCount();
-    const label = count > 0 ? `Resume ${count} djobs task(s)` : 'Resume djobs tasks';
-    const openChat = 'Open Chat';
-    const selected = await vscode.window.showInformationMessage(
-      `${label}. Prompt copied to clipboard.`,
-      openChat,
-    );
-
-    if (selected === openChat) {
-      await openChatWithPrompt(prompt);
-    }
-  });
-
-  const startWorkflow = vscode.commands.registerCommand('djobs.startWorkflow', async () => {
-    const prompt = client.buildStartWorkflowPrompt();
-    await vscode.env.clipboard.writeText(prompt);
-    const selected = await vscode.window.showInformationMessage(
-      'djobs tracking prompt copied. Paste it into Chat when you are ready; this does not spend tokens yet.',
-      'Open Chat',
-    );
-    if (selected === 'Open Chat') {
-      await openChatWithPrompt(prompt);
-    }
   });
 
   const copyTaskId = vscode.commands.registerCommand('djobs.copyTaskId', async (item?: TaskItem) => {
@@ -148,25 +121,18 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     await vscode.window.showTextDocument(document, { preview: true });
   });
 
-  const resumeFromHere = vscode.commands.registerCommand('djobs.resumeFromHere', async (item?: TaskItem) => {
-    if (!item) { return; }
-    const acceptedCount = await client.acceptBefore(item.task, `Accepted before ${item.task.id}`);
-    const prompt = client.buildResumePromptForCorrelation(item.task.correlation_id ?? workspaceRoot);
-    await vscode.env.clipboard.writeText(prompt);
-    const selected = await vscode.window.showInformationMessage(
-      `Accepted ${acceptedCount} earlier task(s). Resume prompt copied.`,
-      'Open Chat',
-    );
-    if (selected === 'Open Chat') {
-      await openChatWithPrompt(prompt);
+  const viewTaskHistory = vscode.commands.registerCommand('djobs.viewTaskHistory', async (item?: TaskItem) => {
+    if (!item) {
+      return;
     }
-    await provider.refresh();
+    const content = await client.taskHistory(item.task);
+    const document = await vscode.workspace.openTextDocument({ content, language: 'json' });
+    await vscode.window.showTextDocument(document, { preview: true });
   });
 
   const skipTask = vscode.commands.registerCommand('djobs.skipTask', async (item?: TaskItem) => {
     if (!item) { return; }
-    const payload = item.task.payload_json ? JSON.parse(item.task.payload_json) : {};
-    const file = payload.file ?? item.task.id.slice(0, 8);
+    const file = taskDisplayName(item.task);
     const choice = await vscode.window.showWarningMessage(
       `Skip task: ${file}? This marks it done without editing.`,
       'Skip', 'Cancel',
@@ -174,6 +140,33 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     if (choice !== 'Skip') { return; }
     await client.skipTask(item.task, `Skipped from VS Code sidebar: ${item.task.id}`);
     vscode.window.showInformationMessage(`Skipped: ${file}`);
+    await provider.refresh();
+  });
+
+  const archiveTask = vscode.commands.registerCommand('djobs.archiveTask', async (item?: TaskItem) => {
+    if (!item) { return; }
+    const label = taskDisplayName(item.task);
+    const choice = await vscode.window.showWarningMessage(
+      `Archive task: ${label}? It will be hidden from active views; audit history is kept.`,
+      'Archive', 'Cancel',
+    );
+    if (choice !== 'Archive') { return; }
+    await client.archiveTask(item.task, `Archived from VS Code sidebar: ${item.task.id}`);
+    vscode.window.showInformationMessage(`Archived: ${label}`);
+    await provider.refresh();
+  });
+
+  const deleteTask = vscode.commands.registerCommand('djobs.deleteTask', async (item?: TaskItem) => {
+    if (!item) { return; }
+    const label = taskDisplayName(item.task);
+    const choice = await vscode.window.showWarningMessage(
+      `Delete task: ${label}? This permanently removes the task and its audit events. Archive it instead if you want history.`,
+      { modal: true },
+      'Delete',
+    );
+    if (choice !== 'Delete') { return; }
+    await client.deleteTask(item.task);
+    vscode.window.showInformationMessage(`Deleted: ${label}`);
     await provider.refresh();
   });
 
@@ -220,23 +213,29 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     await provider.refresh();
   });
 
-  const resumeWorkflow = vscode.commands.registerCommand('djobs.resumeWorkflow', async (item?: WorkflowGroup | ActionGroup) => {
-    let correlationId = workspaceRoot;
-    if (item instanceof WorkflowGroup) {
-      correlationId = item.correlationId;
-    } else if (item instanceof ActionGroup && item.tasks.length > 0) {
-      correlationId = item.tasks[0].correlation_id ?? workspaceRoot;
-    }
-    const prompt = client.buildResumePromptForCorrelation(correlationId);
-    await vscode.env.clipboard.writeText(prompt);
-    const selected = await vscode.window.showInformationMessage(
-      'Resume prompt copied.',
-      'Open Chat',
-    );
-    if (selected === 'Open Chat') {
-      await openChatWithPrompt(prompt);
-    }
-  });
+  const promptFinishWorkflow = vscode.commands.registerCommand(
+    'djobs.promptFinishWorkflow',
+    async (item?: WorkflowGroup | ActionGroup | TaskItem) => {
+      if (!promptActionsEnabled()) {
+        const enable = 'Enable prompt actions';
+        const selected = await vscode.window.showInformationMessage(
+          'djobs prompt actions are disabled. Enable them for this workspace?',
+          enable,
+          'Cancel',
+        );
+        if (selected !== enable) {
+          return;
+        }
+        await vscode.workspace
+          .getConfiguration('djobs')
+          .update('promptActions.enabled', true, vscode.ConfigurationTarget.Workspace);
+        await vscode.commands.executeCommand('setContext', 'djobs.promptActionsEnabled', true);
+      }
+      const correlationId = workflowCorrelationId(item, workspaceRoot);
+      const startTaskId = item instanceof TaskItem ? item.task.id : undefined;
+      await openChatQuery(buildFinishWorkflowQuery(correlationId, startTaskId));
+    },
+  );
 
   const toggleScope = vscode.commands.registerCommand('djobs.toggleScope', async () => {
     const config = vscode.workspace.getConfiguration('djobs');
@@ -333,6 +332,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     if (event.affectsConfiguration('djobs')) {
       const newScope = vscode.workspace.getConfiguration('djobs').get<string>('scope', 'currentWorkspace');
       await vscode.commands.executeCommand('setContext', 'djobs.scope', newScope);
+      await vscode.commands.executeCommand('setContext', 'djobs.promptActionsEnabled', promptActionsEnabled());
       if (nativeMcp && (
         event.affectsConfiguration('djobs.pythonPath')
         || event.affectsConfiguration('djobs.queueLocation')
@@ -354,14 +354,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     treeView,
     refresh,
-    resumeAll,
-    startWorkflow,
     copyTaskId,
     inspectTask,
-    resumeFromHere,
+    viewTaskHistory,
     skipTask,
+    archiveTask,
+    deleteTask,
     archiveWorkflow,
-    resumeWorkflow,
+    promptFinishWorkflow,
     toggleScope,
     toggleQueueLocation,
     diagnose,
@@ -371,13 +371,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   );
 
   await provider.refresh();
+  void maybeOfferMarketplaceExtensionUpdate(context);
   // Update the Python package FIRST, against whichever interpreter the sidebar
   // runs. A stale djobs (predating --global / doctor) would otherwise make the
   // wiring commands below fail. Only wire when the CLI is current.
   const cliReady = await maybeOfferUpdate(context, client, mcpDidChange);
   if (cliReady) {
     await maybeOfferSetup(context, client, provider, nativeMcp, mcpDidChange);
-    await maybeOfferAutoTakeover(context, client, provider, nativeMcp);
   }
 }
 
@@ -456,7 +456,7 @@ async function maybeOfferSetup(
 /**
  * Install djobs when missing and (re-)wire the agent's MCP launch command when
  * it points at the shared global queue but isn't connected yet, or at an
- * interpreter that no longer exists. Shared by the activation prompt and the
+ * interpreter that no longer exists. Shared by the activation notice and the
  * manually invokable "Set up / Repair djobs" command so neither path dead-ends.
  * On failure, offers the diagnostics output as a follow-up action.
  */
@@ -497,8 +497,8 @@ async function runDjobsSetup(
     mcpDidChange?.fire();
     vscode.window.showInformationMessage(
       nativeMcp
-        ? 'djobs is set up. When asked, allow auto takeover so future AI work starts inside durable task memory.'
-        : 'djobs is set up. Reload the window if the MCP server was already running, then allow auto takeover when prompted.',
+        ? 'djobs is set up. MCP tools are available, and the sidebar will show tasks when an agent records them.'
+        : 'djobs is set up. Reload the window if the MCP server was already running; the sidebar will show tasks when an agent records them.',
     );
     await provider.refresh();
   } catch (error) {
@@ -566,121 +566,68 @@ async function runDjobsSetup(
   }
 }
 
-async function maybeOfferAutoTakeover(
-  context: vscode.ExtensionContext,
-  client: DjobsClient,
-  provider: DjobsTasksProvider,
-  nativeMcp: boolean,
-): Promise<void> {
-  const config = vscode.workspace.getConfiguration('djobs');
-  if (!config.get<boolean>('autoTakeoverPrompt', true)) {
-    return;
-  }
-  const mode = config.get<'askOnce' | 'openChat' | 'prompt' | 'off'>(
-    'autoTakeoverMode', 'askOnce',
-  );
-  if (mode === 'off') {
-    return;
-  }
-  if (!(await client.isPackageInstalled())) {
-    return;
-  }
-  // Don't nudge the agent toward djobs when the status snapshot failed to load
-  // (djobs may be broken) or when the agent isn't actually wired to the queue —
-  // otherwise tracked work would silently not be recorded.
-  if (!provider.hasSnapshot()) {
-    return;
-  }
-  if (!nativeMcp && client.isGlobalQueue() && !client.isGlobalMcpWired()) {
-    return;
-  }
-  if (context.workspaceState.get<boolean>('djobs.autoTakeover.dismissed')) {
-    return;
-  }
-
-  const count = provider.getIncompleteCount();
-  const prompt = count > 0 ? client.buildResumePrompt() : client.buildStartWorkflowPrompt();
-
-  if (mode === 'askOnce') {
-    const allow = 'Allow auto takeover';
-    const resumeNow = 'Resume now';
-    const ask = 'Ask each time';
-    const notNow = 'Not now';
-    const never = "Don't ask again";
-    const message = count > 0
-      ? `djobs found ${count} unfinished task(s). Allow future auto takeover, or resume them now?`
-      : 'Allow djobs to auto-take over future AI work in this workspace? This only changes the setting; it will not spend tokens now.';
-    const options = count > 0
-      ? [allow, resumeNow, ask, notNow, never]
-      : [allow, ask, notNow, never];
-    const selected = await vscode.window.showInformationMessage(
-      message,
-      ...options,
-    );
-    if (selected === allow) {
-      await config.update('autoTakeoverMode', 'openChat', vscode.ConfigurationTarget.Workspace);
-      vscode.window.showInformationMessage(
-        'djobs auto takeover enabled for future AI work in this workspace.',
-      );
-    } else if (selected === resumeNow) {
-      await vscode.env.clipboard.writeText(prompt);
-      await openChatWithPrompt(prompt);
-    } else if (selected === ask) {
-      await config.update('autoTakeoverMode', 'prompt', vscode.ConfigurationTarget.Workspace);
-    } else if (selected === never) {
-      await config.update('autoTakeoverMode', 'off', vscode.ConfigurationTarget.Workspace);
-      await context.workspaceState.update('djobs.autoTakeover.dismissed', true);
-    }
-    return;
-  }
-
-  if (mode === 'openChat') {
-    await vscode.env.clipboard.writeText(prompt);
-    await openChatWithPrompt(prompt);
-    return;
-  }
-
-  const extensionVersion = context.extension.packageJSON.version as string | undefined;
-  const promptKey = `djobs.autoTakeover.prompted.${extensionVersion ?? 'unknown'}`;
-  if (context.workspaceState.get<boolean>(promptKey)) {
-    return;
-  }
-  await context.workspaceState.update(promptKey, true);
-
-  const primary = count > 0 ? `Resume ${count} task(s)` : 'Start tracked workflow';
-  const dontAsk = "Don't ask again";
-  const message = count > 0
-    ? `djobs found ${count} unfinished task(s) for this workspace. Resume before starting new work?`
-    : 'djobs is ready to track AI work in this workspace. Start tracked workflows before multi-step edits?';
-  const selected = await vscode.window.showInformationMessage(message, primary, dontAsk);
-  if (selected === dontAsk) {
-    await context.workspaceState.update('djobs.autoTakeover.dismissed', true);
-    return;
-  }
-  if (selected === primary) {
-    await vscode.env.clipboard.writeText(prompt);
-    await openChatWithPrompt(prompt);
-  }
-}
-
-async function openChatWithPrompt(prompt: string): Promise<void> {
-  try {
-    await vscode.commands.executeCommand('workbench.action.chat.open', { query: prompt });
-  } catch {
-    try {
-      await vscode.commands.executeCommand('workbench.action.chat.open');
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      vscode.window.showWarningMessage(
-        `djobs: could not open Chat (${detail}). The prompt is on your clipboard — paste it into Chat.`,
-      );
-    }
-  }
-}
-
 function workflowLabel(correlationId: string): string {
   const parts = correlationId.replace(/\\/g, '/').split('/').filter(Boolean);
   return parts.at(-1) ?? correlationId;
+}
+
+function taskDisplayName(task: { id: string; payload_json?: string; type?: string }): string {
+  try {
+    const payload = task.payload_json ? JSON.parse(task.payload_json) as Record<string, unknown> : {};
+    for (const key of ['file', 'summary', 'title', 'name']) {
+      const value = payload[key];
+      if (typeof value === 'string' && value.trim()) {
+        return value.trim();
+      }
+    }
+  } catch {
+    // Fall through to a stable short label.
+  }
+  return task.type ? `${task.type} ${task.id.slice(0, 8)}` : task.id.slice(0, 8);
+}
+
+function promptActionsEnabled(): boolean {
+  return vscode.workspace
+    .getConfiguration('djobs')
+    .get<boolean>('promptActions.enabled', false);
+}
+
+function workflowCorrelationId(
+  item: WorkflowGroup | ActionGroup | TaskItem | undefined,
+  workspaceRoot: string,
+): string {
+  if (item instanceof WorkflowGroup) {
+    return item.correlationId;
+  }
+  if (item instanceof ActionGroup && item.tasks.length > 0) {
+    return item.tasks[0].correlation_id ?? workspaceRoot;
+  }
+  if (item instanceof TaskItem) {
+    return item.task.correlation_id ?? workspaceRoot;
+  }
+  return workspaceRoot;
+}
+
+function buildFinishWorkflowQuery(correlationId: string, startTaskId?: string): string {
+  return [
+    'Use djobs to finish the required unfinished work for this workflow.',
+    '',
+    `Workspace correlation_id: ${correlationId}`,
+    startTaskId ? `Start with task ID: ${startTaskId}` : undefined,
+    '',
+    'Call djobs resume_session with that correlation_id. Continue runnable incomplete tasks until there is no required unfinished work left. Before redoing a task, inspect the current file state; if it is already done, call complete_task with evidence instead of editing again. For every task you finish, call complete_task with concise evidence. If a task is obsolete, ask before deleting it; archive abandoned workflow tasks instead of leaving them pending.',
+  ].filter((line) => line !== undefined).join('\n');
+}
+
+async function openChatQuery(query: string): Promise<void> {
+  try {
+    await vscode.commands.executeCommand('workbench.action.chat.open', { query });
+  } catch {
+    await vscode.env.clipboard.writeText(query);
+    vscode.window.showWarningMessage(
+      'djobs could not open Chat automatically. The query was copied to the clipboard.',
+    );
+  }
 }
 
 /**
@@ -701,6 +648,156 @@ export function isOlderVersion(a: string, b: string): boolean {
     }
   }
   return false;
+}
+
+const MARKETPLACE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const MARKETPLACE_QUERY_PATH = '/_apis/public/gallery/extensionquery?api-version=7.2-preview.1';
+const MARKETPLACE_ITEM_FLAGS = 914;
+
+interface MarketplaceVersionQuery {
+  results?: Array<{
+    extensions?: Array<{
+      versions?: Array<{ version?: string }>;
+    }>;
+  }>;
+}
+
+/**
+ * VS Code owns extension auto-update, but that can lag or be disabled. Check the
+ * Marketplace at most once per day and point the user at the normal extension
+ * update surfaces when a newer djobs extension exists. This never opens Chat,
+ * copies text, or asks an agent to do anything.
+ */
+async function maybeOfferMarketplaceExtensionUpdate(
+  context: vscode.ExtensionContext,
+): Promise<void> {
+  try {
+    const pkg = context.extension.packageJSON as {
+      name?: string;
+      publisher?: string;
+      version?: string;
+    };
+    const currentVersion = pkg.version;
+    const extensionId = pkg.publisher && pkg.name ? `${pkg.publisher}.${pkg.name}` : undefined;
+    if (!currentVersion || !extensionId) {
+      return;
+    }
+
+    const now = Date.now();
+    const lastCheckKey = 'djobs.marketplaceUpdate.lastChecked';
+    const lastChecked = context.globalState.get<number>(lastCheckKey, 0);
+    if (now - lastChecked < MARKETPLACE_CHECK_INTERVAL_MS) {
+      return;
+    }
+    await context.globalState.update(lastCheckKey, now);
+
+    const latestVersion = await latestMarketplaceVersion(extensionId);
+    if (!latestVersion || !isOlderVersion(currentVersion, latestVersion)) {
+      return;
+    }
+
+    const dismissKey = `djobs.marketplaceUpdate.dismissed.${latestVersion}`;
+    if (context.globalState.get<boolean>(dismissKey)) {
+      return;
+    }
+
+    const openMarketplace = 'Open Marketplace';
+    const openExtensions = 'Open Extensions';
+    const dontAsk = "Don't ask for this version";
+    const selected = await vscode.window.showInformationMessage(
+      `djobs extension v${latestVersion} is available on the VS Code Marketplace. `
+        + `You have v${currentVersion}; VS Code auto-update may not have applied yet.`,
+      openMarketplace,
+      openExtensions,
+      dontAsk,
+    );
+    if (selected === openMarketplace) {
+      await vscode.env.openExternal(
+        vscode.Uri.parse(`https://marketplace.visualstudio.com/items?itemName=${extensionId}`),
+      );
+    } else if (selected === openExtensions) {
+      try {
+        await vscode.commands.executeCommand('workbench.extensions.search', `@id:${extensionId}`);
+      } catch {
+        await vscode.env.openExternal(
+          vscode.Uri.parse(`https://marketplace.visualstudio.com/items?itemName=${extensionId}`),
+        );
+      }
+    } else if (selected === dontAsk) {
+      await context.globalState.update(dismissKey, true);
+    }
+  } catch {
+    // Update detection is best-effort; setup/sidebar must never fail because the
+    // Marketplace is unavailable or a corporate proxy blocks the request.
+  }
+}
+
+async function latestMarketplaceVersion(extensionId: string): Promise<string | undefined> {
+  const body = JSON.stringify({
+    filters: [{ criteria: [{ filterType: 7, value: extensionId }] }],
+    flags: MARKETPLACE_ITEM_FLAGS,
+  });
+  const raw = await marketplacePost(body);
+  if (!raw) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(raw) as MarketplaceVersionQuery;
+    return parsed.results?.[0]?.extensions?.[0]?.versions?.[0]?.version;
+  } catch {
+    return undefined;
+  }
+}
+
+function marketplacePost(body: string): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    let finished = false;
+    const finish = (value: string | undefined): void => {
+      if (!finished) {
+        finished = true;
+        resolve(value);
+      }
+    };
+
+    const request = https.request(
+      {
+        hostname: 'marketplace.visualstudio.com',
+        path: MARKETPLACE_QUERY_PATH,
+        method: 'POST',
+        timeout: 5000,
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+          'User-Agent': 'djobs-vscode-extension',
+        },
+      },
+      (response) => {
+        if (!response.statusCode || response.statusCode < 200 || response.statusCode >= 300) {
+          response.resume();
+          finish(undefined);
+          return;
+        }
+        response.setEncoding('utf8');
+        let raw = '';
+        response.on('data', (chunk: string | Buffer) => {
+          raw += chunk.toString();
+          if (raw.length > 1_000_000) {
+            request.destroy();
+            finish(undefined);
+          }
+        });
+        response.on('end', () => finish(raw));
+      },
+    );
+    request.on('timeout', () => {
+      request.destroy();
+      finish(undefined);
+    });
+    request.on('error', () => finish(undefined));
+    request.write(body);
+    request.end();
+  });
 }
 
 /**

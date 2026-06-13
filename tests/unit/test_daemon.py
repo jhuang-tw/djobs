@@ -492,6 +492,52 @@ class TestCLI:
         assert "[ready]" in out
         assert "Summary:" in out
 
+    def test_archive_task_archives_one_task(self, tmp_path, capsys):
+        db_path = tmp_path / "jobs.db"
+        repository = SQLiteJobRepository.from_path(db_path)
+        keep = repository.create_job(Job(type="keep", correlation_id="w"))
+        target = repository.create_job(Job(type="archive", correlation_id="w"))
+
+        main(["archive-task", target.id, "--db", str(db_path), "--reason", "not needed"])
+
+        output = json.loads(capsys.readouterr().out)
+        assert output["id"] == target.id
+        assert output["status"] == "archived"
+        assert repository.require_job(target.id).status.value == "archived"
+        assert repository.require_job(keep.id).status.value == "pending"
+
+    def test_delete_task_removes_task_and_events(self, tmp_path, capsys):
+        db_path = tmp_path / "jobs.db"
+        repository = SQLiteJobRepository.from_path(db_path)
+        queue = QueueService(repository)
+        target = queue.submit("delete-me", correlation_id="w")
+        queue.complete(target.id, evidence="done")
+
+        main(["delete-task", target.id, "--db", str(db_path)])
+
+        output = json.loads(capsys.readouterr().out)
+        assert output["deleted"] is True
+        assert output["events_deleted"] >= 1
+        assert repository.get_job(target.id) is None
+        assert repository.list_events(target.id) == []
+
+    def test_task_history_outputs_task_and_events(self, tmp_path, capsys):
+        db_path = tmp_path / "jobs.db"
+        repository = SQLiteJobRepository.from_path(db_path)
+        queue = QueueService(repository)
+        target = queue.submit("history", {"summary": "inspect"}, correlation_id="w")
+        queue.complete(target.id, evidence="finished")
+
+        main(["task-history", target.id, "--db", str(db_path)])
+
+        output = json.loads(capsys.readouterr().out)
+        assert output["task"]["id"] == target.id
+        assert output["task"]["type"] == "history"
+        assert [event["event_type"] for event in output["events"]] == [
+            "job_created",
+            "job_succeeded",
+        ]
+
     def test_token_savings_estimates_completed_work_json(self, tmp_path, capsys):
         db_path = tmp_path / "jobs.db"
         repository = SQLiteJobRepository.from_path(db_path)

@@ -34,75 +34,6 @@ export class DjobsClient {
     return status;
   }
 
-  buildResumePrompt(): string {
-    return [
-      'Resume unfinished djobs tasks for this workspace.',
-      '',
-      `Workspace correlation_id: ${this.workspaceRoot}`,
-      '',
-      'Call djobs resume_session with that correlation_id, then continue incomplete tasks.',
-      'If there are no incomplete tasks and this request is multi-step or edits files,',
-      'create a durable plan with djobs enqueue_task before editing.',
-      'Do not ask whether to resume unless there are conflicting instructions.',
-    ].join('\n');
-  }
-
-  buildStartWorkflowPrompt(): string {
-    return [
-      'Start a djobs-tracked workflow for this request.',
-      '',
-      `Workspace correlation_id: ${this.workspaceRoot}`,
-      '',
-      'Before editing:',
-      '1. Call djobs resume_session with that correlation_id.',
-      '2. If unfinished tasks exist, continue them first.',
-      '3. If this is new multi-step work, call djobs enqueue_task once per meaningful unit before editing.',
-      '4. Give each task a clear summary, why, condition, and stable idempotency_key.',
-      '5. As each unit finishes, call complete_task with evidence describing what changed.',
-      '',
-      'Use chat only for explanation; use djobs as the durable source of progress.',
-    ].join('\n');
-  }
-
-  buildResumePromptForCorrelation(correlationId: string): string {
-    return [
-      'Resume unfinished djobs tasks for this workflow.',
-      '',
-      `Workspace correlation_id: ${correlationId}`,
-      '',
-      'Call djobs resume_session with that correlation_id, then continue incomplete tasks.',
-      'Do not ask whether to resume unless there are conflicting instructions.',
-    ].join('\n');
-  }
-
-  buildResumeFromPrompt(task: DjobsTask, index: number): string {
-    const payload = task.payload_json ? JSON.parse(task.payload_json) : {};
-    const file = payload.file ?? payload.summary ?? payload.title ?? task.id;
-    return [
-      `Resume djobs tasks starting from task #${index + 1}: ${file}`,
-      '',
-      `Workspace correlation_id: ${task.correlation_id ?? this.workspaceRoot}`,
-      `Start task ID: ${task.id}`,
-      `Task type: ${task.type}`,
-      '',
-      'Call djobs resume_session, then skip all tasks before this one',
-      '(mark them complete without editing), and start processing from this task onward.',
-    ].join('\n');
-  }
-
-  buildSkipPrompt(task: DjobsTask): string {
-    const payload = task.payload_json ? JSON.parse(task.payload_json) : {};
-    const file = payload.file ?? payload.summary ?? payload.title ?? task.id;
-    return [
-      `Skip djobs task: ${file}`,
-      '',
-      `Task ID: ${task.id}`,
-      '',
-      'Call djobs complete_task for this task ID without making any edits.',
-      'This marks it done so it will not appear in future resume_session calls.',
-    ].join('\n');
-  }
-
   async skipTask(task: DjobsTask, evidence?: string): Promise<void> {
     const options = this.getOptions();
     const args = ['skip', task.id, '--db', options.dbPath];
@@ -112,15 +43,23 @@ export class DjobsClient {
     await this.run(args);
   }
 
-  async acceptBefore(task: DjobsTask, evidence?: string): Promise<number> {
+  async archiveTask(task: DjobsTask, reason?: string): Promise<void> {
     const options = this.getOptions();
-    const args = ['accept-before', task.id, '--db', options.dbPath];
-    if (evidence?.trim()) {
-      args.push('--evidence', evidence.trim());
+    const args = ['archive-task', task.id, '--db', options.dbPath];
+    if (reason?.trim()) {
+      args.push('--reason', reason.trim());
     }
-    const output = await this.run(args);
-    const result = JSON.parse(output) as { count?: number };
-    return result.count ?? 0;
+    await this.run(args);
+  }
+
+  async deleteTask(task: DjobsTask): Promise<void> {
+    const options = this.getOptions();
+    await this.run(['delete-task', task.id, '--db', options.dbPath]);
+  }
+
+  async taskHistory(task: DjobsTask): Promise<string> {
+    const options = this.getOptions();
+    return this.run(['task-history', task.id, '--db', options.dbPath]);
   }
 
   async archiveCurrentWorkflow(reason?: string): Promise<number> {

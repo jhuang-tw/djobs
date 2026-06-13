@@ -9,6 +9,7 @@ before a tag is pushed.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -21,6 +22,12 @@ _DOCS = _REPO / "docs"
 _PAGES_WORKFLOW = _REPO / ".github" / "workflows" / "pages.yml"
 _PUBLISH_WORKFLOW = _REPO / ".github" / "workflows" / "publish.yml"
 _CHANGELOG = _REPO / "CHANGELOG.md"
+_EXT_PACKAGE = _REPO / "vscode-ext" / "package.json"
+_EXT_SOURCE_FILES = [
+    _REPO / "vscode-ext" / "src" / "extension.ts",
+    _REPO / "vscode-ext" / "src" / "djobsClient.ts",
+    _REPO / "vscode-ext" / "src" / "tasksProvider.ts",
+]
 
 
 def _load_yaml(path: Path) -> dict:
@@ -97,3 +104,68 @@ def test_changelog_current_section_has_release_notes() -> None:
     body = match.group("body").strip()
     assert len(body) > 120
     assert re.search(r"^### ", body, re.MULTILINE)
+
+
+def test_extension_prompt_actions_are_opt_in() -> None:
+    package = json.loads(_EXT_PACKAGE.read_text(encoding="utf-8"))
+    manifest_text = json.dumps(package, sort_keys=True)
+    forbidden_manifest_strings = [
+        "djobs.startWorkflow",
+        "djobs.resumeAll",
+        "djobs.resumeWorkflow",
+        "djobs.resumeFromHere",
+        "djobs.autoTakeoverPrompt",
+        "djobs.autoTakeoverMode",
+    ]
+    for forbidden in forbidden_manifest_strings:
+        assert forbidden not in manifest_text
+
+    prompt_setting = package["contributes"]["configuration"]["properties"][
+        "djobs.promptActions.enabled"
+    ]
+    assert prompt_setting["default"] is False
+
+    task_menus = package["contributes"]["menus"]["view/item/context"]
+    prompt_menus = [item for item in task_menus if item["command"] == "djobs.promptFinishWorkflow"]
+    assert prompt_menus
+    for item in prompt_menus:
+        assert "djobs.promptActionsEnabled" in item["when"]
+
+    forbidden_source_strings = [
+        "openChatWithPrompt",
+        "buildStartWorkflowPrompt",
+        "buildResumePrompt",
+        "buildResumePromptForCorrelation",
+        "clipboard.writeText(prompt)",
+        "autoTakeover",
+        "Prompt copied",
+        "prompt copied",
+        "Start a tracked workflow",
+    ]
+    for source_file in _EXT_SOURCE_FILES:
+        source = source_file.read_text(encoding="utf-8")
+        for forbidden in forbidden_source_strings:
+            relative_path = source_file.relative_to(_REPO)
+            assert forbidden not in source, f"{relative_path} contains {forbidden}"
+
+
+def test_extension_checks_marketplace_for_its_own_updates() -> None:
+    source = (_REPO / "vscode-ext" / "src" / "extension.ts").read_text(encoding="utf-8")
+    assert "maybeOfferMarketplaceExtensionUpdate" in source
+    assert "latestMarketplaceVersion" in source
+    assert "marketplace.visualstudio.com" in source
+    assert "MARKETPLACE_CHECK_INTERVAL_MS" in source
+    assert "workbench.extensions.search" in source
+
+
+def test_extension_exposes_practical_task_controls() -> None:
+    package = json.loads(_EXT_PACKAGE.read_text(encoding="utf-8"))
+    task_menu_commands = {
+        item["command"]
+        for item in package["contributes"]["menus"]["view/item/context"]
+        if "viewItem == task" in item["when"]
+    }
+    assert "djobs.archiveTask" in task_menu_commands
+    assert "djobs.deleteTask" in task_menu_commands
+    assert "djobs.viewTaskHistory" in task_menu_commands
+    assert "djobs.inspectTask" in task_menu_commands

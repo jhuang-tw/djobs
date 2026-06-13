@@ -1,8 +1,8 @@
 {
   "name": "djobs",
   "displayName": "djobs — Crash-Proof Task Memory",
-  "description": "Sidebar view for djobs: see task status, one-click resume, audit trail.",
-  "version": "0.8.4",
+  "description": "Setup, MCP registration, diagnostics, and task sidebar for djobs durable agent memory.",
+  "version": "0.8.5",
   "publisher": "jhuang-tw",
   "license": "MIT",
   "icon": "media/icon-128.png",
@@ -62,25 +62,19 @@
         "category": "djobs"
       },
       {
-        "command": "djobs.startWorkflow",
-        "title": "Start Tracked Workflow",
-        "icon": "$(add)",
-        "category": "djobs"
-      },
-      {
-        "command": "djobs.resumeAll",
-        "title": "Resume Incomplete Tasks",
-        "icon": "$(play)",
-        "category": "djobs"
-      },
-      {
         "command": "djobs.copyTaskId",
         "title": "Copy Task ID",
         "category": "djobs"
       },
       {
         "command": "djobs.inspectTask",
-        "title": "Inspect Task",
+        "title": "Inspect Task JSON",
+        "category": "djobs"
+      },
+      {
+        "command": "djobs.viewTaskHistory",
+        "title": "View Task History",
+        "icon": "$(history)",
         "category": "djobs"
       },
       {
@@ -96,26 +90,32 @@
         "category": "djobs"
       },
       {
-        "command": "djobs.resumeFromHere",
-        "title": "Resume from here",
-        "icon": "$(play)",
-        "category": "djobs"
-      },
-      {
         "command": "djobs.skipTask",
-        "title": "Skip this task",
-        "icon": "$(debug-step-over)",
+        "title": "Mark Done (Skip)",
+        "icon": "$(check)",
         "category": "djobs"
       },
       {
-        "command": "djobs.archiveWorkflow",
-        "title": "Archive this workflow",
+        "command": "djobs.archiveTask",
+        "title": "Archive Task",
         "icon": "$(archive)",
         "category": "djobs"
       },
       {
-        "command": "djobs.resumeWorkflow",
-        "title": "Resume this workflow",
+        "command": "djobs.deleteTask",
+        "title": "Delete Task",
+        "icon": "$(trash)",
+        "category": "djobs"
+      },
+      {
+        "command": "djobs.archiveWorkflow",
+        "title": "Archive Workflow",
+        "icon": "$(archive)",
+        "category": "djobs"
+      },
+      {
+        "command": "djobs.promptFinishWorkflow",
+        "title": "Prompt Agent to Finish Workflow",
         "icon": "$(play)",
         "category": "djobs"
       },
@@ -135,17 +135,7 @@
     "menus": {
       "view/title": [
         {
-          "command": "djobs.startWorkflow",
-          "when": "view == djobsTasks",
-          "group": "navigation"
-        },
-        {
           "command": "djobs.refresh",
-          "when": "view == djobsTasks",
-          "group": "navigation"
-        },
-        {
-          "command": "djobs.resumeAll",
           "when": "view == djobsTasks",
           "group": "navigation"
         },
@@ -172,18 +162,8 @@
       ],
       "view/item/context": [
         {
-          "command": "djobs.resumeWorkflow",
-          "when": "view == djobsTasks && viewItem == workflowGroup",
-          "group": "inline"
-        },
-        {
           "command": "djobs.archiveWorkflow",
           "when": "view == djobsTasks && viewItem == workflowGroup",
-          "group": "inline"
-        },
-        {
-          "command": "djobs.resumeWorkflow",
-          "when": "view == djobsTasks && viewItem == actionGroup",
           "group": "inline"
         },
         {
@@ -192,22 +172,49 @@
           "group": "inline"
         },
         {
-          "command": "djobs.resumeFromHere",
+          "command": "djobs.promptFinishWorkflow",
+          "when": "view == djobsTasks && viewItem == workflowGroup && djobs.promptActionsEnabled",
+          "group": "1_prompt"
+        },
+        {
+          "command": "djobs.promptFinishWorkflow",
+          "when": "view == djobsTasks && viewItem == actionGroup && djobs.promptActionsEnabled",
+          "group": "1_prompt"
+        },
+        {
+          "command": "djobs.archiveTask",
           "when": "view == djobsTasks && viewItem == task",
           "group": "inline"
+        },
+        {
+          "command": "djobs.promptFinishWorkflow",
+          "when": "view == djobsTasks && viewItem == task && djobs.promptActionsEnabled",
+          "group": "1_prompt"
+        },
+        {
+          "command": "djobs.viewTaskHistory",
+          "when": "view == djobsTasks && viewItem == task",
+          "group": "2_task"
         },
         {
           "command": "djobs.skipTask",
           "when": "view == djobsTasks && viewItem == task",
-          "group": "inline"
+          "group": "2_task"
         },
         {
           "command": "djobs.copyTaskId",
-          "when": "view == djobsTasks && viewItem == task"
+          "when": "view == djobsTasks && viewItem == task",
+          "group": "3_inspect"
         },
         {
           "command": "djobs.inspectTask",
-          "when": "view == djobsTasks && viewItem == task"
+          "when": "view == djobsTasks && viewItem == task",
+          "group": "3_inspect"
+        },
+        {
+          "command": "djobs.deleteTask",
+          "when": "view == djobsTasks && viewItem == task",
+          "group": "9_destructive"
         }
       ]
     },
@@ -256,27 +263,10 @@
           "default": false,
           "description": "Show completed tasks in the sidebar. Disabled by default to keep the task list focused on active work."
         },
-        "djobs.autoTakeoverPrompt": {
+        "djobs.promptActions.enabled": {
           "type": "boolean",
-          "default": true,
-          "markdownDescription": "Legacy on/off switch for automatic takeover. Prefer `djobs.autoTakeoverMode` for new setups."
-        },
-        "djobs.autoTakeoverMode": {
-          "type": "string",
-          "enum": [
-            "askOnce",
-            "openChat",
-            "prompt",
-            "off"
-          ],
-          "default": "askOnce",
-          "enumDescriptions": [
-            "Ask once per workspace whether djobs may automatically take over future AI work. Allowing it does not open Chat immediately.",
-            "Zero-click mode: when djobs is ready, automatically open Chat with the resume/start workflow prompt for future sessions.",
-            "Ask before opening Chat once per extension version.",
-            "Do not proactively start or resume djobs workflows."
-          ],
-          "description": "How djobs should proactively bring AI work into durable workflow state when a workspace opens."
+          "default": false,
+          "markdownDescription": "Opt-in only. Shows commands that open Chat with a djobs finish-workflow query. Disabled by default, and djobs never asks on startup whether to enable it."
         },
         "djobs.autoRefreshInterval": {
           "type": "number",

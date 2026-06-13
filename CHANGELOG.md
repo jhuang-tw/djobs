@@ -20,6 +20,31 @@ artifact.
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-06-13
+
+### Removed
+- `[ext]` **Removed prompt-driving extension flows.** The VS Code extension no
+  longer generates, copies, or opens Chat prompts. The Start/Resume workflow
+  commands and auto-takeover settings were removed; the extension now focuses
+  on setup, MCP registration, diagnostics, the sidebar, skip/archive, and task
+  inspection.
+
+### Added
+- `[ext]` **Guard against prompt-driving regressions.** Release guard tests now
+  fail if the extension manifest or TypeScript source reintroduces Chat-opening
+  prompt commands, auto-takeover settings, or prompt-copy helpers.
+- `[ext]` **Marketplace update reminder.** The extension now checks the VS Code
+  Marketplace at most once per day and notifies the user when a newer djobs
+  extension version exists, opening the normal Marketplace / Extensions update
+  surfaces instead of trying to drive Chat or an agent prompt.
+- `[ext]` **Practical sidebar task controls.** Each task now has right-click
+  actions to archive it, permanently delete it, inspect its JSON, or view its
+  audit history. Archive keeps history; delete removes the task and its events.
+- `[ext]` **Opt-in prompt actions.** Users who explicitly enable
+  `djobs.promptActions.enabled` get a manual **Prompt Agent to Finish Workflow**
+  action. It is off by default and djobs never asks on startup whether to enable
+  it.
+
 ## [0.8.4] - 2026-06-12
 
 ### Added

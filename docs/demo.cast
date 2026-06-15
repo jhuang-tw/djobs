@@ -68,7 +68,7 @@
 [14.57, "o", "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"]
 [15.27, "o", "STEP 4 \u2502 New session \u2014 resume_session finds unfinished work\n"]
 [15.57, "o", "\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n"]
-[15.97, "o", "  \u2192 Found 15 incomplete task(s). These survived from a previous session.\n"]
+[15.97, "o", "  \u2192 Found 15 incomplete task(s) from a previous session, in order. Before redoing each one, check the current file state (e.g. git diff); if it is already done, call complete_task instead of editing it again.\n"]
 [16.12, "o", "\n"]
 [16.26, "o", "  \u23f3 models/inventory.py             status=pending\n"]
 [16.4, "o", "  \u23f3 models/order.py                 status=pending\n"]

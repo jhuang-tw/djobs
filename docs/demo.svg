@@ -299,7 +299,7 @@
   <text x="12" y="1245" fill="#585b70" class="ln l66">────────────────────────────────────────────────────────────────</text>
   <text x="12" y="1263" fill="#89b4fa" class="ln l67">STEP 4 │ New session — resume_session finds unfinished work</text>
   <text x="12" y="1281" fill="#585b70" class="ln l68">────────────────────────────────────────────────────────────────</text>
-  <text x="12" y="1299" fill="#89b4fa" class="ln l69">  → Found 15 incomplete task(s) from a previous session, in order. Before redoing each one, check the current file state (e.g. git diff); if it is already done, call complete_task instead of editing it again.</text>
+  <text x="12" y="1299" fill="#89b4fa" class="ln l69">  → Found 15 incomplete task(s). These survived from a previous session.</text>
   <text x="12" y="1317" fill="#cdd6f4" class="ln l70">&#160;</text>
   <text x="12" y="1335" fill="#f9e2af" class="ln l71">  ⏳ models/inventory.py             status=pending</text>
   <text x="12" y="1353" fill="#f9e2af" class="ln l72">  ⏳ models/order.py                 status=pending</text>

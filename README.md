@@ -77,7 +77,15 @@ broader real-world validation.
 > it speaks MCP natively, optimizes for crash-recovery and human-inspectable audit trails over raw
 > throughput, and runs with zero infrastructure — one local SQLite file, no broker, no daemon.
 
-> **Maturity — early but tested.** 379 passing tests, CI across Python 3.11–3.13, SQLite and optional
+> **How is this different from agent memory / RAG tools?** Memory tools help an agent *recall
+> knowledge* — they summarize past sessions (often with an extra LLM step), store the summaries in
+> a vector database, and retrieve relevant snippets back into context. djobs tracks *work state*:
+> which tasks are done, which remain, and the evidence recorded for each. It checkpoints and
+> resumes with **no LLM calls, no embeddings, and no background service** — just one local SQLite
+> file — so recovery is exact and auditable rather than approximate. The two are complementary: one
+> helps an agent *remember*, djobs helps it *finish and prove* the work.
+
+> **Maturity — early but tested.** 388 passing tests, CI across Python 3.11–3.13, SQLite and optional
 > PostgreSQL backends. Marked Alpha while the public API stabilizes; the core enqueue → complete →
 > resume flow is stable and used daily.
 
@@ -275,6 +283,7 @@ python examples/run_migration_demo.py
 Beyond the three core tools, djobs also provides:
 
 - **`audit_log`** — "What did the AI do yesterday?" Full event history across sessions.
+- **`work_receipt`** — An evidence-backed receipt of what was done: changed files, completed tasks with their evidence, what remains, and a recommended next step. When run inside a git repository it also folds in ground truth from git — how many files git actually sees as changed, and any file a task *claimed* but git shows no pending change for — so the claims can be cross-checked against the repository. Read-only, so the next session (or a reviewer) can trust progress without re-reading the chat. CLI: `djobs receipt --correlation-id <workspace>` (add `--no-git` to skip the git check).
 - **`check_task` / `list_tasks`** — Inspect individual tasks or list by workspace.
 - **`health`** — Queue depth by status at a glance.
 - **`djobs doctor`** — One-shot setup check: confirms djobs is installed, the queue DB is writable, and `.vscode/mcp.json` is wired correctly. Run it (or "djobs: Diagnose Setup" in VS Code) whenever something feels off.
@@ -316,6 +325,9 @@ djobs includes a VS Code sidebar extension for visual workflow control:
   create durable djobs tasks before multi-step edits
 - **Task cleanup controls** — right-click a task to archive it, delete it, view
   audit history, copy its ID, or inspect raw JSON
+- **Pause switch** — `djobs pause` / `djobs unpause` (or the sidebar Pause/Resume
+  button) temporarily stop agents resuming/enqueueing when a stuck task keeps
+  pulling the agent back; nothing is deleted
 - **Optional prompt actions** — off by default; enable `djobs.promptActions.enabled`
   to show a manual prompt action for finishing a workflow in Chat
 - **Evidence trail** — see what the agent actually changed in each completed task
@@ -333,7 +345,7 @@ cd vscode-ext && npm install && npm run package
 
 - [x] Durable workflow state (`enqueue` → `complete` → `resume`)
 - [x] Audit trail — "what did the AI do?"
-- [x] MCP server with 14 tools
+- [x] MCP server with 15 tools
 - [x] `pip install djobs && djobs install-mcp` — two-command setup
 - [x] Published on PyPI
 - [x] `complete_task` evidence field — agent records what it changed

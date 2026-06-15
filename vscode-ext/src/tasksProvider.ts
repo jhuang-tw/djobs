@@ -71,12 +71,33 @@ export class DjobsTasksProvider implements vscode.TreeDataProvider<DashItem> {
       return [card('sync', 'Loading…')];
     }
 
+    const promptActions = vscode.workspace
+      .getConfiguration('djobs')
+      .get<boolean>('promptActions.enabled', false);
+    const statusRows: DashItem[] = [
+      card(
+        this.snapshot.paused ? 'circle-slash' : 'pass',
+        this.snapshot.paused ? 'djobs: Paused' : 'djobs: Active',
+        this.snapshot.paused
+          ? 'Agents will not resume or enqueue tasks for this queue. Use the Resume djobs toolbar button (or run "djobs unpause") to re-enable. No tasks were deleted.'
+          : 'Agents can resume and enqueue tasks for this queue.',
+      ),
+      card(
+        promptActions ? 'play-circle' : 'circle-slash',
+        promptActions ? 'Prompt actions: On' : 'Prompt actions: Off',
+        promptActions
+          ? 'Manual prompt actions are visible in task/workflow context menus.'
+          : 'Manual prompt actions are hidden. Use the Enable Prompt Actions toolbar button to turn them on for this workspace.',
+      ),
+    ];
+
     const tasks = this.snapshot.tasks;
     if (tasks.length === 0) {
       const options = this.client.getViewOptions();
       const active = options.showCompleted ? '' : 'active ';
       if (options.scope === 'currentWorkspace') {
         return [
+          ...statusRows,
           card('inbox', `No ${active}tasks for this workspace`),
           hint('djobs records work when an MCP-enabled agent calls enqueue_task or resume_session.'),
           hint(options.showCompleted
@@ -86,6 +107,7 @@ export class DjobsTasksProvider implements vscode.TreeDataProvider<DashItem> {
         ];
       }
       return [
+        ...statusRows,
         card('inbox', `No ${active}tasks in the queue`),
         hint(options.showCompleted
           ? 'Use Durable Coder agent on a multi-file task.'
@@ -93,11 +115,16 @@ export class DjobsTasksProvider implements vscode.TreeDataProvider<DashItem> {
       ];
     }
 
-    return buildRootLevel(tasks, this.client.getViewOptions().scope);
+    return [...statusRows, ...buildRootLevel(tasks, this.client.getViewOptions().scope)];
   }
 
   getIncompleteCount(): number {
     return this.snapshot?.tasks.filter((t) => !isTerminal(t.status)).length ?? 0;
+  }
+
+  /** True when the active queue is paused (agents will not resume/enqueue). */
+  isPaused(): boolean {
+    return this.snapshot?.paused === true;
   }
 
   getVisibleWorkflowCorrelationIds(): string[] {

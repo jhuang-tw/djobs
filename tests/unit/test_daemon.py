@@ -538,6 +538,246 @@ class TestCLI:
             "job_succeeded",
         ]
 
+    def test_receipt_summarizes_completed_with_evidence(self, tmp_path, capsys):
+        db_path = tmp_path / "jobs.db"
+        repository = SQLiteJobRepository.from_path(db_path)
+        queue = QueueService(repository)
+        done = queue.submit(
+            "edit-file",
+            {"summary": "Add validation", "file": "src/app.py"},
+            correlation_id="w",
+        )
+        queue.complete(done.id, evidence="Added input validation to app.py")
+        queue.submit("run-tests", {"summary": "Run pytest"}, correlation_id="w")
+
+        main(
+            [
+                "receipt",
+                "--db",
+                str(db_path),
+                "--correlation-id",
+                "w",
+                "--no-git",
+                "--format",
+                "json",
+            ]
+        )
+
+        out = json.loads(capsys.readouterr().out)
+        assert out["totals"]["completed"] == 1
+        assert out["totals"]["remaining"] == 1
+        assert out["changed_files"] == ["src/app.py"]
+        assert out["evidence_coverage"]["completed_with_evidence"] == 1
+        assert out["completed_tasks"][0]["evidence"] == "Added input validation to app.py"
+
+    def test_receipt_flags_failed_tasks(self, tmp_path, capsys):
+        db_path = tmp_path / "jobs.db"
+        repository = SQLiteJobRepository.from_path(db_path)
+        queue = QueueService(repository)
+        job = queue.submit("build", {"summary": "Build"}, correlation_id="w")
+        queue.fail(job.id, "compiler error: missing semicolon")
+
+        main(
+            [
+                "receipt",
+                "--db",
+                str(db_path),
+                "--correlation-id",
+                "w",
+                "--no-git",
+                "--format",
+                "json",
+            ]
+        )
+
+        out = json.loads(capsys.readouterr().out)
+        assert out["totals"]["failed"] == 1
+        assert "compiler error" in out["failed_tasks"][0]["last_error"]
+        assert "Investigate" in out["recommended_next_step"]
+
+    def test_receipt_table_output(self, tmp_path, capsys):
+        db_path = tmp_path / "jobs.db"
+        repository = SQLiteJobRepository.from_path(db_path)
+        queue = QueueService(repository)
+        job = queue.submit("docs", {"summary": "Write docs"}, correlation_id="w")
+        queue.complete(job.id, evidence="Wrote README section")
+
+        main(["receipt", "--db", str(db_path), "--correlation-id", "w", "--no-git"])
+
+        out = capsys.readouterr().out
+        assert "AI Work Receipt" in out
+        assert "Wrote README section" in out
+        assert "Next step:" in out
+
+    def test_receipt_folds_in_git_working_tree(self, tmp_path, capsys, monkeypatch):
+        db_path = tmp_path / "jobs.db"
+        repository = SQLiteJobRepository.from_path(db_path)
+        queue = QueueService(repository)
+        done = queue.submit("edit", {"summary": "x", "file": "src/app.py"}, correlation_id="w")
+        queue.complete(done.id, evidence="did x")
+
+        # Stub git so the test does not depend on the real working tree.
+        monkeypatch.setattr(
+            "djobs.core.gitinfo.working_tree_changes",
+            lambda _root: {
+                "is_git_repo": True,
+                "changed_file_count": 1,
+                "changed_files": ["src/app.py"],
+                "diff_summary": "1 file changed, 3 insertions(+)",
+            },
+        )
+
+        main(["receipt", "--db", str(db_path), "--correlation-id", "w", "--format", "json"])
+        out = json.loads(capsys.readouterr().out)
+        assert out["git"]["is_git_repo"] is True
+        assert out["git"]["changed_files"] == ["src/app.py"]
+        assert "claimed_not_in_working_tree" not in out
+
+    def test_receipt_flags_claimed_files_missing_from_git(self, tmp_path, capsys, monkeypatch):
+        db_path = tmp_path / "jobs.db"
+        repository = SQLiteJobRepository.from_path(db_path)
+        queue = QueueService(repository)
+        done = queue.submit("edit", {"summary": "x", "file": "src/ghost.py"}, correlation_id="w")
+        queue.complete(done.id, evidence="claimed but committed already")
+
+        monkeypatch.setattr(
+            "djobs.core.gitinfo.working_tree_changes",
+            lambda _root: {
+                "is_git_repo": True,
+                "changed_file_count": 0,
+                "changed_files": [],
+                "diff_summary": None,
+            },
+        )
+
+        main(["receipt", "--db", str(db_path), "--correlation-id", "w", "--format", "json"])
+        out = json.loads(capsys.readouterr().out)
+        assert out["claimed_not_in_working_tree"] == ["src/ghost.py"]
+
+    def test_receipt_table_explains_claimed_files_missing_from_git(
+        self, tmp_path, capsys, monkeypatch
+    ):
+        db_path = tmp_path / "jobs.db"
+        repository = SQLiteJobRepository.from_path(db_path)
+        queue = QueueService(repository)
+        done = queue.submit("edit", {"summary": "x", "file": "src/ghost.py"}, correlation_id="w")
+        queue.complete(done.id, evidence="claimed but already committed")
+
+        monkeypatch.setattr(
+            "djobs.core.gitinfo.working_tree_changes",
+            lambda _root: {
+                "is_git_repo": True,
+                "changed_file_count": 0,
+                "changed_files": [],
+                "diff_summary": None,
+            },
+        )
+
+        main(["receipt", "--db", str(db_path), "--correlation-id", "w"])
+        out = capsys.readouterr().out
+        assert "tasks claimed these files, but git shows no pending change" in out
+        assert "may already be committed" in out
+        assert "src/ghost.py" in out
+
+    def test_receipt_git_status_failure_does_not_flag_claims(self, tmp_path, capsys, monkeypatch):
+        db_path = tmp_path / "jobs.db"
+        repository = SQLiteJobRepository.from_path(db_path)
+        queue = QueueService(repository)
+        done = queue.submit("edit", {"summary": "x", "file": "src/app.py"}, correlation_id="w")
+        queue.complete(done.id, evidence="edited app")
+
+        monkeypatch.setattr(
+            "djobs.core.gitinfo.working_tree_changes",
+            lambda _root: {"is_git_repo": True, "reason": "fatal: index file corrupt"},
+        )
+
+        main(["receipt", "--db", str(db_path), "--correlation-id", "w"])
+        table_out = capsys.readouterr().out
+        assert "Git working tree check unavailable: fatal: index file corrupt" in table_out
+        assert "tasks claimed these files" not in table_out
+
+        main(["receipt", "--db", str(db_path), "--correlation-id", "w", "--format", "json"])
+        json_out = json.loads(capsys.readouterr().out)
+        assert json_out["git"]["reason"] == "fatal: index file corrupt"
+        assert "claimed_not_in_working_tree" not in json_out
+
+    def test_receipt_uses_path_payload_as_changed_file(self, tmp_path, capsys):
+        db_path = tmp_path / "jobs.db"
+        repository = SQLiteJobRepository.from_path(db_path)
+        queue = QueueService(repository)
+        done = queue.submit(
+            "edit", {"summary": "x", "path": "src/path_only.py"}, correlation_id="w"
+        )
+        queue.complete(done.id, evidence="edited path-only payload")
+
+        main(
+            [
+                "receipt",
+                "--db",
+                str(db_path),
+                "--correlation-id",
+                "w",
+                "--no-git",
+                "--format",
+                "json",
+            ]
+        )
+        out = json.loads(capsys.readouterr().out)
+        assert out["changed_files"] == ["src/path_only.py"]
+
+    def test_receipt_no_git_skips_git_section(self, tmp_path, capsys, monkeypatch):
+        db_path = tmp_path / "jobs.db"
+        repository = SQLiteJobRepository.from_path(db_path)
+        queue = QueueService(repository)
+        queue.submit("edit", {"summary": "x", "file": "a.py"}, correlation_id="w")
+
+        def _boom(_root):
+            raise AssertionError("git must not be inspected with --no-git")
+
+        monkeypatch.setattr("djobs.core.gitinfo.working_tree_changes", _boom)
+
+        main(
+            [
+                "receipt",
+                "--db",
+                str(db_path),
+                "--correlation-id",
+                "w",
+                "--no-git",
+                "--format",
+                "json",
+            ]
+        )
+        out = json.loads(capsys.readouterr().out)
+        assert "git" not in out
+
+    def test_pause_then_status_reports_paused(self, tmp_path, capsys):
+        db_path = tmp_path / "jobs.db"
+        SQLiteJobRepository.from_path(db_path)
+
+        main(["pause", "--db", str(db_path)])
+        pause_out = json.loads(capsys.readouterr().out)
+        assert pause_out["paused"] is True
+        assert pause_out["changed"] is True
+
+        main(["status", "--db", str(db_path)])
+        status_out = json.loads(capsys.readouterr().out)
+        assert status_out["paused"] is True
+
+    def test_unpause_clears_paused_state(self, tmp_path, capsys):
+        db_path = tmp_path / "jobs.db"
+        SQLiteJobRepository.from_path(db_path)
+
+        main(["pause", "--db", str(db_path)])
+        capsys.readouterr()
+        main(["unpause", "--db", str(db_path)])
+        unpause_out = json.loads(capsys.readouterr().out)
+        assert unpause_out["paused"] is False
+
+        main(["status", "--db", str(db_path)])
+        status_out = json.loads(capsys.readouterr().out)
+        assert status_out["paused"] is False
+
     def test_token_savings_estimates_completed_work_json(self, tmp_path, capsys):
         db_path = tmp_path / "jobs.db"
         repository = SQLiteJobRepository.from_path(db_path)

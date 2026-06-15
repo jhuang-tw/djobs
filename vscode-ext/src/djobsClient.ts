@@ -62,6 +62,18 @@ export class DjobsClient {
     return this.run(['task-history', task.id, '--db', options.dbPath]);
   }
 
+  /** Pause djobs so agents stop resuming/enqueuing durable work (reversible). */
+  async pause(): Promise<void> {
+    const options = this.getOptions();
+    await this.run(['pause', '--db', options.dbPath]);
+  }
+
+  /** Resume normal djobs behavior after a pause. */
+  async unpause(): Promise<void> {
+    const options = this.getOptions();
+    await this.run(['unpause', '--db', options.dbPath]);
+  }
+
   async archiveCurrentWorkflow(reason?: string): Promise<number> {
     return this.archiveByCorrelation(this.workspaceRoot, reason);
   }

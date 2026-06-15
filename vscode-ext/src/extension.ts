@@ -61,9 +61,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(doctorChannel);
 
   function updateStatusBar(): void {
+    const paused = provider.isPaused();
+    void vscode.commands.executeCommand('setContext', 'djobs.paused', paused);
     const count = provider.getIncompleteCount();
-    if (count > 0) {
+    if (paused) {
+      statusBarItem.text = '$(circle-slash) djobs: paused';
+      statusBarItem.tooltip = 'djobs is paused — agents will not resume/enqueue. Open the sidebar to resume.';
+      statusBarItem.show();
+    } else if (count > 0) {
       statusBarItem.text = `$(debug-restart) djobs: ${count} pending`;
+      statusBarItem.tooltip = 'Open djobs sidebar';
       statusBarItem.show();
     } else {
       statusBarItem.hide();
@@ -337,6 +344,30 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     await runDjobsSetup(client, provider, nativeMcp, mcpDidChange);
   });
 
+  const pauseDjobs = vscode.commands.registerCommand('djobs.pause', async () => {
+    try {
+      await client.pause();
+      vscode.window.showInformationMessage(
+        'djobs paused. Agents will not resume or enqueue tasks until you resume djobs. No tasks were deleted.',
+      );
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      await handlePauseCommandFailure(client, detail, true);
+    }
+    await provider.refresh();
+  });
+
+  const unpauseDjobs = vscode.commands.registerCommand('djobs.unpause', async () => {
+    try {
+      await client.unpause();
+      vscode.window.showInformationMessage('djobs resumed. Agents can resume and enqueue tasks again.');
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      await handlePauseCommandFailure(client, detail, false);
+    }
+    await provider.refresh();
+  });
+
   const configWatcher = vscode.workspace.onDidChangeConfiguration(async (event) => {
     if (event.affectsConfiguration('djobs')) {
       const newScope = vscode.workspace.getConfiguration('djobs').get<string>('scope', 'currentWorkspace');
@@ -377,6 +408,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     toggleQueueLocation,
     diagnose,
     setup,
+    pauseDjobs,
+    unpauseDjobs,
     configWatcher,
     { dispose: () => clearInterval(timer) },
   );
@@ -575,6 +608,46 @@ async function runDjobsSetup(
       await vscode.commands.executeCommand('djobs.diagnose');
     }
   }
+}
+
+async function handlePauseCommandFailure(
+  client: DjobsClient,
+  detail: string,
+  pause: boolean,
+): Promise<void> {
+  if (/invalid choice: '?(pause|unpause)'?|unrecognized arguments: (pause|unpause)/i.test(detail)) {
+    const update = 'Update djobs';
+    const selected = await vscode.window.showErrorMessage(
+      'The djobs Python package is too old for the Pause/Resume command. Update it now?',
+      update,
+      'Cancel',
+    );
+    if (selected === update) {
+      try {
+        await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title: 'Updating djobs…' },
+          async () => client.updatePackage(),
+        );
+        if (pause) {
+          await client.pause();
+          vscode.window.showInformationMessage(
+            'djobs updated and paused. Agents will not resume or enqueue tasks until you resume djobs.',
+          );
+        } else {
+          await client.unpause();
+          vscode.window.showInformationMessage('djobs updated and resumed.');
+        }
+      } catch (error) {
+        const updateDetail = error instanceof Error ? error.message : String(error);
+        vscode.window.showErrorMessage(`djobs update failed: ${updateDetail}`);
+      }
+    }
+    return;
+  }
+
+  vscode.window.showErrorMessage(
+    pause ? `djobs: could not pause. ${detail}` : `djobs: could not resume. ${detail}`,
+  );
 }
 
 function workflowLabel(correlationId: string): string {

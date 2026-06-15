@@ -25,6 +25,7 @@ export interface DjobsTask {
 export interface DjobsStatus {
   timestamp: string;
   health: DjobsHealth;
+  paused?: boolean;
   tasks: DjobsTask[];
 }
 

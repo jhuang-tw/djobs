@@ -18,7 +18,7 @@ steps at the end before claiming done.
 ## Repo shape (orient first)
 
 - `src/djobs/` - the Python package: `cli.py` (subcommands), `mcp_server.py`
-  (the 14 MCP tools agents call), `queue/service.py`, `storage/`, `core/`.
+  (the 15 MCP tools agents call), `queue/service.py`, `storage/`, `core/`.
 - `vscode-ext/` - the TypeScript VS Code extension (thin read-only sidebar over
   the CLI). Build with `npm run compile`; type-check with `npx tsc -p ./ --noEmit`.
 - `tests/unit/` + `tests/integration/` - pytest. Unit tests use `tmp_path` +
@@ -194,7 +194,7 @@ $env:PYTHONPATH = "$PWD/src"
 .\.venv\Scripts\python.exe -m ruff check src/ tests/
 .\.venv\Scripts\python.exe -m ruff format --check src/ tests/    # SEPARATE gate from ruff check
 .\.venv\Scripts\python.exe -m mypy                               # needs psycopg installed
-.\.venv\Scripts\python.exe -m pytest -q                          # expect ~379 passed / 18 skipped
+.\.venv\Scripts\python.exe -m pytest -q                          # expect ~388 passed / 18 skipped
 
 # Or reproduce CI's exact lint/type/test in one shot:
 .\.venv\Scripts\python.exe -m pre_commit run --all-files

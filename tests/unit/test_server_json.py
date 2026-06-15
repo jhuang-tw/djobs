@@ -20,20 +20,13 @@ def _load() -> dict:
     return json.loads(_SERVER_JSON.read_text(encoding="utf-8"))
 
 
-def test_server_json_exists() -> None:
-    assert _SERVER_JSON.is_file()
-
-
-def test_name_matches_readme_marker() -> None:
-    # The registry verifies namespace ownership via this reverse-DNS name, which
-    # must match the `<!-- mcp-name: ... -->` marker shipped in the PyPI README.
-    assert _load()["name"] == "io.github.jhuang-tw/djobs"
-
-
-def test_description_within_registry_limit() -> None:
-    # The official registry caps the description at 100 characters.
-    description = _load()["description"]
-    assert 0 < len(description) <= 100
+def test_registry_identity_and_limits() -> None:
+    # The registry verifies namespace ownership via this reverse-DNS name (which
+    # must match the `<!-- mcp-name: ... -->` marker in the PyPI README) and caps
+    # the description at 100 characters.
+    data = _load()
+    assert data["name"] == "io.github.jhuang-tw/djobs"
+    assert 0 < len(data["description"]) <= 100
 
 
 def test_version_tracks_package_version() -> None:

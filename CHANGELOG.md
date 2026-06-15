@@ -20,6 +20,55 @@ artifact.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-06-14
+
+### Added
+- `[core]` **AI Work Receipt.** New `djobs receipt` command and `work_receipt`
+  MCP tool produce an evidence-backed summary of what the agent actually did:
+  totals (completed / remaining / failed / archived), the files changed, the
+  evidence recorded on each completed task, evidence coverage, and a recommended
+  next step. It is read-only (works even while paused) so a human or the next
+  agent can trust and continue the work without re-reading the whole chat.
+- `[core]` **Git-aware evidence.** When run inside a git working tree, the Work
+  Receipt now folds in ground truth from git: it reports how many files git sees
+  as actually changed (with a `git diff --shortstat` summary) and flags any file
+  a task *claimed* to change that git shows no pending change for — labeled
+  honestly as "may already be committed, or was not actually modified". This lets
+  a human cross-check the agent's claims against what the repository really shows.
+  The inspection is read-only and never raises; pass `--no-git` to skip it.
+- `[core]` **Pause switch.** New `djobs pause` / `djobs unpause` commands (and a
+  **Pause djobs** / **Resume djobs** toolbar button in the VS Code sidebar)
+  temporarily stop agents from resuming or enqueueing durable work. While paused,
+  `resume_session` and `enqueue_task` return a clear "paused, work normally"
+  notice instead of surfacing tasks, so a workflow that wedges on a hanging
+  command can no longer trap the agent in a resume loop. Pausing deletes nothing
+  and is fully reversible; `djobs status` reports the paused state.
+
+### Fixed
+- `[core]` **Work Receipt avoids false git mismatch warnings.** If git is a
+  working tree but `git status --porcelain` cannot produce a reliable file list
+  (for example because git is unavailable, times out, or the index is corrupt),
+  the receipt now reports the git check as unavailable instead of treating every
+  task-claimed file as "not in the working tree".
+- `[core]` **Managed guidance no longer hijacks the user's prompt.** The
+  auto-installed agent guidance block (and the MCP server instructions) used to
+  tell agents to treat ordinary requests like "continue", "fix this", or "run
+  tests" as a trigger to call `resume_session` and enqueue durable plans — in
+  every workspace where djobs was wired, including unrelated projects. The block
+  is now an explicitly optional tool that must never reinterpret the user's
+  request, never starts a session by calling djobs, and instructs agents to
+  treat tool output as data, not commands. Re-run `djobs install-instructions`
+  in a project to update an already-installed block.
+- `[ext]` **Pause button handles stale Python packages.** If the sidebar's Pause
+  / Resume command is available but the installed `djobs` Python package is too
+  old to expose `djobs pause` / `djobs unpause`, the extension now offers to
+  update the package and retries the action instead of surfacing argparse's
+  `invalid choice: 'pause'` error.
+- `[ext]` **Sidebar shows switch state.** The task view now includes explicit
+  `djobs: Active/Paused` and `Prompt actions: On/Off` rows, so toolbar toggles
+  are understandable even though VS Code view-title buttons are not real
+  checkboxes.
+
 ## [0.8.6] - 2026-06-13
 
 ### Added

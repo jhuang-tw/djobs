@@ -51,6 +51,11 @@ available, because VS Code auto-update can lag or be disabled.
 Version 0.8.6 adds visible **Enable Prompt Actions** and **Disable Prompt
 Actions** commands to the sidebar toolbar and Command Palette.
 
+Version 0.9.0 adds **Pause djobs** / **Resume djobs** and updates stale Python
+packages automatically when the installed CLI is too old for those commands. It
+also pairs with the new **AI Work Receipt** (`djobs receipt` / the `work_receipt`
+MCP tool), an evidence-backed, git-aware summary of what the agent actually did.
+
 Prompt actions are available only if you explicitly enable
 `djobs.promptActions.enabled`. When enabled, the sidebar shows **Prompt Agent to
 Finish Workflow**; when disabled (the default), djobs never opens Chat or asks
@@ -61,6 +66,11 @@ Enable Prompt Actions** to turn it on for the current workspace.
 ## What the sidebar shows
 
 - djobs tasks grouped by workflow and status.
+- Explicit `djobs: Active/Paused` and `Prompt actions: On/Off` rows, so you can
+   see switch state without guessing from toolbar icons.
+- A **Pause djobs / Resume djobs** toolbar button. Pausing temporarily stops
+  agents from resuming or enqueueing tasks (useful when a stuck task keeps
+  dragging the agent back); it deletes nothing and is reversible.
 - Stale (long-unfinished) and blocked tasks flagged, with one-click archive.
 - Right-click a task to archive it, permanently delete it, view its audit
    history, copy its ID, or inspect its raw JSON.

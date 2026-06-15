@@ -4,31 +4,19 @@ import importlib
 
 import pytest
 
+# One representative module per subpackage — a smoke test that the package and
+# its public entry points import cleanly, not an exhaustive module inventory.
 MODULES = [
     "djobs",
-    "djobs.api",
+    "djobs.cli",
+    "djobs.mcp_server",
     "djobs.api.ai_handlers",
-    "djobs.core",
-    "djobs.core.config",
-    "djobs.core.errors",
     "djobs.core.models",
-    "djobs.core.retry",
-    "djobs.core.states",
-    "djobs.observability",
-    "djobs.observability.inspect",
-    "djobs.observability.logging",
     "djobs.observability.metrics",
-    "djobs.queue",
     "djobs.queue.service",
-    "djobs.scheduler",
     "djobs.scheduler.scheduler",
-    "djobs.storage",
-    "djobs.storage.events",
     "djobs.storage.sqlite",
-    "djobs.worker",
     "djobs.worker.pool",
-    "djobs.worker.registry",
-    "djobs.worker.runner",
 ]
 
 

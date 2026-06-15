@@ -25,9 +25,11 @@ Two artifacts, versioned in lockstep:
 
 - `src/djobs/cli.py` - CLI subcommands: `init`, `install-mcp`,
   `install-instructions`, `doctor`, `serve`, `dashboard`, `status`, `skip`,
-  `accept-before`, `archive-workflow`, `explain`, `mcp`, `audit`.
+  `accept-before`, `archive-workflow`, `explain`, `receipt`, `mcp`, `audit`,
+  `pause`, `unpause`.
 - `src/djobs/mcp_server.py` - the MCP tools agents call (enqueue/complete/fail,
-  resume_session, list_tasks, check_task, audit_log, health, multi-agent claim).
+  resume_session, list_tasks, check_task, audit_log, work_receipt, health,
+  multi-agent claim).
 - `src/djobs/queue/`, `storage/`, `core/` - queue service, SQLite/Postgres
   repositories, domain models/state machine.
 - `vscode-ext/src/` - TypeScript extension (`extension.ts`, `djobsClient.ts`,

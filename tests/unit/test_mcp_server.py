@@ -28,6 +28,7 @@ from djobs.mcp_server import (
     register_agent,
     release_task,
     resume_session,
+    work_receipt,
 )
 
 
@@ -742,3 +743,128 @@ class TestEnqueuePayloadValidation:
     def test_default_empty_payload_works(self):
         result = json.loads(enqueue_task(task_type="lint"))
         assert result["payload"] == {}
+
+
+class TestWorkReceipt:
+    """work_receipt is a read-only, evidence-backed summary of what was done."""
+
+    def test_reports_completed_and_changed_files(self):
+        cid = "c:/receipt"
+        created = json.loads(
+            enqueue_task(
+                task_type="edit",
+                payload=json.dumps({"summary": "x", "file": "a.py"}),
+                correlation_id=cid,
+            )
+        )
+        complete_task(created["id"], evidence="did x")
+        result = json.loads(work_receipt(cid))
+        assert result["totals"]["completed"] == 1
+        assert result["changed_files"] == ["a.py"]
+        assert result["completed_tasks"][0]["evidence"] == "did x"
+
+    def test_flags_remaining_and_next_step(self):
+        cid = "c:/receipt-remaining"
+        enqueue_task(task_type="edit", correlation_id=cid)
+        result = json.loads(work_receipt(cid))
+        assert result["totals"]["remaining"] == 1
+        assert "remain" in result["recommended_next_step"]
+
+    def test_works_when_paused(self, _fresh_db):
+        from djobs.core.pause import set_paused
+
+        cid = "c:/paused-receipt"
+        created = json.loads(enqueue_task(task_type="edit", correlation_id=cid))
+        complete_task(created["id"], evidence="done")
+        set_paused(_fresh_db, True)
+        # Read-only: a receipt must still be available while paused.
+        result = json.loads(work_receipt(cid))
+        assert result["totals"]["completed"] == 1
+
+    def test_defaults_to_workspace(self, monkeypatch, tmp_path):
+        monkeypatch.chdir(tmp_path)
+        enqueue_task(task_type="a")
+        result = json.loads(work_receipt())
+        assert result["scope"] == os.getcwd()
+
+    def test_folds_in_git_ground_truth(self, monkeypatch):
+        cid = "c:/receipt-git"
+        created = json.loads(
+            enqueue_task(
+                task_type="edit",
+                payload=json.dumps({"summary": "x", "file": "a.py"}),
+                correlation_id=cid,
+            )
+        )
+        complete_task(created["id"], evidence="did x")
+
+        monkeypatch.setattr(
+            "djobs.core.gitinfo.working_tree_changes",
+            lambda _root: {
+                "is_git_repo": True,
+                "changed_file_count": 1,
+                "changed_files": ["a.py"],
+                "diff_summary": "1 file changed, 1 insertion(+)",
+            },
+        )
+
+        result = json.loads(work_receipt(cid))
+        assert result["git"]["changed_files"] == ["a.py"]
+        assert result["git"]["diff_summary"] == "1 file changed, 1 insertion(+)"
+        assert "claimed_not_in_working_tree" not in result
+
+    def test_git_status_failure_does_not_create_false_mismatch(self, monkeypatch):
+        cid = "c:/receipt-git-failure"
+        created = json.loads(
+            enqueue_task(
+                task_type="edit",
+                payload=json.dumps({"summary": "x", "file": "a.py"}),
+                correlation_id=cid,
+            )
+        )
+        complete_task(created["id"], evidence="did x")
+
+        monkeypatch.setattr(
+            "djobs.core.gitinfo.working_tree_changes",
+            lambda _root: {"is_git_repo": True, "reason": "git timed out"},
+        )
+
+        result = json.loads(work_receipt(cid))
+        assert result["git"]["reason"] == "git timed out"
+        assert "claimed_not_in_working_tree" not in result
+
+
+class TestPause:
+    """When paused, resume/enqueue stop driving the agent without losing tasks."""
+
+    def test_resume_session_paused_returns_notice(self, _fresh_db):
+        from djobs.core.pause import set_paused
+
+        set_paused(_fresh_db, True)
+        result = json.loads(resume_session("ws"))
+        assert result["paused"] is True
+        assert result["incomplete_count"] == 0
+        assert result["tasks"] == []
+        assert "unpause" in result["message"]
+
+    def test_enqueue_task_paused_is_skipped(self, _fresh_db):
+        from djobs.core.pause import set_paused
+
+        set_paused(_fresh_db, True)
+        result = json.loads(enqueue_task(task_type="lint", correlation_id="ws"))
+        assert result["paused"] is True
+        assert result["skipped"] is True
+        # Nothing was stored, so resume after unpause finds no tasks from this call.
+        set_paused(_fresh_db, False)
+        assert json.loads(resume_session("ws"))["incomplete_count"] == 0
+
+    def test_unpause_restores_normal_behavior(self, _fresh_db):
+        from djobs.core.pause import set_paused
+
+        set_paused(_fresh_db, True)
+        set_paused(_fresh_db, False)
+        created = json.loads(enqueue_task(task_type="lint", correlation_id="ws"))
+        assert created["type"] == "lint"
+        resumed = json.loads(resume_session("ws"))
+        assert "paused" not in resumed
+        assert resumed["incomplete_count"] == 1

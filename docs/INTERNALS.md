@@ -85,7 +85,7 @@ pool.run_loop(stop_event)
 
 ## Full MCP Tool Reference
 
-14 tools are exposed via FastMCP / stdio.
+15 tools are exposed via FastMCP / stdio.
 
 **Core task lifecycle**
 
@@ -126,7 +126,7 @@ tasks does not turn each claim into an O(n) scan with per-row subqueries.
 
 | Area | What you get |
 |------|--------------|
-| **MCP server** | 14 tools exposed via FastMCP / stdio — works in VS Code, Claude Desktop, etc. |
+| **MCP server** | 15 tools exposed via FastMCP / stdio — works in VS Code, Claude Desktop, etc. |
 | **Crash recovery** | `resume_session` returns incomplete tasks for a given workspace / correlation id |
 | **Audit trail** | `audit_log` aggregates `job_events` so you can answer "what did the AI do yesterday?" |
 | **Type isolation** | Built-in daemon only claims job types it has handlers for; AI-only types are left to the agent via `complete_task` / `fail_task` |
@@ -134,7 +134,7 @@ tasks does not turn each claim into an O(n) scan with per-row subqueries.
 | **Web dashboard** | Read-only cross-agent fleet + queue view via `djobs dashboard` (stdlib HTTP server, no extra deps) |
 | **SQLite first** | No Redis, RabbitMQ, Docker, or Postgres required for local use |
 | **Postgres path** | Same `JobRepository` protocol implemented on top of `SELECT ... FOR UPDATE SKIP LOCKED` for multi-worker setups |
-| **Test coverage** | 291 passing tests (18 skipped without Postgres), strict ruff lint, mypy-clean |
+| **Test coverage** | 388 passing tests (18 skipped without Postgres), strict ruff lint, mypy-clean |
 
 ---
 

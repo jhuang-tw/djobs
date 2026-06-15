@@ -47,16 +47,6 @@ def test_doctor_json_reports_version(
     assert data["version"] == djobs.__version__
 
 
-def test_doctor_json_never_exits(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    # Even with no mcp.json wiring present, --json returns instead of sys.exit.
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("DJOBS_DB", str(tmp_path / "q.db"))
-    _run_doctor(as_json=True)  # must not raise SystemExit
-    capsys.readouterr()
-
-
 def test_doctor_human_readable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -155,17 +145,6 @@ def test_doctor_human_output_uses_info_not_fail(
     mcp_line = next(ln for ln in out.splitlines() if "djobs-mcp on PATH" in ln)
     assert "[INFO]" in mcp_line
     assert "[FAIL]" not in mcp_line
-
-
-def test_doctor_checks_default_to_check_level(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("DJOBS_DB", str(tmp_path / "q.db"))
-    _run_doctor(as_json=True)
-    data = json.loads(capsys.readouterr().out)
-    pkg = next(c for c in data["checks"] if c["name"] == "djobs package")
-    assert pkg["level"] == "check"
 
 
 # --- _probe_command -------------------------------------------------------

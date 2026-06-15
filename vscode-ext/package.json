@@ -2,7 +2,7 @@
   "name": "djobs",
   "displayName": "djobs — Crash-Proof Task Memory",
   "description": "Setup, MCP registration, diagnostics, and task sidebar for djobs durable agent memory.",
-  "version": "0.8.6",
+  "version": "0.9.0",
   "publisher": "jhuang-tw",
   "license": "MIT",
   "icon": "media/icon-128.png",
@@ -138,6 +138,18 @@
         "category": "djobs"
       },
       {
+        "command": "djobs.pause",
+        "title": "Pause djobs",
+        "icon": "$(debug-pause)",
+        "category": "djobs"
+      },
+      {
+        "command": "djobs.unpause",
+        "title": "Resume djobs",
+        "icon": "$(debug-start)",
+        "category": "djobs"
+      },
+      {
         "command": "djobs.setup",
         "title": "Set up / Repair djobs",
         "icon": "$(tools)",
@@ -160,6 +172,16 @@
           "command": "djobs.archiveWorkflow",
           "when": "view == djobsTasks",
           "group": "navigation"
+        },
+        {
+          "command": "djobs.pause",
+          "when": "view == djobsTasks && !djobs.paused",
+          "group": "1_state"
+        },
+        {
+          "command": "djobs.unpause",
+          "when": "view == djobsTasks && djobs.paused",
+          "group": "1_state"
         },
         {
           "command": "djobs.enablePromptActions",

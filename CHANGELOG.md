@@ -20,6 +20,22 @@ artifact.
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-07-19
+
+### Added
+- `[core]` **Batch checkpoint tools.** Added `enqueue_batch` and `complete_batch` so agents can create or close many durable tasks in one MCP call instead of paying one orchestration round trip per task.
+- `[core]` **Budgeted resume capsules.** Added `resume_capsule`, a compact and paginated recovery view that preserves exact queue state in SQLite while exposing only the fields and number of tasks that fit the requested context budget.
+
+### Changed
+- `[core]` **Context-efficient MCP is now the default.** The installed `djobs-mcp` command, `djobs mcp`, and the checked-in VS Code MCP configuration now expose batch and capsule tools without requiring a separate opt-in entry point. The legacy `python -m djobs.mcp_server` entry point remains available.
+- `[core]` **Native batch arrays.** Batch tools now accept native arrays directly while keeping JSON-string compatibility, removing redundant model-side serialization.
+- `[docs]` **Accurate product positioning.** Package metadata and context-efficiency documentation now describe measured, budgeted orchestration behavior instead of making an unqualified token-savings claim.
+- `[release]` **MCP SDK compatibility boundary.** The Python dependency is constrained to `mcp>=1.0,<2` until the v2 API is explicitly validated.
+
+### Fixed
+- `[core]` **Tiny context budgets are respected.** `resume_capsule` no longer forces an oversized first task into the response; it returns an empty page with `budget.exhausted=true` so callers can increase the budget or retrieve a full record intentionally.
+- `[core]` **CLI database overrides remain intact.** Routing `djobs mcp` through the context-efficient server preserves the existing `--db` behavior and leaves every non-MCP CLI command unchanged.
+
 ## [0.9.0] - 2026-06-14
 
 ### Added

@@ -31,9 +31,7 @@ def _task_specs(count: int) -> list[dict[str, object]]:
 
 
 def test_enqueue_batch_returns_compact_summaries():
-    result = json.loads(
-        enqueue_batch(json.dumps(_task_specs(20)), correlation_id="compact-ws")
-    )
+    result = json.loads(enqueue_batch(json.dumps(_task_specs(20)), correlation_id="compact-ws"))
     assert result["accepted_count"] == 20
     assert len(result["tasks"]) == 20
     assert set(result["tasks"][0]) == {"id", "type", "label"}
@@ -42,9 +40,7 @@ def test_enqueue_batch_returns_compact_summaries():
 def test_resume_capsule_is_budgeted_and_recoverable():
     enqueue_batch(json.dumps(_task_specs(20)), correlation_id="compact-ws")
     full = resume_session("compact-ws")
-    capsule = json.loads(
-        resume_capsule("compact-ws", max_items=3, token_budget=420)
-    )
+    capsule = json.loads(resume_capsule("compact-ws", max_items=3, token_budget=420))
 
     assert capsule["mode"] == "resume_capsule"
     assert capsule["counts"]["incomplete"] == 20
@@ -60,9 +56,7 @@ def test_resume_capsule_is_budgeted_and_recoverable():
 
 def test_resume_capsule_paginates_without_repeating_tasks():
     enqueue_batch(json.dumps(_task_specs(8)), correlation_id="compact-ws")
-    first = json.loads(
-        resume_capsule("compact-ws", max_items=2, token_budget=600)
-    )
+    first = json.loads(resume_capsule("compact-ws", max_items=2, token_budget=600))
     second = json.loads(
         resume_capsule(
             "compact-ws",
@@ -77,9 +71,7 @@ def test_resume_capsule_paginates_without_repeating_tasks():
 
 
 def test_complete_batch_closes_many_tasks_with_one_call():
-    created = json.loads(
-        enqueue_batch(json.dumps(_task_specs(6)), correlation_id="compact-ws")
-    )
+    created = json.loads(enqueue_batch(json.dumps(_task_specs(6)), correlation_id="compact-ws"))
     completions = [
         {"task_id": task["id"], "evidence": f"completed {task['label']}"}
         for task in created["tasks"]

@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 
 import pytest
-from djobs.mcp_server import configure, resume_session
 
 from djobs.low_token_mcp import complete_batch, enqueue_batch, resume_capsule
+from djobs.mcp_server import configure, resume_session
 
 
 @pytest.fixture(autouse=True)

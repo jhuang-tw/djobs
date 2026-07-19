@@ -1,11 +1,7 @@
-"""Low-overhead MCP entry point for durable coding workflows.
+"""Context-efficient MCP entry point for durable coding workflows.
 
-Run with::
-
-    python -m djobs.low_token_mcp
-
-It exposes the normal djobs MCP tools plus three additive tools that reduce model
-round trips and context size:
+This module exposes every normal djobs MCP tool plus three tools designed to
+reduce orchestration round trips and model-visible queue state:
 
 - ``enqueue_batch``: create many durable tasks in one call;
 - ``complete_batch``: complete many tasks in one call;
@@ -50,6 +46,16 @@ _USEFUL_KEYS = (
     "why",
     "command",
 )
+_LOW_TOKEN_GUIDANCE = (
+    "For durable work with four or more similar tasks, prefer enqueue_batch over "
+    "repeated enqueue_task calls and complete_batch over repeated complete_task calls. "
+    "After an interruption, call resume_capsule first with a small max_items and token_budget; "
+    "use check_task or resume_session only when the full record is genuinely needed."
+)
+
+_existing_instructions = _server.instructions or ""
+if _LOW_TOKEN_GUIDANCE not in _existing_instructions:
+    _server.instructions = f"{_existing_instructions} {_LOW_TOKEN_GUIDANCE}".strip()
 
 
 def _estimate_tokens(value: Any) -> int:
@@ -73,11 +79,18 @@ def _estimate_tokens(value: Any) -> int:
     return max(1, cjk + math.ceil(non_cjk / divisor))
 
 
-def _parse_json_array(raw: str, name: str) -> list[Any]:
-    try:
-        value = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"invalid {name} JSON: {exc}") from exc
+def _parse_json_array(raw: str | list[Any], name: str) -> list[Any]:
+    """Accept a native array, while retaining JSON-string compatibility."""
+
+    if isinstance(raw, str):
+        try:
+            value = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"invalid {name} JSON: {exc}") from exc
+    elif isinstance(raw, list):
+        value = raw
+    else:
+        raise ValueError(f"{name} must be a JSON array or native array")
     if not isinstance(value, list):
         raise ValueError(f"{name} must be a JSON array")
     if not value:
@@ -173,7 +186,7 @@ def _capsule(
             "page": {
                 "offset": offset,
                 "returned": len(items),
-                "next_offset": (next_offset if next_offset < len(candidates) else None),
+                "next_offset": next_offset if next_offset < len(candidates) else None,
             },
             "budget": {
                 "requested_tokens": token_budget,
@@ -182,7 +195,7 @@ def _capsule(
                 "metered": False,
             },
             "recoverable": True,
-            "retrieve_full_with": ("check_task(task_id) or resume_session(correlation_id)"),
+            "retrieve_full_with": "check_task(task_id) or resume_session(correlation_id)",
             "tasks": items,
         }
 
@@ -193,17 +206,21 @@ def _capsule(
             selected.append(item)
             continue
         if not selected:
-            selected.append(_compact_task(task, minimal=True))
+            minimal = _compact_task(task, minimal=True)
+            if _estimate_tokens(build([minimal])) <= token_budget:
+                selected.append(minimal)
         break
 
     result = build(selected)
     estimate = _estimate_tokens(result)
-    while len(selected) > 1 and estimate > token_budget:
+    while selected and estimate > token_budget:
         selected.pop()
         result = build(selected)
         estimate = _estimate_tokens(result)
     budget: dict[str, Any] = result["budget"]
     budget["estimated_tokens"] = estimate
+    if candidates[offset:] and not selected:
+        budget["exhausted"] = True
     if full_estimate:
         budget["estimated_reduction_percent"] = round(
             max(0.0, 1.0 - estimate / full_estimate) * 100,
@@ -213,8 +230,11 @@ def _capsule(
 
 
 @_server.tool()
-def enqueue_batch(tasks: str, correlation_id: str | None = None) -> str:
-    """Create up to 200 tasks in one MCP/model round trip."""
+def enqueue_batch(
+    tasks: str | list[dict[str, Any]],
+    correlation_id: str | None = None,
+) -> str:
+    """Create up to 200 tasks in one call; pass a native array when possible."""
 
     from djobs.mcp_server import _db_path
 
@@ -275,8 +295,8 @@ def enqueue_batch(tasks: str, correlation_id: str | None = None) -> str:
 
 
 @_server.tool()
-def complete_batch(completions: str) -> str:
-    """Complete up to 200 tasks in one MCP/model round trip."""
+def complete_batch(completions: str | list[str | dict[str, Any]]) -> str:
+    """Complete up to 200 tasks in one call; pass a native array when possible."""
 
     try:
         raw_items = _parse_json_array(completions, "completions")
@@ -360,7 +380,7 @@ def resume_capsule(
 
 
 def main() -> None:
-    """Run the normal djobs server with low-token tools registered."""
+    """Run djobs with context-efficient tools registered by default."""
 
     _get_queue()
     _start_embedded_daemon()

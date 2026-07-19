@@ -1,15 +1,19 @@
 # Context-efficient durable workflows
 
-`djobs` stores exact workflow state. The low-token MCP entry point separates that
-source of truth from the compact view sent to an LLM.
+`djobs` stores exact workflow state while exposing a compact, budgeted view to
+coding agents. The context-efficient MCP server is now the default for the
+installed `djobs-mcp` command and for `djobs mcp`.
 
-Run it with:
+The equivalent direct module entry point is:
 
 ```bash
 python -m djobs.low_token_mcp
 ```
 
-This starts the normal djobs MCP server and adds three tools:
+The legacy `python -m djobs.mcp_server` entry point remains available for
+compatibility, but it does not register the batch and capsule tools.
+
+The default server adds three tools:
 
 | Tool | Purpose |
 |---|---|
@@ -20,7 +24,8 @@ This starts the normal djobs MCP server and adds three tools:
 ## Recommended workflow
 
 For a long multi-file operation, checkpoint in meaningful batches rather than
-making two queue calls per file:
+making two queue calls per file. Pass native arrays directly; JSON array strings
+remain accepted for backward compatibility.
 
 ```text
 enqueue_batch([...20 task specs...])
@@ -41,6 +46,7 @@ The capsule:
   payload fields from the model-facing response;
 - paginates with `next_offset`;
 - reports a heuristic context estimate with `metered: false`;
+- returns no task rather than exceeding a very small requested budget;
 - keeps every exact task record in SQLite.
 
 Use `check_task(task_id)` for one full record or `resume_session(correlation_id)`
@@ -59,8 +65,8 @@ compare host/provider usage from matched A/B runs, including:
 - repeated file reads and edits;
 - task completion quality.
 
-This avoids the previous failure mode of assuming a fixed replay cost per task
-and then presenting the resulting counterfactual as observed savings.
+This avoids assuming a fixed replay cost per task and presenting the resulting
+counterfactual as observed savings.
 
 ## Headroom design reference
 

@@ -37,8 +37,7 @@ from djobs.mcp_server import (
 
 _MAX_BATCH_ITEMS = 200
 _CJK_RE = re.compile(
-    "[\\u3400-\\u4dbf\\u4e00-\\u9fff\\uf900-\\ufaff"
-    "\\u3040-\\u30ff\\uac00-\\ud7af]"
+    "[\\u3400-\\u4dbf\\u4e00-\\u9fff\\uf900-\\ufaff\\u3040-\\u30ff\\uac00-\\ud7af]"
 )
 _USEFUL_KEYS = (
     "file",
@@ -56,11 +55,15 @@ _USEFUL_KEYS = (
 def _estimate_tokens(value: Any) -> int:
     """Estimate response tokens without pretending to be provider metering."""
 
-    text = value if isinstance(value, str) else json.dumps(
-        value,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        default=str,
+    text = (
+        value
+        if isinstance(value, str)
+        else json.dumps(
+            value,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=str,
+        )
     )
     if not text:
         return 0
@@ -119,9 +122,7 @@ def _compact_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], bool]:
 
 def _compact_task(task: dict[str, Any], *, minimal: bool = False) -> dict[str, Any]:
     payload = task.get("payload")
-    compact, truncated = _compact_payload(
-        payload if isinstance(payload, dict) else {}
-    )
+    compact, truncated = _compact_payload(payload if isinstance(payload, dict) else {})
     result: dict[str, Any] = {
         "id": task["id"],
         "type": task["type"],
@@ -172,9 +173,7 @@ def _capsule(
             "page": {
                 "offset": offset,
                 "returned": len(items),
-                "next_offset": (
-                    next_offset if next_offset < len(candidates) else None
-                ),
+                "next_offset": (next_offset if next_offset < len(candidates) else None),
             },
             "budget": {
                 "requested_tokens": token_budget,
@@ -183,9 +182,7 @@ def _capsule(
                 "metered": False,
             },
             "recoverable": True,
-            "retrieve_full_with": (
-                "check_task(task_id) or resume_session(correlation_id)"
-            ),
+            "retrieve_full_with": ("check_task(task_id) or resume_session(correlation_id)"),
             "tasks": items,
         }
 
@@ -222,9 +219,7 @@ def enqueue_batch(tasks: str, correlation_id: str | None = None) -> str:
     from djobs.mcp_server import _db_path
 
     if is_paused(_db_path):
-        return _dumps(
-            {"paused": True, "skipped": True, "message": "djobs is paused"}
-        )
+        return _dumps({"paused": True, "skipped": True, "message": "djobs is paused"})
     try:
         raw_items = _parse_json_array(tasks, "tasks")
         specs: list[dict[str, Any]] = []
@@ -233,9 +228,7 @@ def enqueue_batch(tasks: str, correlation_id: str | None = None) -> str:
                 raise ValueError(f"tasks[{index}] must be an object")
             task_type = item.get("type", item.get("task_type"))
             if not isinstance(task_type, str) or not task_type.strip():
-                raise ValueError(
-                    f"tasks[{index}].type must be a non-empty string"
-                )
+                raise ValueError(f"tasks[{index}].type must be a non-empty string")
             payload = item.get("payload", {})
             if not isinstance(payload, dict):
                 raise ValueError(f"tasks[{index}].payload must be an object")
@@ -246,9 +239,7 @@ def enqueue_batch(tasks: str, correlation_id: str | None = None) -> str:
                 and max_attempts >= 1
             )
             if not valid_attempts:
-                raise ValueError(
-                    f"tasks[{index}].max_attempts must be a positive integer"
-                )
+                raise ValueError(f"tasks[{index}].max_attempts must be a positive integer")
             spec: dict[str, Any] = {
                 "type": task_type.strip(),
                 "payload": payload,
@@ -308,9 +299,7 @@ def complete_batch(completions: str) -> str:
             evidence = raw_evidence if isinstance(raw_evidence, str) else None
             if raw_evidence is not None and evidence is None:
                 task_label = task_id or f"index:{index}"
-                failures.append(
-                    {"task_id": task_label, "error": "evidence must be a string"}
-                )
+                failures.append({"task_id": task_label, "error": "evidence must be a string"})
                 continue
         else:
             failures.append(
@@ -321,9 +310,7 @@ def complete_batch(completions: str) -> str:
             )
             continue
         if task_id is None or not task_id.strip():
-            failures.append(
-                {"task_id": f"index:{index}", "error": "missing task_id"}
-            )
+            failures.append({"task_id": f"index:{index}", "error": "missing task_id"})
             continue
         task_id = task_id.strip()
         try:

@@ -53,9 +53,10 @@ _LOW_TOKEN_GUIDANCE = (
     "use check_task or resume_session only when the full record is genuinely needed."
 )
 
-_existing_instructions = _server.instructions or ""
+_low_level_server: Any = _server._mcp_server
+_existing_instructions = _low_level_server.instructions or ""
 if _LOW_TOKEN_GUIDANCE not in _existing_instructions:
-    _server.instructions = f"{_existing_instructions} {_LOW_TOKEN_GUIDANCE}".strip()
+    _low_level_server.instructions = f"{_existing_instructions} {_LOW_TOKEN_GUIDANCE}".strip()
 
 
 def _estimate_tokens(value: Any) -> int:

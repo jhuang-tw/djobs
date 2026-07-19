@@ -1,0 +1,59 @@
+name: Tag and dispatch release 0.9.1
+
+on:
+  push:
+    branches:
+      - ops/tag-0.9.1
+    paths:
+      - .github/workflows/tag-and-dispatch-0.9.1.yml
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ops/tag-0.9.1
+          fetch-depth: 0
+
+      - name: Verify release commit
+        shell: bash
+        env:
+          TARGET_SHA: 5657c2b9f1885757f893a45f7e375136f033b1d8
+        run: |
+          test "$(git rev-parse "$TARGET_SHA")" = "$TARGET_SHA"
+          test "$(git show "$TARGET_SHA:src/djobs/__init__.py" | sed -n 's/^__version__ = "\([^"]*\)"$/\1/p')" = "0.9.1"
+          git show "$TARGET_SHA:CHANGELOG.md" | grep -Fq '## [0.9.1] - 2026-07-19'
+
+      - name: Create exact release tag
+        shell: bash
+        env:
+          TARGET_SHA: 5657c2b9f1885757f893a45f7e375136f033b1d8
+        run: |
+          if git ls-remote --exit-code --tags origin refs/tags/v0.9.1 >/dev/null 2>&1; then
+            remote_sha="$(git ls-remote --tags origin refs/tags/v0.9.1 | awk '{print $1}')"
+            test "$remote_sha" = "$TARGET_SHA"
+          else
+            git tag v0.9.1 "$TARGET_SHA"
+            git push origin refs/tags/v0.9.1
+          fi
+
+      - name: Dispatch existing publish workflow on the tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run publish.yml --repo "$GITHUB_REPOSITORY" --ref v0.9.1
+
+      - name: Remove one-shot workflow from ops branch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm .github/workflows/tag-and-dispatch-0.9.1.yml
+          git add .github/workflows/tag-and-dispatch-0.9.1.yml
+          git commit -m "ops: remove one-shot release dispatcher"
+          git push origin HEAD:ops/tag-0.9.1

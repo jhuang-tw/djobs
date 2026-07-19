@@ -60,7 +60,9 @@ def test_resume_capsule_is_budgeted_and_recoverable():
 
 def test_resume_capsule_paginates_without_repeating_tasks():
     enqueue_batch(json.dumps(_task_specs(8)), correlation_id="compact-ws")
-    first = json.loads(resume_capsule("compact-ws", max_items=2, token_budget=600))
+    first = json.loads(
+        resume_capsule("compact-ws", max_items=2, token_budget=600)
+    )
     second = json.loads(
         resume_capsule(
             "compact-ws",

@@ -30,15 +30,20 @@ def _task_specs(count: int) -> list[dict[str, object]]:
     ]
 
 
-def test_enqueue_batch_returns_compact_summaries():
-    result = json.loads(enqueue_batch(json.dumps(_task_specs(20)), correlation_id="compact-ws"))
+def test_enqueue_batch_accepts_native_array_and_returns_compact_summaries():
+    result = json.loads(enqueue_batch(_task_specs(20), correlation_id="compact-ws"))
     assert result["accepted_count"] == 20
     assert len(result["tasks"]) == 20
     assert set(result["tasks"][0]) == {"id", "type", "label"}
 
 
+def test_enqueue_batch_keeps_json_string_compatibility():
+    result = json.loads(enqueue_batch(json.dumps(_task_specs(2)), correlation_id="compat-ws"))
+    assert result["accepted_count"] == 2
+
+
 def test_resume_capsule_is_budgeted_and_recoverable():
-    enqueue_batch(json.dumps(_task_specs(20)), correlation_id="compact-ws")
+    enqueue_batch(_task_specs(20), correlation_id="compact-ws")
     full = resume_session("compact-ws")
     capsule = json.loads(resume_capsule("compact-ws", max_items=3, token_budget=420))
 
@@ -55,7 +60,7 @@ def test_resume_capsule_is_budgeted_and_recoverable():
 
 
 def test_resume_capsule_paginates_without_repeating_tasks():
-    enqueue_batch(json.dumps(_task_specs(8)), correlation_id="compact-ws")
+    enqueue_batch(_task_specs(8), correlation_id="compact-ws")
     first = json.loads(resume_capsule("compact-ws", max_items=2, token_budget=600))
     second = json.loads(
         resume_capsule(
@@ -70,13 +75,21 @@ def test_resume_capsule_paginates_without_repeating_tasks():
     )
 
 
-def test_complete_batch_closes_many_tasks_with_one_call():
-    created = json.loads(enqueue_batch(json.dumps(_task_specs(6)), correlation_id="compact-ws"))
+def test_tiny_budget_does_not_force_an_oversized_task():
+    enqueue_batch(_task_specs(1), correlation_id="tiny-ws")
+    capsule = json.loads(resume_capsule("tiny-ws", max_items=1, token_budget=128))
+
+    assert capsule["page"]["returned"] == 0
+    assert capsule["budget"]["exhausted"] is True
+
+
+def test_complete_batch_accepts_native_array_and_closes_many_tasks():
+    created = json.loads(enqueue_batch(_task_specs(6), correlation_id="compact-ws"))
     completions = [
         {"task_id": task["id"], "evidence": f"completed {task['label']}"}
         for task in created["tasks"]
     ]
-    result = json.loads(complete_batch(json.dumps(completions)))
+    result = json.loads(complete_batch(completions))
     assert result == {"completed_count": 6, "failed_count": 0, "failures": []}
     assert json.loads(resume_session("compact-ws"))["incomplete_count"] == 0
 

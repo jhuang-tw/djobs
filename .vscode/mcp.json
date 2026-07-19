@@ -3,17 +3,20 @@
     "djobs": {
       "type": "stdio",
       "command": "${workspaceFolder}/.venv/Scripts/python.exe",
-      "args": ["-m", "djobs.mcp_server"],
+      "args": ["-m", "djobs.low_token_mcp"],
       "env": {
         "PYTHONPATH": "${workspaceFolder}/src"
       },
       "autoApprove": [
         "health",
+        "resume_capsule",
         "resume_session",
         "check_task",
+        "complete_batch",
         "complete_task",
         "fail_task",
         "list_tasks",
+        "enqueue_batch",
         "enqueue_task",
         "audit_log",
         "claim_task",

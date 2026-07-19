@@ -23,9 +23,9 @@ def main() -> None:
 
     from djobs import cli
 
-    original = getattr(cli, "_cmd_mcp")
-    setattr(cli, "_cmd_mcp", _cmd_mcp_low_token)
+    original = cli._cmd_mcp
+    cli._cmd_mcp = _cmd_mcp_low_token
     try:
         cli.main()
     finally:
-        setattr(cli, "_cmd_mcp", original)
+        cli._cmd_mcp = original

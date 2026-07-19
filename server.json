@@ -2,8 +2,8 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
   "name": "io.github.jhuang-tw/djobs",
   "title": "djobs",
-  "description": "Token-saving durable context for any MCP-compatible coding agent.",
-  "version": "0.9.0",
+  "description": "Durable workflow state and context-efficient MCP orchestration for coding agents.",
+  "version": "0.9.1",
   "repository": {
     "url": "https://github.com/jhuang-tw/djobs",
     "source": "github"
@@ -14,7 +14,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "djobs",
-      "version": "0.9.0",
+      "version": "0.9.1",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"

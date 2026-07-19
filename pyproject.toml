@@ -5,11 +5,11 @@ build-backend = "hatchling.build"
 [project]
 name = "djobs"
 dynamic = ["version"]
-description = "Token-saving durable context for Codex, Claude, Gemini, Copilot, Cursor, Cline, and any MCP coding agent."
+description = "Durable workflow state and context-efficient MCP orchestration for coding agents."
 requires-python = ">=3.11"
 license = "MIT"
 readme = "README.md"
-keywords = ["mcp", "mcp-server", "ai-agent", "ai-coding-agent", "codex", "claude-code", "gemini", "copilot", "cursor", "cline", "token-savings", "crash-recovery", "workflow-state", "durable", "sqlite", "audit-log"]
+keywords = ["mcp", "mcp-server", "ai-agent", "ai-coding-agent", "codex", "claude-code", "gemini", "copilot", "cursor", "cline", "context-efficiency", "crash-recovery", "workflow-state", "durable", "sqlite", "audit-log"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -26,7 +26,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "mcp[cli]>=1.0",
+    "mcp[cli]>=1.0,<2",
 ]
 
 [project.urls]
@@ -48,8 +48,8 @@ pg = [
 ]
 
 [project.scripts]
-djobs = "djobs.cli:main"
-djobs-mcp = "djobs.mcp_server:main"
+djobs = "djobs.entrypoint:main"
+djobs-mcp = "djobs.low_token_mcp:main"
 
 [tool.hatch.version]
 path = "src/djobs/__init__.py"

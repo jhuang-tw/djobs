@@ -20,6 +20,20 @@ artifact.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-07-21
+
+### Added
+- `[core]` **Revision-based delta recovery.** Added `resume_delta`, which returns only workflow changes since the caller's last revision instead of replaying the full unfinished-task set. Responses remain bounded by an explicit token budget and include deterministic workspace state hashes.
+- `[core]` **Monotonic context revision ledger.** Added an append-only SQLite revision ledger with per-event task snapshots, automatic backfill for existing databases, and deletion tombstones so cursors never move backward and permanently deleted tasks remain observable to resuming agents.
+
+### Changed
+- `[core]` **Delta context is available from every default MCP entry point.** Both `djobs-mcp` and `djobs mcp` now expose `resume_delta` alongside the existing batch and capsule tools, while the legacy server entry point remains available for compatibility.
+- `[docs]` **Context-efficient workflow guidance.** Expanded the context-efficiency documentation with revision persistence, pagination, state-hash validation, and recovery examples for local and hosted coding agents.
+
+### Fixed
+- `[core]` **Delta pagination preserves historical ordering.** Each revision stores the task state at that event, preventing a paginated response from revealing a later status before the corresponding event is delivered.
+- `[core]` **Tiny budgets and concurrent reads remain consistent.** Exhausted responses do not advance the cursor, and revision, task state, and `state_hash` are read from one SQLite snapshot.
+
 ## [0.9.1] - 2026-07-19
 
 ### Added
@@ -472,7 +486,8 @@ Foundational releases, developed in phases:
   `fail_task`, `check_task`, `list_tasks`, `resume_session`, `audit_log`,
   `health`) and the `djobs` CLI.
 
-[Unreleased]: https://github.com/jhuang-tw/djobs/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/jhuang-tw/djobs/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/jhuang-tw/djobs/releases/tag/v0.10.0
 [0.5.0]: https://github.com/jhuang-tw/djobs/releases/tag/v0.5.0
 
 

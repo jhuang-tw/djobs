@@ -3,7 +3,7 @@
   "name": "io.github.jhuang-tw/djobs",
   "title": "djobs",
   "description": "Durable workflow state and context-efficient MCP orchestration for coding agents.",
-  "version": "0.9.1",
+  "version": "0.10.0",
   "repository": {
     "url": "https://github.com/jhuang-tw/djobs",
     "source": "github"
@@ -14,7 +14,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "djobs",
-      "version": "0.9.1",
+      "version": "0.10.0",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"

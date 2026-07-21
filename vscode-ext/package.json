@@ -1,8 +1,8 @@
 {
   "name": "djobs",
-  "displayName": "djobs \u2014 Crash-Proof Task Memory",
+  "displayName": "djobs — Crash-Proof Task Memory",
   "description": "Setup, MCP registration, diagnostics, and task sidebar for djobs durable agent memory.",
-  "version": "0.9.1",
+  "version": "0.10.0",
   "publisher": "jhuang-tw",
   "license": "MIT",
   "icon": "media/icon-128.png",

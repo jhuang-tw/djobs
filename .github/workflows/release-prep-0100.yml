@@ -1,0 +1,76 @@
+name: Prepare 0.10.0 release
+
+on:
+  push:
+    branches:
+      - feat/delta-context
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/delta-context
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Update release metadata
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+
+          version = "0.10.0"
+          release_date = "2026-07-21"
+
+          init_path = Path("src/djobs/__init__.py")
+          init_text = init_path.read_text(encoding="utf-8")
+          old = '__version__ = "0.9.1"'
+          new = f'__version__ = "{version}"'
+          if old not in init_text:
+              raise SystemExit(f"expected {old!r} in {init_path}")
+          init_path.write_text(init_text.replace(old, new, 1), encoding="utf-8")
+
+          changelog_path = Path("CHANGELOG.md")
+          changelog = changelog_path.read_text(encoding="utf-8")
+          marker = "## [Unreleased]\n"
+          if f"## [{version}] - " in changelog:
+              raise SystemExit(f"CHANGELOG already contains {version}")
+          section = f'''## [Unreleased]\n\n## [{version}] - {release_date}\n\n### Added\n- `[core]` **Revision-based delta recovery.** Added `resume_delta`, which returns only workflow changes since the caller's last revision instead of replaying the full unfinished-task set. Responses remain bounded by an explicit token budget and include deterministic workspace state hashes.\n- `[core]` **Monotonic context revision ledger.** Added an append-only SQLite revision ledger with per-event task snapshots, automatic backfill for existing databases, and deletion tombstones so cursors never move backward and permanently deleted tasks remain observable to resuming agents.\n\n### Changed\n- `[core]` **Delta context is available from every default MCP entry point.** Both `djobs-mcp` and `djobs mcp` now expose `resume_delta` alongside the existing batch and capsule tools, while the legacy server entry point remains available for compatibility.\n- `[docs]` **Context-efficient workflow guidance.** Expanded the context-efficiency documentation with revision persistence, pagination, state-hash validation, and recovery examples for local and hosted coding agents.\n\n### Fixed\n- `[core]` **Delta pagination preserves historical ordering.** Each revision stores the task state at that event, preventing a paginated response from revealing a later status before the corresponding event is delivered.\n- `[core]` **Tiny budgets and concurrent reads remain consistent.** Exhausted responses do not advance the cursor, and revision, task state, and `state_hash` are read from one SQLite snapshot.\n'''
+          if marker not in changelog:
+              raise SystemExit("missing Unreleased heading")
+          changelog = changelog.replace(marker, section, 1)
+          old_link = "[Unreleased]: https://github.com/jhuang-tw/djobs/compare/v0.5.0...HEAD"
+          new_links = (
+              f"[Unreleased]: https://github.com/jhuang-tw/djobs/compare/v{version}...HEAD\n"
+              f"[{version}]: https://github.com/jhuang-tw/djobs/releases/tag/v{version}"
+          )
+          if old_link in changelog:
+              changelog = changelog.replace(old_link, new_links, 1)
+          changelog_path.write_text(changelog, encoding="utf-8")
+
+          lock_path = Path("vscode-ext/package-lock.json")
+          lock = json.loads(lock_path.read_text(encoding="utf-8"))
+          lock["version"] = version
+          lock["packages"][""]["version"] = version
+          lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+          PY
+
+          node vscode-ext/scripts/sync-version.js
+
+      - name: Commit release preparation
+        run: |
+          rm .github/workflows/release-prep-0100.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Release djobs 0.10.0"
+          git push origin HEAD:feat/delta-context

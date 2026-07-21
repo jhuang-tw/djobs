@@ -1,0 +1,43 @@
+{
+  "verified_at": "2026-07-21T15:53:29.537481+00:00",
+  "version": "0.10.0",
+  "tag": "v0.10.0",
+  "target_commit": "9950cc88483803be2c936e91473c7aa6e60e1237",
+  "release_workflow": {
+    "run_id": 29845815420,
+    "status": "completed",
+    "conclusion": "success",
+    "url": "https://github.com/jhuang-tw/djobs/actions/runs/29845815420",
+    "jobs": [
+      {
+        "name": "release",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "publish",
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "name": "publish-vscode",
+        "status": "completed",
+        "conclusion": "success"
+      }
+    ]
+  },
+  "github_release": {
+    "available": true,
+    "tag_name": "v0.10.0",
+    "html_url": "https://github.com/jhuang-tw/djobs/releases/tag/v0.10.0",
+    "published_at": "2026-07-21T15:50:10Z"
+  },
+  "pypi": {
+    "available": true,
+    "version": "0.10.0",
+    "files": [
+      "djobs-0.10.0-py3-none-any.whl",
+      "djobs-0.10.0.tar.gz"
+    ]
+  }
+}

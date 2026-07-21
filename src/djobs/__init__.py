@@ -1,4 +1,4 @@
-"""Distributed Job System — a durable job queue with retry, lease, and observability.
+"""djobs — durable workflow state and context-efficient orchestration for coding agents.
 
 Public API
 ----------

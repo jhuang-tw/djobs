@@ -219,8 +219,7 @@ def resume_delta(
     queue = _get_queue()
     repo: Any = queue._repository
     if not all(
-        hasattr(repo, name)
-        for name in ("_connection", "_lock", "list_jobs_by_correlation_ids")
+        hasattr(repo, name) for name in ("_connection", "_lock", "list_jobs_by_correlation_ids")
     ):
         return _dumps({"error": "resume_delta requires SQLite backend"})
 

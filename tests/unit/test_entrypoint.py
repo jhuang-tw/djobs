@@ -19,17 +19,17 @@ def test_main_temporarily_replaces_only_the_mcp_handler(monkeypatch):
     monkeypatch.setattr(cli, "main", fake_cli_main)
     entrypoint.main()
 
-    assert observed == [entrypoint._cmd_mcp_low_token]
+    assert observed == [entrypoint._cmd_mcp_context_efficient]
     assert cli._cmd_mcp is original
 
 
-def test_low_token_mcp_handler_honors_db_override(monkeypatch):
-    from djobs import low_token_mcp, mcp_server
+def test_context_efficient_mcp_handler_honors_db_override(monkeypatch):
+    from djobs import delta_mcp, mcp_server
 
     calls: list[tuple[str, str | None]] = []
     monkeypatch.setattr(mcp_server, "configure", lambda db: calls.append(("configure", db)))
-    monkeypatch.setattr(low_token_mcp, "main", lambda: calls.append(("run", None)))
+    monkeypatch.setattr(delta_mcp, "main", lambda: calls.append(("run", None)))
 
-    entrypoint._cmd_mcp_low_token(argparse.Namespace(db="custom.db"))
+    entrypoint._cmd_mcp_context_efficient(argparse.Namespace(db="custom.db"))
 
     assert calls == [("configure", "custom.db"), ("run", None)]

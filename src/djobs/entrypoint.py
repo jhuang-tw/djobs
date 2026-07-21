@@ -5,15 +5,15 @@ from __future__ import annotations
 import argparse
 
 
-def _cmd_mcp_low_token(args: argparse.Namespace) -> None:
-    """Run the normal CLI ``mcp`` command through the low-token server."""
+def _cmd_mcp_context_efficient(args: argparse.Namespace) -> None:
+    """Run the normal CLI ``mcp`` command through the delta-context server."""
 
     from djobs.mcp_server import configure
 
     if getattr(args, "db", None):
         configure(args.db)
 
-    from djobs.low_token_mcp import main as run_mcp_server
+    from djobs.delta_mcp import main as run_mcp_server
 
     run_mcp_server()
 
@@ -24,7 +24,7 @@ def main() -> None:
     from djobs import cli
 
     original = cli._cmd_mcp
-    cli._cmd_mcp = _cmd_mcp_low_token
+    cli._cmd_mcp = _cmd_mcp_context_efficient
     try:
         cli.main()
     finally:

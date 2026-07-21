@@ -33,7 +33,7 @@ def test_sqlite_reexports_authoritative_schema() -> None:
 
 
 def test_both_backends_declare_same_logical_columns() -> None:
-    for table in ("jobs", "job_events", "agents"):
+    for table in ("jobs", "job_events", "context_revisions", "agents"):
         sqlite_cols = _columns(schema.SQLITE_SCHEMA_SQL, table)
         pg_cols = _columns(schema.POSTGRES_SCHEMA_SQL, table)
         assert sqlite_cols == pg_cols, f"column drift in {table}: {sqlite_cols ^ pg_cols}"

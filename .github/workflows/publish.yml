@@ -4,7 +4,20 @@ on:
   push:
     tags:
       - "v*"
+    branches:
+      - main
+    paths:
+      - ".github/release.json"
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, without the v prefix"
+        required: true
+        type: string
+      target_commit:
+        description: "Commit SHA to tag and publish; defaults to the selected ref"
+        required: false
+        type: string
 
 jobs:
   release:
@@ -12,32 +25,110 @@ jobs:
     permissions:
       contents: write
     outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      target_commit: ${{ steps.meta.outputs.target_commit }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Prepare release body from CHANGELOG.md
+      - name: Resolve and validate release metadata
+        id: meta
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_TARGET_COMMIT: ${{ inputs.target_commit }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          awk -v version="$version" '
-            $0 == "## [" version "] - " substr($0, length("## [" version "] - ") + 1) { in_section=1; next }
+          set -euo pipefail
+
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+            target_commit="$GITHUB_SHA"
+          elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            version="$INPUT_VERSION"
+            target_commit="${INPUT_TARGET_COMMIT:-$GITHUB_SHA}"
+          else
+            readarray -t release_meta < <(python - <<'PY'
+          import json
+          from pathlib import Path
+
+          data = json.loads(Path('.github/release.json').read_text(encoding='utf-8'))
+          print(data['version'])
+          print(data['target_commit'])
+          PY
+            )
+            version="${release_meta[0]}"
+            target_commit="${release_meta[1]}"
+          fi
+
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid release version: $version" >&2
+            exit 1
+          fi
+          git cat-file -e "${target_commit}^{commit}"
+
+          VERSION="$version" TARGET_COMMIT="$target_commit" python - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+
+          version = os.environ['VERSION']
+          target = os.environ['TARGET_COMMIT']
+
+          def git_show(path: str) -> str:
+              return subprocess.check_output(
+                  ['git', 'show', f'{target}:{path}'], text=True, encoding='utf-8'
+              )
+
+          init_text = git_show('src/djobs/__init__.py')
+          match = re.search(r'__version__\s*=\s*["\']([^"\']+)["\']', init_text)
+          if not match or match.group(1) != version:
+              raise SystemExit('src/djobs/__init__.py does not match the release version')
+
+          server = json.loads(git_show('server.json'))
+          if server.get('version') != version:
+              raise SystemExit('server.json does not match the release version')
+          if any(package.get('version') != version for package in server.get('packages', [])):
+              raise SystemExit('server.json package version does not match the release version')
+
+          extension = json.loads(git_show('vscode-ext/package.json'))
+          if extension.get('version') != version:
+              raise SystemExit('vscode-ext/package.json does not match the release version')
+
+          changelog = git_show('CHANGELOG.md')
+          if not re.search(rf'^## \[{re.escape(version)}\] - \d{{4}}-\d{{2}}-\d{{2}}$', changelog, re.MULTILINE):
+              raise SystemExit('CHANGELOG.md has no dated section for the release version')
+          PY
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "target_commit=$target_commit" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare release body from CHANGELOG.md
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          TARGET_COMMIT: ${{ steps.meta.outputs.target_commit }}
+        run: |
+          git show "$TARGET_COMMIT:CHANGELOG.md" > /tmp/release-changelog.md
+          awk -v version="$VERSION" '
+            $0 ~ "^## \\[" version "\\] - " { in_section=1; next }
             in_section && /^## \[/ { exit }
             in_section { print }
-          ' CHANGELOG.md > release_body.md
+          ' /tmp/release-changelog.md > release_body.md
           if [ ! -s release_body.md ]; then
-            echo "Could not find a CHANGELOG.md section for $version" >&2
-            echo "Expected heading like: ## [$version] - YYYY-MM-DD" >&2
+            echo "Could not find a CHANGELOG.md section for $VERSION" >&2
+            echo "Expected heading like: ## [$VERSION] - YYYY-MM-DD" >&2
             exit 1
           fi
           echo "Release notes from CHANGELOG.md:"
           cat release_body.md
 
-      - name: Create GitHub Release
-        id: create_release
+      - name: Create GitHub tag and release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          target_commitish: ${{ steps.meta.outputs.target_commit }}
           body_path: release_body.md
           generate_release_notes: false
 
@@ -51,6 +142,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.target_commit }}
 
       - uses: actions/setup-python@v5
         with:
@@ -65,11 +158,13 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@release/v1
 
   publish-vscode:
-    needs: publish
+    needs: [release, publish]
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.target_commit }}
 
       - uses: actions/setup-node@v4
         with:

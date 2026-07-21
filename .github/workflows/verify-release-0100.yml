@@ -1,0 +1,132 @@
+name: Verify djobs 0.10.0 publication
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/verify-release-0100.yml"
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Wait for the trusted release workflow and verify registries
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_HEAD_SHA: 857726f31ff5e380ee2e038b803da91dd5174e6b
+          RELEASE_TAG: v0.10.0
+          RELEASE_VERSION: 0.10.0
+        run: |
+          set -u
+
+          release_run=''
+          for _ in $(seq 1 60); do
+            release_run="$(
+              gh run list --workflow publish.yml --limit 20 \
+                --json databaseId,status,conclusion,event,headSha,url,createdAt \
+              | jq -c --arg sha "$RELEASE_HEAD_SHA" \
+                  '[.[] | select(.headSha == $sha)] | first // empty'
+            )"
+            status="$(jq -r '.status // empty' <<<"$release_run")"
+            if [ "$status" = "completed" ]; then
+              break
+            fi
+            sleep 10
+          done
+
+          run_id="$(jq -r '.databaseId // empty' <<<"$release_run")"
+          if [ -n "$run_id" ]; then
+            gh run view "$run_id" --json databaseId,status,conclusion,url,jobs > /tmp/release-run.json
+          else
+            printf '%s\n' '{"status":"not_found","conclusion":"not_found","jobs":[]}' \
+              > /tmp/release-run.json
+          fi
+
+          if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" \
+              > /tmp/github-release.json 2>/tmp/github-release-error.txt; then
+            github_release=true
+          else
+            github_release=false
+            printf '%s\n' '{}' > /tmp/github-release.json
+          fi
+
+          if curl --retry 6 --retry-delay 5 --retry-all-errors -fsS \
+              "https://pypi.org/pypi/djobs/$RELEASE_VERSION/json" \
+              > /tmp/pypi-release.json; then
+            pypi_release=true
+          else
+            pypi_release=false
+            printf '%s\n' '{}' > /tmp/pypi-release.json
+          fi
+
+          RELEASE_RUN=/tmp/release-run.json \
+          GITHUB_RELEASE=/tmp/github-release.json \
+          PYPI_RELEASE=/tmp/pypi-release.json \
+          GITHUB_RELEASE_OK="$github_release" \
+          PYPI_RELEASE_OK="$pypi_release" \
+          python - <<'PY'
+          import json
+          import os
+          from datetime import UTC, datetime
+          from pathlib import Path
+
+          def load(name: str) -> dict:
+              return json.loads(Path(os.environ[name]).read_text(encoding='utf-8'))
+
+          run = load('RELEASE_RUN')
+          release = load('GITHUB_RELEASE')
+          pypi = load('PYPI_RELEASE')
+          status = {
+              'verified_at': datetime.now(UTC).isoformat(),
+              'version': '0.10.0',
+              'tag': 'v0.10.0',
+              'target_commit': '9950cc88483803be2c936e91473c7aa6e60e1237',
+              'release_workflow': {
+                  'run_id': run.get('databaseId'),
+                  'status': run.get('status'),
+                  'conclusion': run.get('conclusion'),
+                  'url': run.get('url'),
+                  'jobs': [
+                      {
+                          'name': job.get('name'),
+                          'status': job.get('status'),
+                          'conclusion': job.get('conclusion'),
+                      }
+                      for job in run.get('jobs', [])
+                  ],
+              },
+              'github_release': {
+                  'available': os.environ['GITHUB_RELEASE_OK'] == 'true',
+                  'tag_name': release.get('tag_name'),
+                  'html_url': release.get('html_url'),
+                  'published_at': release.get('published_at'),
+              },
+              'pypi': {
+                  'available': os.environ['PYPI_RELEASE_OK'] == 'true',
+                  'version': pypi.get('info', {}).get('version'),
+                  'files': [item.get('filename') for item in pypi.get('urls', [])],
+              },
+          }
+          Path('.github/release-status-0.10.0.json').write_text(
+              json.dumps(status, indent=2) + '\n', encoding='utf-8'
+          )
+          PY
+
+      - name: Record result and remove the one-time verifier
+        run: |
+          rm .github/workflows/verify-release-0100.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "ops: record djobs 0.10.0 publication status"
+          git push origin HEAD:main

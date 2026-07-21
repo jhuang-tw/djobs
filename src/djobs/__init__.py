@@ -1,4 +1,4 @@
-"""Distributed Job System — a durable job queue with retry, lease, and observability.
+"""djobs — durable workflow state and context-efficient orchestration for coding agents.
 
 Public API
 ----------
@@ -10,7 +10,7 @@ Public API
 
 from __future__ import annotations
 
-__version__ = "0.9.1"
+__version__ = "0.10.0"
 
 from djobs.core.errors import (
     DJobsError,

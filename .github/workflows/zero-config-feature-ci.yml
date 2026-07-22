@@ -1,5 +1,6 @@
 name: Zero config feature validation
 
+# Branch-only validation; the finalize job removes this file after all gates pass.
 on:
   push:
     branches:

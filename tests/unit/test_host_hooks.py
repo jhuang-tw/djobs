@@ -76,3 +76,18 @@ def test_remove_only_managed_hook_handlers(tmp_path: Path) -> None:
     assert "echo keep" in saved
     assert "djobs.hook_entrypoint" not in saved
     assert not host_hook_doctor("claude", home=tmp_path)["installed"]
+
+
+def test_force_never_erases_malformed_user_settings(tmp_path: Path) -> None:
+    path = tmp_path / ".claude" / "settings.json"
+    path.parent.mkdir(parents=True)
+    path.write_text("{broken", encoding="utf-8")
+
+    try:
+        install_host_hooks("claude", tmp_path / "shared.db", home=tmp_path, force=True)
+    except ValueError as exc:
+        assert "refusing to modify malformed JSON" in str(exc)
+    else:
+        raise AssertionError("malformed settings must not be overwritten")
+
+    assert path.read_text(encoding="utf-8") == "{broken"

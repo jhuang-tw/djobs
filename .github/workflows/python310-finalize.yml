@@ -112,10 +112,35 @@ jobs:
         run: ruff format --check src/ tests/
 
       - name: Mypy with Python 3.10 target
-        run: mypy
+        id: mypy310
+        continue-on-error: true
+        run: mypy > py310-mypy-report.txt 2>&1
+
+      - name: Upload mypy report
+        if: steps.mypy310.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: py310-mypy-report
+          path: py310-mypy-report.txt
 
       - name: Pytest on Python 3.10
-        run: pytest -q --tb=short
+        id: pytest310
+        continue-on-error: true
+        run: pytest -q --tb=short > py310-pytest-report.txt 2>&1
+
+      - name: Upload pytest report
+        if: steps.pytest310.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: py310-pytest-report
+          path: py310-pytest-report.txt
+
+      - name: Stop after Python 3.10 validation failure
+        if: steps.mypy310.outcome == 'failure' || steps.pytest310.outcome == 'failure'
+        run: |
+          test ! -f py310-mypy-report.txt || cat py310-mypy-report.txt
+          test ! -f py310-pytest-report.txt || cat py310-pytest-report.txt
+          exit 1
 
       - name: Validate extension
         working-directory: vscode-ext

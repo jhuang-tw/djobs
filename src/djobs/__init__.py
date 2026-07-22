@@ -1,4 +1,4 @@
-"""djobs — durable workflow state and context-efficient orchestration for coding agents.
+"""djobs — crash-proof checkpoints and resumable task memory for coding agents.
 
 Public API
 ----------
@@ -10,7 +10,7 @@ Public API
 
 from __future__ import annotations
 
-__version__ = "0.10.0"
+__version__ = "0.11.0"
 
 from djobs.core.errors import (
     DJobsError,

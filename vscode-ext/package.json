@@ -1,8 +1,8 @@
 {
   "name": "djobs",
-  "displayName": "djobs — Crash-Proof Task Memory",
-  "description": "Setup, MCP registration, diagnostics, and task sidebar for djobs durable agent memory.",
-  "version": "0.10.0",
+  "displayName": "djobs — Agent Checkpoints",
+  "description": "Crash-proof checkpoints and resumable task memory for AI coding agents.",
+  "version": "0.11.0",
   "publisher": "jhuang-tw",
   "license": "MIT",
   "icon": "media/icon-128.png",
@@ -14,15 +14,30 @@
     "vscode": "^1.101.0"
   },
   "categories": [
+    "Machine Learning",
     "Other"
   ],
   "keywords": [
     "djobs",
-    "durable",
-    "crash-recovery",
-    "ai-agent",
-    "mcp",
-    "copilot"
+    "ai agent",
+    "coding agent",
+    "agent checkpoint",
+    "agent memory",
+    "crash recovery",
+    "context recovery",
+    "resumable workflow",
+    "token savings",
+    "MCP",
+    "Model Context Protocol",
+    "GitHub Copilot",
+    "Claude Code",
+    "Codex",
+    "Cursor",
+    "Cline",
+    "Gemini",
+    "multi-agent",
+    "workflow state",
+    "task queue"
   ],
   "activationEvents": [
     "onStartupFinished",
@@ -334,5 +349,15 @@
     "@types/vscode": "^1.101.0",
     "typescript": "^5.4.0",
     "@vscode/vsce": "^3.0.0"
-  }
+  },
+  "homepage": "https://jhuang-tw.github.io/djobs/",
+  "bugs": {
+    "url": "https://github.com/jhuang-tw/djobs/issues"
+  },
+  "galleryBanner": {
+    "color": "#272A3A",
+    "theme": "dark"
+  },
+  "preview": true,
+  "pricing": "Free"
 }

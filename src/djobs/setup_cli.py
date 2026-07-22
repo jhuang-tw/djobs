@@ -1,4 +1,4 @@
-"""Idempotent one-time MCP setup for Codex and Claude Code."""
+"""Idempotent one-time MCP and lifecycle-hook setup for Codex and Claude Code."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Sequence
 
+from djobs.host_hooks import host_hook_doctor, install_host_hooks, remove_host_hooks
 from djobs.workspace import shared_db_path
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
@@ -43,7 +44,7 @@ def _quoted(command: Sequence[str]) -> str:
 
 
 def setup_command(host: str, db: Path, server: Sequence[str] | None = None) -> list[str]:
-    """Build a copyable user-scope registration command for one host."""
+    """Build a copyable user-scope MCP registration command for one host."""
 
     server_command = list(server or _server_command())
     env_args = [
@@ -96,8 +97,9 @@ def configure_host(
     runner: Runner = subprocess.run,
     which: Which = shutil.which,
     server: Sequence[str] | None = None,
+    home: Path | None = None,
 ) -> dict[str, object]:
-    """Configure only the ``djobs`` entry, preserving every other MCP server."""
+    """Configure MCP plus deterministic hooks while preserving unrelated config."""
 
     database = db or shared_db_path()
     host = _host(host_name, which=which)
@@ -107,16 +109,13 @@ def configure_host(
             "host": host_name,
             "status": "manual",
             "command": _quoted(command),
-            "message": f"{host_name} CLI was not found",
+            "message": f"{host_name} CLI was not found; lifecycle hooks were not installed",
         }
 
-    if _exists(host, runner=runner):
-        if not repair:
-            return {
-                "host": host_name,
-                "status": "unchanged",
-                "message": "djobs is already registered; other servers were untouched",
-            }
+    mcp_status = "unchanged"
+    mcp_message = "djobs MCP is already registered"
+    already_registered = _exists(host, runner=runner)
+    if already_registered and repair:
         remove = _run([host.executable, "mcp", "remove", "djobs"], runner=runner)
         if remove.returncode != 0:
             return {
@@ -125,20 +124,47 @@ def configure_host(
                 "command": _quoted(command),
                 "message": remove.stderr.strip() or "could not remove the old djobs entry",
             }
+        already_registered = False
 
-    executable_command = [host.executable, *command[1:]]
-    result = _run(executable_command, runner=runner)
-    if result.returncode != 0:
+    if not already_registered:
+        executable_command = [host.executable, *command[1:]]
+        result = _run(executable_command, runner=runner)
+        if result.returncode != 0:
+            return {
+                "host": host_name,
+                "status": "manual",
+                "command": _quoted(command),
+                "message": result.stderr.strip() or result.stdout.strip() or "registration failed",
+            }
+        mcp_status = "configured"
+        mcp_message = "registered the shared local djobs MCP"
+
+    try:
+        hook_result = install_host_hooks(
+            host_name,
+            database,
+            home=home,
+            mode="smart",
+            force=repair,
+        )
+    except ValueError as exc:
         return {
             "host": host_name,
             "status": "manual",
             "command": _quoted(command),
-            "message": result.stderr.strip() or result.stdout.strip() or "registration failed",
+            "message": f"{mcp_message}; hook setup needs review: {exc}",
         }
+
+    overall = "configured" if "configured" in {mcp_status, hook_result["status"]} else "unchanged"
+    trust_note = " Open /hooks once to review and trust it." if host_name == "codex" else ""
     return {
         "host": host_name,
-        "status": "configured",
-        "message": "registered the shared local djobs MCP without changing other servers",
+        "status": overall,
+        "hooks": hook_result,
+        "message": (
+            f"{mcp_message}; automatic session/prompt/tool/stop hooks "
+            f"{hook_result['status']} at {hook_result['path']}.{trust_note}"
+        ),
     }
 
 
@@ -147,17 +173,32 @@ def remove_host(
     *,
     runner: Runner = subprocess.run,
     which: Which = shutil.which,
+    home: Path | None = None,
 ) -> dict[str, object]:
+    hook_result = remove_host_hooks(host_name, home=home)
     host = _host(host_name, which=which)
     if host is None:
-        return {"host": host_name, "status": "absent", "message": "host CLI was not found"}
+        return {
+            "host": host_name,
+            "status": hook_result["status"],
+            "message": f"host CLI was not found; hooks are {hook_result['status']}",
+        }
     if not _exists(host, runner=runner):
-        return {"host": host_name, "status": "absent", "message": "djobs was not registered"}
+        return {
+            "host": host_name,
+            "status": hook_result["status"],
+            "message": f"djobs MCP was not registered; hooks are {hook_result['status']}",
+        }
     result = _run([host.executable, "mcp", "remove", "djobs"], runner=runner)
+    mcp_status = "removed" if result.returncode == 0 else "error"
     return {
         "host": host_name,
-        "status": "removed" if result.returncode == 0 else "error",
-        "message": result.stderr.strip() or result.stdout.strip() or "removed djobs",
+        "status": mcp_status,
+        "message": (
+            result.stderr.strip()
+            or result.stdout.strip()
+            or f"removed djobs MCP; hooks are {hook_result['status']}"
+        ),
     }
 
 
@@ -165,15 +206,20 @@ def doctor_results(
     *,
     runner: Runner = subprocess.run,
     which: Which = shutil.which,
+    home: Path | None = None,
 ) -> list[dict[str, object]]:
     results: list[dict[str, object]] = []
     for name in ("codex", "claude"):
         host = _host(name, which=which)
-        if host is None:
-            results.append({"host": name, "available": False, "registered": False})
-            continue
+        hook = host_hook_doctor(name, home=home)
         results.append(
-            {"host": name, "available": True, "registered": _exists(host, runner=runner)}
+            {
+                "host": name,
+                "available": host is not None,
+                "registered": _exists(host, runner=runner) if host is not None else False,
+                "hooks": hook["installed"],
+                "hook_path": hook["path"],
+            }
         )
     database = shared_db_path().expanduser()
     results.append(
@@ -195,7 +241,8 @@ def print_setup_doctor() -> None:
             continue
         state = "registered" if item["registered"] else "not registered"
         available = "available" if item["available"] else "CLI not found"
-        print(f"  {item['host']}: {available}, {state}")
+        hooks = "hooks installed" if item["hooks"] else "hooks missing"
+        print(f"  {item['host']}: {available}, {state}, {hooks}")
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -1,0 +1,88 @@
+name: Zero config feature validation
+
+on:
+  push:
+    branches:
+      - feature/zero-config-cross-agent-handoff
+
+permissions:
+  contents: write
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -e ".[dev,pg]"
+      - run: ruff check src/ tests/
+      - run: ruff format --check src/ tests/
+      - run: mypy
+      - run: pytest -q
+
+  vscode:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vscode-ext
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: vscode-ext/package-lock.json
+      - run: npm ci
+      - run: npx tsc -p ./ --noEmit
+      - run: npm run compile
+
+  finalize:
+    needs: [python, vscode]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/zero-config-cross-agent-handoff
+          fetch-depth: 0
+      - name: Update changelog and remove temporary validation workflow
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("CHANGELOG.md")
+          text = path.read_text(encoding="utf-8")
+          marker = "## [Unreleased]\n"
+          entry = """
+
+          ### Added
+          - `[core]` **Zero-config cross-agent handoff.** Added repository resolution from MCP roots/cwd/Git root, shared Codex/Claude agent sessions, high-level `sync_workspace`, `checkpoint`, and `handoff` tools, atomic task claims, expiring leases, bounded evidence, and repository isolation.
+          - `[core]` **One-time host setup.** Added idempotent `djobs setup codex|claude|all`, `repair`, `remove`, and `doctor` diagnostics around one shared local SQLite database without replacing unrelated MCP servers.
+
+          ### Changed
+          - `[core]` **Compact default MCP.** The default coding MCP now exposes only `sync_workspace`, `checkpoint`, `handoff`, and backward-compatible `resume_delta`; lower-level queue tools remain on `djobs-mcp-full`.
+          - `[docs]` Reworked the README around install-once Codex/Claude handoff while clearly separating simulated host tests from real-host validation.
+
+          ### Compatibility
+          - `[core]` Existing explicit `correlation_id` and `resume_delta` workflows remain supported; zero-config reads also search compatible legacy path spellings.
+          """
+          if "**Zero-config cross-agent handoff.**" not in text:
+              if marker not in text:
+                  raise SystemExit("CHANGELOG.md has no [Unreleased] section")
+              text = text.replace(marker, marker + entry, 1)
+              path.write_text(text, encoding="utf-8")
+          Path(".github/workflows/zero-config-feature-ci.yml").unlink()
+          PY
+      - name: Verify repository hygiene
+        run: |
+          git diff --check
+          test -z "$(find . -type f \( -name '*.db' -o -name '*.sqlite' -o -name '*.sqlite3' -o -name '*.pyc' \) -print -quit)"
+          test -z "$(find . -type d \( -name '.venv' -o -name '__pycache__' -o -name '.pytest_cache' -o -name '.mypy_cache' -o -name '.ruff_cache' \) -print -quit)"
+      - name: Commit validated feature
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md .github/workflows/zero-config-feature-ci.yml
+          git commit -m "feat: add zero-config cross-agent handoff"
+          git push origin HEAD:feature/zero-config-cross-agent-handoff

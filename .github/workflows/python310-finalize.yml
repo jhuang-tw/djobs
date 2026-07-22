@@ -86,8 +86,8 @@ jobs:
         id: normalize
         continue-on-error: true
         run: |
-          ruff check --fix src/ tests/ > py310-ruff-report.txt 2>&1
-          ruff format src/ tests/ >> py310-ruff-report.txt 2>&1
+          ruff format src/ tests/ > py310-ruff-report.txt 2>&1
+          ruff check --fix src/ tests/ >> py310-ruff-report.txt 2>&1
 
       - name: Upload Ruff report
         if: steps.normalize.outcome == 'failure'

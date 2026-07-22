@@ -30,7 +30,7 @@ work can be resumed without replaying the whole conversation.
 |---|---|
 | `preToolUse` hook | Rewrites meaningful Bash or PowerShell commands through a durable wrapper before execution. |
 | `sessionStart` hook | Injects unfinished and failed checkpoints into the next compatible session. |
-| MCP tools | Track semantic tasks, evidence, batches, dependencies, revisions, and multi-agent claims. |
+| Minimal MCP | Exposes six coding-focused tools for batches, deltas, evidence, and bounded recovery. |
 | `djobs gain` | Reports estimated savings for 24 hours, 30 days, and all time. |
 
 Everything is local by default: one SQLite file, no Redis, no broker, and no
@@ -108,17 +108,18 @@ assumptions; they are not provider billing data.
 
 ## Structured workflows
 
-For semantic multi-step work, the default MCP server exposes compact batch and
-revision-aware tools such as:
+For semantic multi-step work, the default MCP server exposes exactly six tools:
 
-- `enqueue_batch` and `complete_batch` for many tasks in one tool round trip.
-- `resume_capsule` for a bounded recovery view.
-- `resume_delta` for changes since a saved revision.
+- `resume_delta` for bounded changes since a saved revision.
+- `enqueue_batch` and `complete_batch` for many units in one round trip.
+- `check_task` only when one complete record is required.
+- `fail_task` for one unrecoverable checkpoint.
 - `work_receipt` for evidence plus Git working-tree checks.
-- `claim_task`, dependencies, resource locks, and agent heartbeats for shared queues.
 
-Advanced queue features also include retries, dead-letter preservation, SQLite
-and PostgreSQL backends, a local read-only web dashboard, and a full audit log.
+This deliberately keeps claim, lease, agent-registry, health, audit, and other
+queue schemas out of every coding session's fixed context. Users who explicitly
+need the complete multi-agent surface can launch `djobs-mcp-full` (or
+`python -m djobs.delta_mcp`). Standalone workers still use `djobs serve`.
 
 ## Compatibility
 
@@ -135,7 +136,7 @@ is not presented as proof of full end-to-end validation on every agent.
 ## Safety and privacy
 
 - Queue data stays local unless you intentionally point clients at a shared database.
-- Default MCP auto-approval is read-only; write tools remain explicit unless enabled.
+- The default MCP exposes six coding tools; full queue and multi-agent schemas are opt-in.
 - Coding MCP entry points do not start background workers or schedulers; run `djobs serve` explicitly when general-purpose job execution is wanted.
 - `djobs pause` disables rewriting and recovery without deleting state.
 - The local dashboard binds to `127.0.0.1` by default and has no public-auth layer.

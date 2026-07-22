@@ -9,14 +9,14 @@ from typing import Any
 
 
 def _cmd_mcp_context_efficient(args: argparse.Namespace) -> None:
-    """Run the normal CLI ``mcp`` command through the delta-context server."""
+    """Run the normal CLI ``mcp`` command through the minimal coding server."""
 
     from djobs.mcp_server import configure
 
     if getattr(args, "db", None):
         configure(args.db)
 
-    from djobs.delta_mcp import main as run_mcp_server
+    from djobs.coding_mcp import main as run_mcp_server
 
     run_mcp_server()
 

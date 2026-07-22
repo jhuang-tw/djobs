@@ -27,7 +27,8 @@ def test_block_is_opinionated_about_evidence_and_idempotency(workdir: Path) -> N
     content = _read(workdir)
     assert "idempotency_key" in content
     assert "evidence" in content
-    assert "complete_task" in content
+    assert "complete_batch" in content
+    assert "enqueue_batch" in content
     assert "fail_task" in content
 
 
@@ -149,7 +150,7 @@ def test_install_instructions_print_writes_stdout_no_files(
     out = capsys.readouterr().out
     assert cli._DJOBS_INSTRUCTIONS_START in out
     assert cli._DJOBS_INSTRUCTIONS_END in out
-    assert "durable task queue" in out
+    assert "coding checkpoints" in out
     # --print must not create any instruction files.
     assert not (workdir / ".github").exists()
     assert not (workdir / ".agent.md").exists()
@@ -173,7 +174,7 @@ def test_init_sets_up_project(
     assert cli._DJOBS_INSTRUCTIONS_START in copilot.read_text(encoding="utf-8")
     out = capsys.readouterr().out
     assert "djobs is initialized." in out
-    assert "resume_session" in out
+    assert "resume_delta" in out
 
 
 def test_init_default_mcp_json_has_no_global_env(

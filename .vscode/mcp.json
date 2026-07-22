@@ -3,28 +3,20 @@
     "djobs": {
       "type": "stdio",
       "command": "${workspaceFolder}/.venv/Scripts/python.exe",
-      "args": ["-m", "djobs.low_token_mcp"],
+      "args": [
+        "-m",
+        "djobs.coding_mcp"
+      ],
       "env": {
         "PYTHONPATH": "${workspaceFolder}/src"
       },
       "autoApprove": [
-        "health",
-        "resume_capsule",
-        "resume_session",
-        "check_task",
-        "complete_batch",
-        "complete_task",
-        "fail_task",
-        "list_tasks",
+        "resume_delta",
         "enqueue_batch",
-        "enqueue_task",
-        "audit_log",
-        "claim_task",
-        "heartbeat_task",
-        "release_task",
-        "register_agent",
-        "agent_heartbeat",
-        "list_agents"
+        "complete_batch",
+        "check_task",
+        "fail_task",
+        "work_receipt"
       ]
     }
   }

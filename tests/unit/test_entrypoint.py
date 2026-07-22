@@ -24,11 +24,11 @@ def test_main_temporarily_replaces_only_the_mcp_handler(monkeypatch):
 
 
 def test_context_efficient_mcp_handler_honors_db_override(monkeypatch):
-    from djobs import delta_mcp, mcp_server
+    from djobs import coding_mcp, mcp_server
 
     calls: list[tuple[str, str | None]] = []
     monkeypatch.setattr(mcp_server, "configure", lambda db: calls.append(("configure", db)))
-    monkeypatch.setattr(delta_mcp, "main", lambda: calls.append(("run", None)))
+    monkeypatch.setattr(coding_mcp, "main", lambda: calls.append(("run", None)))
 
     entrypoint._cmd_mcp_context_efficient(argparse.Namespace(db="custom.db"))
 

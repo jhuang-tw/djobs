@@ -8,6 +8,7 @@ _SRC = _REPO / "src" / "djobs"
 
 def test_coding_mcp_entrypoints_do_not_start_background_workers() -> None:
     entrypoints = (
+        _SRC / "coding_mcp.py",
         _SRC / "mcp_server.py",
         _SRC / "low_token_mcp.py",
         _SRC / "delta_mcp.py",

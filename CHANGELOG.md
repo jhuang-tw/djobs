@@ -14,6 +14,15 @@ public interfaces may still change between minor versions. Entries below use
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-07-22
+
+### Changed
+- `[core]` **Six-tool coding MCP.** The default `djobs-mcp`, `djobs mcp`, VS Code native registration, generated `.vscode/mcp.json`, and MCP Registry package now launch a dedicated coding server exposing only `resume_delta`, `enqueue_batch`, `complete_batch`, `check_task`, `fail_task`, and `work_receipt`.
+- `[core]` **Full queue is explicit.** The prior complete MCP surface remains available through `djobs-mcp-full` or `python -m djobs.delta_mcp` for users who intentionally need claims, leases, fleet registration, health, audit, and legacy single-task tools.
+
+### Performance
+- `[core]` **Lower fixed tool-schema context.** Multi-agent and administrative tool definitions no longer consume context in every ordinary coding session; permanent registry tests guard the exact default surface.
+
 ## [0.12.1] - 2026-07-22
 
 ### Changed

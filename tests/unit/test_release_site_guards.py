@@ -130,7 +130,7 @@ def test_extension_is_headless_and_coding_focused() -> None:
     assert not (_REPO / "vscode-ext" / "src" / "tasksProvider.ts").exists()
 
     client_text = (_REPO / "vscode-ext" / "src" / "djobsClient.ts").read_text(encoding="utf-8")
-    assert "djobs.delta_mcp" in client_text
+    assert "djobs.coding_mcp" in client_text
     assert "djobs.mcp_server" not in client_text
 
 

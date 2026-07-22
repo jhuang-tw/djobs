@@ -83,9 +83,24 @@ jobs:
           python -m pip install -e '.[dev,pg]'
 
       - name: Normalize migrated Python files
+        id: normalize
+        continue-on-error: true
         run: |
-          ruff check --fix src/ tests/
-          ruff format src/ tests/
+          ruff check --fix src/ tests/ > py310-ruff-report.txt 2>&1
+          ruff format src/ tests/ >> py310-ruff-report.txt 2>&1
+
+      - name: Upload Ruff report
+        if: steps.normalize.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: py310-ruff-report
+          path: py310-ruff-report.txt
+
+      - name: Stop after Ruff failure
+        if: steps.normalize.outcome == 'failure'
+        run: |
+          cat py310-ruff-report.txt
+          exit 1
 
       - name: Validate Python 3.10
         run: |

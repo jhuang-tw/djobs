@@ -201,8 +201,7 @@ def _is_state_only(command: str) -> bool:
 
 def _is_read_only(command: str) -> bool:
     return any(
-        command == prefix.rstrip() or command.startswith(prefix)
-        for prefix in _READ_ONLY_PREFIXES
+        command == prefix.rstrip() or command.startswith(prefix) for prefix in _READ_ONLY_PREFIXES
     )
 
 
@@ -364,10 +363,7 @@ def run_wrapped_payload(payload: dict[str, Any]) -> int:
             if return_code == 0:
                 queue.complete(
                     task_id,
-                    evidence=(
-                        "automatic command checkpoint: "
-                        f"exit 0 in {elapsed:.2f}s"
-                    ),
+                    evidence=(f"automatic command checkpoint: exit 0 in {elapsed:.2f}s"),
                 )
             else:
                 queue.fail(
@@ -416,10 +412,7 @@ def session_start_context(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _hook_config(mode: str) -> dict[str, Any]:
-    bash_guard = (
-        "if command -v djobs >/dev/null 2>&1; "
-        "then djobs hook {event} || true; fi"
-    )
+    bash_guard = "if command -v djobs >/dev/null 2>&1; then djobs hook {event} || true; fi"
     powershell_guard = (
         "if (Get-Command djobs -ErrorAction SilentlyContinue) {{ "
         "djobs hook {event}; "

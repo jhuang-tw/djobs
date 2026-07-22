@@ -33,9 +33,7 @@ def test_smart_mode_rewrites_meaningful_command(tmp_path: Path) -> None:
 
 
 def test_smart_mode_skips_read_only_command(tmp_path: Path) -> None:
-    assert auto_hook.rewrite_pre_tool_payload(
-        _payload("git status", tmp_path), mode="smart"
-    ) == {}
+    assert auto_hook.rewrite_pre_tool_payload(_payload("git status", tmp_path), mode="smart") == {}
 
 
 def test_all_mode_rewrites_read_only_command(tmp_path: Path) -> None:

@@ -14,6 +14,17 @@ public interfaces may still change between minor versions. Entries below use
 
 ## [Unreleased]
 
+### Added
+- `[core]` **Zero-config cross-agent handoff.** Added repository resolution from MCP roots, request cwd, Git root, and server cwd; shared Codex/Claude sessions; high-level `sync_workspace`, `checkpoint`, and `handoff` tools; atomic claims; expiring leases; bounded evidence; and repository isolation.
+- `[core]` **One-time host setup.** Added idempotent `djobs setup codex|claude|all`, `repair`, `remove`, and `doctor` support around one shared local SQLite database without replacing unrelated MCP servers.
+
+### Changed
+- `[core]` **Compact default MCP.** The default coding MCP exposes `sync_workspace`, `checkpoint`, `handoff`, and backward-compatible `resume_delta`; lower-level queue tools remain on `djobs-mcp-full`.
+- `[docs]` Reworked the README around install-once Codex/Claude handoff while separating simulated host tests from real-host validation.
+
+### Compatibility
+- `[core]` Explicit `correlation_id`, `resume_delta`, full queue tools, and custom or per-repository databases remain supported; zero-config reads also search compatible legacy path spellings.
+
 ## [0.13.0] - 2026-07-22
 
 ### Changed
@@ -397,7 +408,6 @@ public interfaces may still change between minor versions. Entries below use
   changelog), publishes the Python package to PyPI via trusted publishing, and
   publishes the VS Code extension to the Marketplace — all in one workflow,
   with no manual steps.
-
 ### Changed
 - `[ext]` Marketplace publishing moved into CI (`vsce publish` with a
   `VSCE_PAT` secret), so `core` and `ext` ship together from a single tag.
@@ -529,9 +539,3 @@ Foundational releases, developed in phases:
 [Unreleased]: https://github.com/jhuang-tw/djobs/compare/v0.10.0...HEAD
 [0.10.0]: https://github.com/jhuang-tw/djobs/releases/tag/v0.10.0
 [0.5.0]: https://github.com/jhuang-tw/djobs/releases/tag/v0.5.0
-
-
-
-
-
-

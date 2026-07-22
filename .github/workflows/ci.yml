@@ -21,6 +21,66 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+      - name: Make migration block matching indentation-aware
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from textwrap import dedent
+
+          path = Path("tools/apply_auto_hook_compat.py")
+          text = path.read_text(encoding="utf-8")
+          old = '''def replace_once(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              text = target.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f"{path}: expected one match, found {count}: {old[:80]!r}")
+              target.write_text(text.replace(old, new, 1), encoding="utf-8")
+          '''
+          new = '''def replace_once(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              text = target.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count == 1:
+                  target.write_text(text.replace(old, new, 1), encoding="utf-8")
+                  return
+              if count > 1:
+                  raise RuntimeError(
+                      f"{path}: expected one match, found {count}: {old[:80]!r}"
+                  )
+
+              source_lines = text.splitlines(keepends=True)
+              old_lines = old.strip("\\n").splitlines()
+              normalized_old = [line.lstrip() for line in old_lines]
+              matches: list[tuple[int, int, str]] = []
+              for start in range(len(source_lines) - len(old_lines) + 1):
+                  segment = source_lines[start : start + len(old_lines)]
+                  normalized_segment = [line.rstrip("\\r\\n").lstrip() for line in segment]
+                  if normalized_segment != normalized_old:
+                      continue
+                  first = next((line for line in segment if line.strip()), "")
+                  indent = first[: len(first) - len(first.lstrip())]
+                  matches.append((start, start + len(old_lines), indent))
+              if len(matches) != 1:
+                  raise RuntimeError(
+                      f"{path}: expected one indentation-insensitive match, "
+                      f"found {len(matches)}: {old[:80]!r}"
+                  )
+
+              start, end, indent = matches[0]
+              replacement_lines = dedent(new).strip("\\n").splitlines()
+              replacement = "\\n".join(
+                  f"{indent}{line}" if line else "" for line in replacement_lines
+              ) + "\\n"
+              source_lines[start:end] = [replacement]
+              target.write_text("".join(source_lines), encoding="utf-8")
+          '''
+          old = dedent(old)
+          new = dedent(new)
+          if text.count(old) != 1:
+              raise SystemExit("replace_once implementation changed unexpectedly")
+          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
       - name: Apply automatic hook compatibility migration
         id: migration
         continue-on-error: true

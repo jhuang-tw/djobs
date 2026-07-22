@@ -1436,7 +1436,7 @@ def _cmd_doctor(args: argparse.Namespace) -> None:
     # works (e.g. no djobs-mcp on PATH just means wiring uses the interpreter
     # directly). Showing these as FAIL after a successful `djobs init` is exactly
     # what made the tool feel broken, so they render as INFO instead.
-    info_checks = {"djobs-mcp on PATH"}
+    info_checks = {"djobs-mcp on PATH", "agent guidance block"}
 
     if getattr(args, "as_json", False):
         print(

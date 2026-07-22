@@ -1,8 +1,8 @@
 {
   "name": "djobs",
-  "displayName": "djobs — Agent Checkpoints",
-  "description": "Crash-proof checkpoints and resumable task memory for AI coding agents.",
-  "version": "0.11.0",
+  "displayName": "djobs \u2014 Coding Checkpoints",
+  "description": "Automatic coding checkpoints that reduce repeated context and command work.",
+  "version": "0.12.0",
   "publisher": "jhuang-tw",
   "license": "MIT",
   "icon": "media/icon-128.png",
@@ -19,14 +19,14 @@
   ],
   "keywords": [
     "djobs",
-    "ai agent",
     "coding agent",
-    "agent checkpoint",
-    "agent memory",
-    "crash recovery",
-    "context recovery",
-    "resumable workflow",
+    "coding token saver",
     "token savings",
+    "agent checkpoint",
+    "context recovery",
+    "crash recovery",
+    "session recovery",
+    "command checkpoint",
     "MCP",
     "Model Context Protocol",
     "GitHub Copilot",
@@ -34,15 +34,10 @@
     "Codex",
     "Cursor",
     "Cline",
-    "Gemini",
-    "multi-agent",
-    "workflow state",
-    "task queue"
+    "Gemini"
   ],
   "activationEvents": [
-    "onStartupFinished",
-    "workspaceContains:**/djobs_mcp.db",
-    "workspaceContains:.vscode/mcp.json"
+    "onStartupFinished"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -52,243 +47,40 @@
         "label": "djobs"
       }
     ],
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "djobs",
-          "title": "djobs",
-          "icon": "media/icon.svg"
-        }
-      ]
-    },
-    "views": {
-      "djobs": [
-        {
-          "id": "djobsTasks",
-          "name": "Tasks"
-        }
-      ]
-    },
     "commands": [
       {
-        "command": "djobs.refresh",
-        "title": "Refresh",
-        "icon": "$(refresh)",
-        "category": "djobs"
-      },
-      {
-        "command": "djobs.copyTaskId",
-        "title": "Copy Task ID",
-        "category": "djobs"
-      },
-      {
-        "command": "djobs.inspectTask",
-        "title": "Inspect Task JSON",
-        "category": "djobs"
-      },
-      {
-        "command": "djobs.viewTaskHistory",
-        "title": "View Task History",
-        "icon": "$(history)",
-        "category": "djobs"
-      },
-      {
-        "command": "djobs.toggleScope",
-        "title": "Toggle Scope: All / Current Workspace",
-        "icon": "$(globe)",
-        "category": "djobs"
-      },
-      {
-        "command": "djobs.toggleQueueLocation",
-        "title": "Toggle Queue: Workspace / Global",
-        "icon": "$(database)",
-        "category": "djobs"
-      },
-      {
-        "command": "djobs.skipTask",
-        "title": "Mark Done (Skip)",
-        "icon": "$(check)",
-        "category": "djobs"
-      },
-      {
-        "command": "djobs.archiveTask",
-        "title": "Archive Task",
-        "icon": "$(archive)",
-        "category": "djobs"
-      },
-      {
-        "command": "djobs.deleteTask",
-        "title": "Delete Task",
-        "icon": "$(trash)",
-        "category": "djobs"
-      },
-      {
-        "command": "djobs.archiveWorkflow",
-        "title": "Archive Workflow",
-        "icon": "$(archive)",
-        "category": "djobs"
-      },
-      {
-        "command": "djobs.promptFinishWorkflow",
-        "title": "Prompt Agent to Finish Workflow",
-        "icon": "$(play)",
-        "category": "djobs"
-      },
-      {
-        "command": "djobs.enablePromptActions",
-        "title": "Enable Prompt Actions",
-        "icon": "$(play-circle)",
-        "category": "djobs"
-      },
-      {
-        "command": "djobs.disablePromptActions",
-        "title": "Disable Prompt Actions",
-        "icon": "$(circle-slash)",
+        "command": "djobs.setup",
+        "title": "Set up / Repair djobs",
         "category": "djobs"
       },
       {
         "command": "djobs.diagnose",
         "title": "Diagnose Setup",
-        "icon": "$(pulse)",
         "category": "djobs"
       },
       {
         "command": "djobs.pause",
         "title": "Pause djobs",
-        "icon": "$(debug-pause)",
         "category": "djobs"
       },
       {
         "command": "djobs.unpause",
         "title": "Resume djobs",
-        "icon": "$(debug-start)",
-        "category": "djobs"
-      },
-      {
-        "command": "djobs.setup",
-        "title": "Set up / Repair djobs",
-        "icon": "$(tools)",
         "category": "djobs"
       }
     ],
-    "menus": {
-      "view/title": [
-        {
-          "command": "djobs.refresh",
-          "when": "view == djobsTasks",
-          "group": "navigation"
-        },
-        {
-          "command": "djobs.toggleScope",
-          "when": "view == djobsTasks",
-          "group": "navigation"
-        },
-        {
-          "command": "djobs.archiveWorkflow",
-          "when": "view == djobsTasks",
-          "group": "navigation"
-        },
-        {
-          "command": "djobs.pause",
-          "when": "view == djobsTasks && !djobs.paused",
-          "group": "1_state"
-        },
-        {
-          "command": "djobs.unpause",
-          "when": "view == djobsTasks && djobs.paused",
-          "group": "1_state"
-        },
-        {
-          "command": "djobs.enablePromptActions",
-          "when": "view == djobsTasks && !djobs.promptActionsEnabled",
-          "group": "2_prompt"
-        },
-        {
-          "command": "djobs.disablePromptActions",
-          "when": "view == djobsTasks && djobs.promptActionsEnabled",
-          "group": "2_prompt"
-        },
-        {
-          "command": "djobs.diagnose",
-          "when": "view == djobsTasks",
-          "group": "9_diagnostics"
-        },
-        {
-          "command": "djobs.setup",
-          "when": "view == djobsTasks",
-          "group": "9_diagnostics"
-        }
-      ],
-      "view/item/context": [
-        {
-          "command": "djobs.archiveWorkflow",
-          "when": "view == djobsTasks && viewItem == workflowGroup",
-          "group": "inline"
-        },
-        {
-          "command": "djobs.archiveWorkflow",
-          "when": "view == djobsTasks && viewItem == actionGroup",
-          "group": "inline"
-        },
-        {
-          "command": "djobs.promptFinishWorkflow",
-          "when": "view == djobsTasks && viewItem == workflowGroup && djobs.promptActionsEnabled",
-          "group": "1_prompt"
-        },
-        {
-          "command": "djobs.promptFinishWorkflow",
-          "when": "view == djobsTasks && viewItem == actionGroup && djobs.promptActionsEnabled",
-          "group": "1_prompt"
-        },
-        {
-          "command": "djobs.archiveTask",
-          "when": "view == djobsTasks && viewItem == task",
-          "group": "inline"
-        },
-        {
-          "command": "djobs.promptFinishWorkflow",
-          "when": "view == djobsTasks && viewItem == task && djobs.promptActionsEnabled",
-          "group": "1_prompt"
-        },
-        {
-          "command": "djobs.viewTaskHistory",
-          "when": "view == djobsTasks && viewItem == task",
-          "group": "2_task"
-        },
-        {
-          "command": "djobs.skipTask",
-          "when": "view == djobsTasks && viewItem == task",
-          "group": "2_task"
-        },
-        {
-          "command": "djobs.copyTaskId",
-          "when": "view == djobsTasks && viewItem == task",
-          "group": "3_inspect"
-        },
-        {
-          "command": "djobs.inspectTask",
-          "when": "view == djobsTasks && viewItem == task",
-          "group": "3_inspect"
-        },
-        {
-          "command": "djobs.deleteTask",
-          "when": "view == djobsTasks && viewItem == task",
-          "group": "9_destructive"
-        }
-      ]
-    },
     "configuration": {
       "title": "djobs",
       "properties": {
         "djobs.pythonPath": {
           "type": "string",
           "default": "",
-          "description": "Path to Python executable with djobs installed. Leave empty to auto-detect from .venv or PATH."
+          "description": "Path to a Python executable with djobs installed. Leave empty to auto-detect .venv, djobs, or Python on PATH."
         },
         "djobs.dbPath": {
           "type": "string",
           "default": "djobs_mcp.db",
-          "description": "Path to the djobs SQLite database (relative to workspace root). Ignored when djobs.queueLocation is set to global."
+          "description": "Workspace queue path. Used only when djobs.queueLocation is workspace."
         },
         "djobs.queueLocation": {
           "type": "string",
@@ -298,41 +90,15 @@
           ],
           "default": "global",
           "enumDescriptions": [
-            "Each workspace uses its own djobs_mcp.db.",
-            "All workspaces share one global queue (djobs.globalDbPath) (default)."
+            "Keep a separate queue in this workspace.",
+            "Share ~/.djobs/global.db while keeping recovery scoped to the workspace."
           ],
-          "description": "Where the task queue lives. 'global' (default) shares one queue across all projects and Python environments; 'workspace' keeps a separate queue per project."
+          "description": "Where durable checkpoint state is stored."
         },
         "djobs.globalDbPath": {
           "type": "string",
           "default": "",
-          "description": "Absolute path to the shared global queue database. Leave empty to use ~/.djobs/global.db. Only used when djobs.queueLocation is 'global'."
-        },
-        "djobs.scope": {
-          "type": "string",
-          "enum": [
-            "allWorkspaces",
-            "currentWorkspace"
-          ],
-          "default": "currentWorkspace",
-          "description": "Task scope shown in the sidebar. Defaults to currentWorkspace so unrelated projects do not mix together. Use allWorkspaces for every task in the configured database."
-        },
-        "djobs.showCompleted": {
-          "type": "boolean",
-          "default": false,
-          "description": "Show completed tasks in the sidebar. Disabled by default to keep the task list focused on active work."
-        },
-        "djobs.promptActions.enabled": {
-          "type": "boolean",
-          "default": false,
-          "markdownDescription": "Opt-in only. Shows commands that open Chat with a djobs finish-workflow query. Disabled by default, and djobs never asks on startup whether to enable it."
-        },
-        "djobs.autoRefreshInterval": {
-          "type": "number",
-          "default": 5,
-          "minimum": 1,
-          "maximum": 60,
-          "description": "Auto-refresh interval in seconds."
+          "description": "Optional absolute path for the shared queue. Leave empty for ~/.djobs/global.db."
         }
       }
     }

@@ -90,8 +90,11 @@ def test_changelog_current_section_has_release_notes() -> None:
 def test_marketplace_metadata_matches_product_positioning() -> None:
     package = json.loads(_EXT_PACKAGE.read_text(encoding="utf-8"))
     assert package["version"] == djobs.__version__
-    assert package["displayName"] == "djobs — Agent Checkpoints"
-    assert "Crash-proof checkpoints" in package["description"]
+    assert package["displayName"] == "djobs — Coding Checkpoints"
+    positioning = f"{package['displayName']} {package['description']}".lower()
+    assert "coding" in positioning
+    assert "checkpoint" in positioning
+    assert "context" in positioning
     assert "Machine Learning" in package["categories"]
     assert 1 <= len(package["keywords"]) <= 30
     assert package["homepage"] == "https://jhuang-tw.github.io/djobs/"
@@ -99,20 +102,33 @@ def test_marketplace_metadata_matches_product_positioning() -> None:
     assert package["pricing"] == "Free"
 
 
-def test_extension_prompt_actions_are_opt_in() -> None:
-    # Locked product rule: prompt actions are off by default and the old
-    # auto-takeover / auto-prompt commands must never come back. Behavioural
-    # essentials only — not every internal symbol or menu-when string.
+def test_extension_is_headless_and_coding_focused() -> None:
     package = json.loads(_EXT_PACKAGE.read_text(encoding="utf-8"))
-    manifest_text = json.dumps(package, sort_keys=True)
-    assert "autoTakeover" not in manifest_text
-    assert "djobs.startWorkflow" not in manifest_text
+    contributes = package["contributes"]
 
-    prompt_setting = package["contributes"]["configuration"]["properties"][
-        "djobs.promptActions.enabled"
-    ]
-    assert prompt_setting["default"] is False
+    assert "viewsContainers" not in contributes
+    assert "views" not in contributes
+    assert "menus" not in contributes
 
-    commands = {item["command"] for item in package["contributes"]["commands"]}
-    assert "djobs.enablePromptActions" in commands
-    assert "djobs.disablePromptActions" in commands
+    commands = {item["command"] for item in contributes["commands"]}
+    assert commands == {"djobs.setup", "djobs.diagnose", "djobs.pause", "djobs.unpause"}
+
+    properties = contributes["configuration"]["properties"]
+    removed_ui_settings = {
+        "djobs.scope",
+        "djobs.showCompleted",
+        "djobs.promptActions.enabled",
+        "djobs.autoRefreshInterval",
+    }
+    assert removed_ui_settings.isdisjoint(properties)
+
+    extension_text = (_REPO / "vscode-ext" / "src" / "extension.ts").read_text(encoding="utf-8")
+    assert "createTreeView" not in extension_text
+    assert "createStatusBarItem" not in extension_text
+    assert "setInterval" not in extension_text
+    assert "tasksProvider" not in extension_text
+    assert not (_REPO / "vscode-ext" / "src" / "tasksProvider.ts").exists()
+
+    client_text = (_REPO / "vscode-ext" / "src" / "djobsClient.ts").read_text(encoding="utf-8")
+    assert "djobs.delta_mcp" in client_text
+    assert "djobs.mcp_server" not in client_text

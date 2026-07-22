@@ -14,6 +14,17 @@ public interfaces may still change between minor versions. Entries below use
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-07-22
+
+### Changed
+- `[ext]` **Headless coding integration.** The VS Code extension is now a thin setup, native-MCP, hook, pause/resume, and diagnostics layer. It no longer creates an Activity Bar container, task tree, status badge, prompt-action UI, or task-management context menus.
+- `[ext]` **Coding-first setup.** Setup now installs deterministic smart-mode hooks directly, so the extension's runtime work is focused on preventing repeated tests, builds, linters, type checks, and context reconstruction.
+
+### Removed
+- `[ext]` **Background task polling.** Removed the five-second Python status poller and overlapping-refresh guard because no persistent task view remains.
+- `[ext]` **Sidebar implementation.** Removed the 600-line tree provider and the client/status types used only to render, inspect, archive, delete, or prompt from the sidebar.
+- `[ext]` **Redundant update/network logic.** Removed custom Marketplace/PyPI update checks; VS Code handles extension updates, while the explicit setup command keeps the Python engine aligned.
+
 ## [0.11.0] - 2026-07-22
 
 ### Added

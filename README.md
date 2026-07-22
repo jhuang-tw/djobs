@@ -44,7 +44,7 @@ Install the **djobs — Agent Checkpoints** extension from the Marketplace, then
 run **djobs: Set up / Repair djobs** from the Command Palette.
 
 The extension installs or repairs the Python runtime, registers the MCP server,
-installs deterministic lifecycle hooks, and adds the task sidebar.
+and installs deterministic lifecycle hooks without adding a persistent sidebar or poller.
 
 ### CLI and MCP-compatible hosts
 
@@ -124,7 +124,7 @@ and PostgreSQL backends, a local read-only web dashboard, and a full audit log.
 
 | Host | Current status |
 |---|---|
-| GitHub Copilot in VS Code | Automatic hooks, MCP registration, setup, and sidebar are implemented and tested. |
+| GitHub Copilot in VS Code | Automatic hooks, native MCP registration, setup, pause/resume, and diagnostics are implemented and tested. |
 | GitHub Copilot CLI/cloud hook format | Supported by the hook adapter and unit tests. |
 | Claude Code, Codex, Cursor, Cline, Gemini, other MCP hosts | MCP workflows are available when the host supports MCP. Automatic hook behavior depends on that host's hook protocol and still needs broader real-world validation. |
 | Plain browser chat without tools | Not automatic; djobs needs MCP or a compatible installed hook host. |

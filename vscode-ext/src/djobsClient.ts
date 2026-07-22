@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { DjobsCommandOptions, DjobsDoctorReport, DjobsScope, DjobsStatus, DjobsTask } from './types';
+import { DjobsDoctorReport } from './types';
 
 type DjobsInstaller =
   | { kind: 'pipx'; exe: string }
@@ -13,83 +13,35 @@ type DjobsInstaller =
 export class DjobsClient {
   constructor(private readonly workspaceRoot: string) {}
 
-  getViewOptions(): Pick<DjobsCommandOptions, 'scope' | 'showCompleted'> {
-    const options = this.getOptions();
-    return { scope: options.scope, showCompleted: options.showCompleted };
-  }
-
-  async status(): Promise<DjobsStatus> {
-    const options = this.getOptions();
-    const args = ['status', '--db', options.dbPath];
-
-    if (options.scope === 'currentWorkspace') {
-      args.push('--correlation-id', this.workspaceRoot);
-    }
-
-    const output = await this.run(args);
-    const status = JSON.parse(output) as DjobsStatus;
-    if (!options.showCompleted) {
-      status.tasks = status.tasks.filter((task) => task.status !== 'succeeded');
-    }
-    return status;
-  }
-
-  async skipTask(task: DjobsTask, evidence?: string): Promise<void> {
-    const options = this.getOptions();
-    const args = ['skip', task.id, '--db', options.dbPath];
-    if (evidence?.trim()) {
-      args.push('--evidence', evidence.trim());
-    }
-    await this.run(args);
-  }
-
-  async archiveTask(task: DjobsTask, reason?: string): Promise<void> {
-    const options = this.getOptions();
-    const args = ['archive-task', task.id, '--db', options.dbPath];
-    if (reason?.trim()) {
-      args.push('--reason', reason.trim());
-    }
-    await this.run(args);
-  }
-
-  async deleteTask(task: DjobsTask): Promise<void> {
-    const options = this.getOptions();
-    await this.run(['delete-task', task.id, '--db', options.dbPath]);
-  }
-
-  async taskHistory(task: DjobsTask): Promise<string> {
-    const options = this.getOptions();
-    return this.run(['task-history', task.id, '--db', options.dbPath]);
-  }
-
   /** Pause djobs so agents stop resuming/enqueuing durable work (reversible). */
   async pause(): Promise<void> {
-    const options = this.getOptions();
-    await this.run(['pause', '--db', options.dbPath]);
+    await this.run(['pause', '--db', this.resolvedDbPath()]);
   }
 
   /** Resume normal djobs behavior after a pause. */
   async unpause(): Promise<void> {
-    const options = this.getOptions();
-    await this.run(['unpause', '--db', options.dbPath]);
+    await this.run(['unpause', '--db', this.resolvedDbPath()]);
   }
 
-  async archiveCurrentWorkflow(reason?: string): Promise<number> {
-    return this.archiveByCorrelation(this.workspaceRoot, reason);
-  }
-
-  async archiveByCorrelation(correlationId: string, reason?: string): Promise<number> {
-    const options = this.getOptions();
-    const args = [
-      'archive-workflow', '--db', options.dbPath,
-      '--correlation-id', correlationId,
-    ];
-    if (reason?.trim()) {
-      args.push('--reason', reason.trim());
+  /** Install deterministic smart-mode coding hooks for this workspace. */
+  async installHooks(): Promise<void> {
+    const args = ['hook', 'install', '--mode', 'smart', '--force'];
+    if (this.isGlobalQueue()) {
+      args.push('--global');
+    } else {
+      args.push('--db', this.resolvedDbPath());
     }
-    const output = await this.run(args);
-    const result = JSON.parse(output) as { count?: number };
-    return result.count ?? 0;
+    await this.run(args);
+  }
+
+  /** Check whether automatic coding hooks are installed and valid. */
+  async hooksInstalled(): Promise<boolean> {
+    try {
+      await this.run(['hook', 'doctor']);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /** True when the user has selected the shared global queue. */
@@ -141,7 +93,7 @@ export class DjobsClient {
    * programmatic registration and the `install-mcp` JSON fallback start the same
    * server: prefer an explicit interpreter, then a project `.venv`, then the
    * `djobs-mcp` console script on PATH, then a bare `python`. `DJOBS_DB` is
-   * always pinned to the absolute queue path the sidebar reads, so the agent's
+   * always pinned to the absolute queue path used by hooks, so the agent's
    * writes and the sidebar's reads share one database regardless of cwd.
    */
   mcpServerLaunch(): { command: string; args: string[]; env: Record<string, string>; cwd: string } {
@@ -150,14 +102,14 @@ export class DjobsClient {
     let args: string[];
     if (configured) {
       command = configured;
-      args = ['-m', 'djobs.mcp_server'];
+      args = ['-m', 'djobs.delta_mcp'];
     } else {
       const venvPython = process.platform === 'win32'
         ? path.join(this.workspaceRoot, '.venv', 'Scripts', 'python.exe')
         : path.join(this.workspaceRoot, '.venv', 'bin', 'python');
       if (fs.existsSync(venvPython)) {
         command = venvPython;
-        args = ['-m', 'djobs.mcp_server'];
+        args = ['-m', 'djobs.delta_mcp'];
       } else {
         const consoleScript = this.which('djobs-mcp');
         if (consoleScript) {
@@ -165,16 +117,27 @@ export class DjobsClient {
           args = [];
         } else {
           command = process.platform === 'win32' ? 'python' : 'python3';
-          args = ['-m', 'djobs.mcp_server'];
+          args = ['-m', 'djobs.delta_mcp'];
         }
       }
     }
     return { command, args, env: { DJOBS_DB: this.resolvedDbPath() }, cwd: this.workspaceRoot };
   }
 
-  /** Absolute path of the queue DB the sidebar reads (global or per-workspace). */
+  /** Absolute queue path used by hooks and the MCP server. */
   resolvedDbPath(): string {
-    return this.getOptions().dbPath;
+    const config = vscode.workspace.getConfiguration('djobs');
+    const queueLocation = config.get<string>('queueLocation') ?? 'global';
+    if (queueLocation === 'global') {
+      const configuredGlobal = config.get<string>('globalDbPath')?.trim();
+      return configuredGlobal && configuredGlobal.length > 0
+        ? configuredGlobal
+        : path.join(os.homedir(), '.djobs', 'global.db');
+    }
+    const configuredDb = config.get<string>('dbPath')?.trim() || 'djobs_mcp.db';
+    return path.isAbsolute(configuredDb)
+      ? configuredDb
+      : path.join(this.workspaceRoot, configuredDb);
   }
 
   /**
@@ -473,37 +436,6 @@ export class DjobsClient {
     this.resetLauncher();
   }
 
-  private getOptions(): DjobsCommandOptions {
-    const config = vscode.workspace.getConfiguration('djobs');
-    const configuredDb = config.get<string>('dbPath')?.trim() || 'djobs_mcp.db';
-    const configuredScope = config.get<DjobsScope>('scope') ?? 'currentWorkspace';
-    const showCompleted = config.get<boolean>('showCompleted') ?? false;
-    const queueLocation = config.get<string>('queueLocation') ?? 'global';
-
-    return {
-      workspaceRoot: this.workspaceRoot,
-      dbPath: this.resolveDbPath(queueLocation, configuredDb, config),
-      scope: configuredScope,
-      showCompleted,
-    };
-  }
-
-  private resolveDbPath(
-    queueLocation: string,
-    configuredDb: string,
-    config: vscode.WorkspaceConfiguration,
-  ): string {
-    if (queueLocation === 'global') {
-      const configuredGlobal = config.get<string>('globalDbPath')?.trim();
-      return configuredGlobal && configuredGlobal.length > 0
-        ? configuredGlobal
-        : path.join(os.homedir(), '.djobs', 'global.db');
-    }
-    return path.isAbsolute(configuredDb)
-      ? configuredDb
-      : path.join(this.workspaceRoot, configuredDb);
-  }
-
   private launcher?: { exe: string; prefix: string[] };
 
   /**
@@ -511,7 +443,7 @@ export class DjobsClient {
    * live in (in priority order): an explicit interpreter (djobs.pythonPath), a
    * project-local .venv, or — most commonly for cross-project use — a global
    * install whose `djobs` console script is on PATH (pipx / pip --user). The
-   * result is cached so we do not rescan PATH on every sidebar refresh.
+   * result is cached so we do not rescan PATH on repeated command invocations.
    */
   private resolveLauncher(): { exe: string; prefix: string[] } {
     if (this.launcher) {

@@ -9,24 +9,26 @@ from djobs.setup_cli import configure_host, remove_host, setup_command
 
 
 class FakeRunner:
-    def __init__(self, responses: list[int]) -> None:
+    def __init__(self, responses: list[tuple[int, str] | int]) -> None:
         self.responses = iter(responses)
         self.commands: list[list[str]] = []
 
     def __call__(self, command: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
         self.commands.append(command)
-        return subprocess.CompletedProcess(command, next(self.responses), stdout="", stderr="")
+        response = next(self.responses)
+        if isinstance(response, tuple):
+            code, stdout = response
+        else:
+            code, stdout = response, ""
+        return subprocess.CompletedProcess(command, code, stdout=stdout, stderr="")
 
 
 def _which(name: str) -> str:
     return f"/tools/{name}"
 
 
-def test_setup_is_idempotent_and_installs_hooks_without_touching_other_servers(
-    tmp_path: Path,
-) -> None:
+def test_codex_setup_is_idempotent_and_installs_passive_adapter(tmp_path: Path) -> None:
     runner = FakeRunner([0, 0])
-
     first = configure_host(
         "codex",
         db=tmp_path / "shared.db",
@@ -43,110 +45,92 @@ def test_setup_is_idempotent_and_installs_hooks_without_touching_other_servers(
         server=["djobs-mcp"],
         home=tmp_path,
     )
-
     assert first["status"] == "configured"
     assert second["status"] == "unchanged"
-    assert runner.commands == [
-        ["/tools/codex", "mcp", "get", "djobs"],
-        ["/tools/codex", "mcp", "get", "djobs"],
-    ]
     config = json.loads((tmp_path / ".codex" / "hooks.json").read_text(encoding="utf-8"))
     assert "SessionStart" in config["hooks"]
-    assert "UserPromptSubmit" in config["hooks"]
-    assert "djobs.hook_entrypoint" in json.dumps(config)
+    assert "UserPromptSubmit" not in config["hooks"]
+    assert "Stop" not in config["hooks"]
 
 
-def test_repair_replaces_only_the_named_djobs_server_and_managed_hooks(tmp_path: Path) -> None:
-    settings = tmp_path / ".claude" / "settings.json"
-    settings.parent.mkdir(parents=True)
-    settings.write_text(
-        json.dumps(
-            {
-                "theme": "dark",
-                "hooks": {
-                    "PreToolUse": [
-                        {
-                            "matcher": "Read",
-                            "hooks": [{"type": "command", "command": "echo keep"}],
-                        }
-                    ]
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    runner = FakeRunner([0, 0, 0])
+def test_gemini_command_uses_user_scope_and_shared_database(tmp_path: Path) -> None:
+    command = setup_command("gemini", tmp_path / "shared.db", ["djobs-mcp"])
+    assert command[:3] == ["gemini", "mcp", "add"]
+    assert "--scope" in command and "user" in command
+    assert any(value.startswith("DJOBS_DB=") for value in command)
+    assert "DJOBS_AGENT_TYPE=gemini" in command
 
+
+def test_gemini_setup_detects_existing_registration_from_list(tmp_path: Path) -> None:
+    runner = FakeRunner([(0, "✓ djobs: command: djobs-mcp")])
     result = configure_host(
-        "claude",
-        repair=True,
+        "gemini",
         db=tmp_path / "shared.db",
         runner=runner,
         which=_which,
         server=["djobs-mcp"],
         home=tmp_path,
     )
-
     assert result["status"] == "configured"
-    assert runner.commands[1] == ["/tools/claude", "mcp", "remove", "djobs"]
-    assert runner.commands[2][0:4] == ["/tools/claude", "mcp", "add", "djobs"]
-    saved = json.loads(settings.read_text(encoding="utf-8"))
-    assert saved["theme"] == "dark"
-    assert "echo keep" in json.dumps(saved)
-    assert "djobs.hook_entrypoint" in json.dumps(saved)
+    assert runner.commands == [["/tools/gemini", "mcp", "list"]]
+    assert (tmp_path / ".gemini" / "settings.json").exists()
 
 
-def test_setup_prints_copyable_command_when_host_is_unavailable(tmp_path: Path) -> None:
+def test_kimi_setup_merges_mcp_and_toml_without_cli_mcp_subcommand(tmp_path: Path) -> None:
+    mcp_path = tmp_path / ".kimi-code" / "mcp.json"
+    mcp_path.parent.mkdir(parents=True)
+    mcp_path.write_text(
+        json.dumps({"mcpServers": {"other": {"url": "https://example.test/mcp"}}}),
+        encoding="utf-8",
+    )
     result = configure_host(
-        "codex",
+        "kimi",
+        db=tmp_path / "shared.db",
+        which=_which,
+        server=["python", "-m", "djobs.coding_mcp"],
+        home=tmp_path,
+    )
+    assert result["status"] == "configured"
+    saved = json.loads(mcp_path.read_text(encoding="utf-8"))
+    assert saved["mcpServers"]["other"]["url"] == "https://example.test/mcp"
+    assert saved["mcpServers"]["djobs"]["command"] == "python"
+    assert saved["mcpServers"]["djobs"]["env"]["DJOBS_AGENT_TYPE"] == "kimi"
+    assert (tmp_path / ".kimi-code" / "config.toml").exists()
+
+
+def test_unavailable_client_does_not_change_config(tmp_path: Path) -> None:
+    result = configure_host(
+        "gemini",
         db=tmp_path / "shared.db",
         which=lambda _: None,
         server=["python", "-m", "djobs.coding_mcp"],
         home=tmp_path,
     )
-
     assert result["status"] == "manual"
-    command = str(result["command"])
-    assert command.startswith("codex mcp add djobs")
-    assert "DJOBS_DB=" in command
-    assert not (tmp_path / ".codex" / "hooks.json").exists()
+    assert str(result["command"]).startswith("gemini mcp add")
+    assert not (tmp_path / ".gemini" / "settings.json").exists()
 
 
-def test_codex_and_claude_commands_share_the_same_database(tmp_path: Path) -> None:
-    database = tmp_path / "shared.db"
-
-    codex = setup_command("codex", database, ["djobs-mcp"])
-    claude = setup_command("claude", database, ["djobs-mcp"])
-
-    codex_env = next(value for value in codex if value.startswith("DJOBS_DB="))
-    claude_env = next(value for value in claude if value.startswith("DJOBS_DB="))
-    assert codex_env == claude_env
-    assert "DJOBS_AGENT_TYPE=codex" in codex
-    assert "DJOBS_AGENT_TYPE=claude" in claude
-
-
-def test_remove_preserves_unrelated_hooks(tmp_path: Path) -> None:
-    runner = FakeRunner([0, 0])
+def test_remove_kimi_preserves_unrelated_mcp_and_config(tmp_path: Path) -> None:
     configure_host(
-        "codex",
+        "kimi",
         db=tmp_path / "shared.db",
-        runner=runner,
         which=_which,
         server=["djobs-mcp"],
         home=tmp_path,
     )
-    path = tmp_path / ".codex" / "hooks.json"
-    config = json.loads(path.read_text(encoding="utf-8"))
-    config["hooks"]["Stop"].insert(
-        0, {"hooks": [{"type": "command", "command": "echo keep"}]}
-    )
-    path.write_text(json.dumps(config), encoding="utf-8")
+    mcp_path = tmp_path / ".kimi-code" / "mcp.json"
+    data = json.loads(mcp_path.read_text(encoding="utf-8"))
+    data["mcpServers"]["other"] = {"url": "https://example.test/mcp"}
+    mcp_path.write_text(json.dumps(data), encoding="utf-8")
+    config_path = tmp_path / ".kimi-code" / "config.toml"
+    config_path.write_text('theme = "dark"\n\n' + config_path.read_text(), encoding="utf-8")
 
-    remove_runner = FakeRunner([0, 0])
-    result = remove_host("codex", runner=remove_runner, which=_which, home=tmp_path)
-
+    result = remove_host("kimi", which=_which, home=tmp_path)
     assert result["status"] == "removed"
-    saved = json.loads(path.read_text(encoding="utf-8"))
-    text = json.dumps(saved)
-    assert "echo keep" in text
-    assert "djobs.hook_entrypoint" not in text
+    saved = json.loads(mcp_path.read_text(encoding="utf-8"))
+    assert "djobs" not in saved["mcpServers"]
+    assert "other" in saved["mcpServers"]
+    text = config_path.read_text(encoding="utf-8")
+    assert 'theme = "dark"' in text
+    assert "djobs managed observation hooks" not in text

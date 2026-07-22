@@ -46,11 +46,12 @@ def test_install_mcp_preserves_other_servers(tmp_path: Path) -> None:
     ]
 
 
-def test_zero_config_instructions_make_hooks_primary_and_tools_optional() -> None:
+def test_zero_config_instructions_keep_observation_and_ownership_separate() -> None:
     body = entrypoint._ZERO_CONFIG_INSTRUCTIONS_BODY
 
-    assert "host-driven" in body
-    assert "Do not call a djobs tool merely to" in body
+    assert "client-neutral" in body
+    assert "never infer task" in body
+    assert "Do not treat a session start" in body
     assert "sync_workspace()" in body
     assert "checkpoint(summary" in body
     assert "handoff(task_id" in body

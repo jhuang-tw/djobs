@@ -1,0 +1,28 @@
+name: Format artifact
+
+on:
+  push:
+    branches: [feat/adoption-readiness]
+
+permissions:
+  contents: read
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install pre-commit
+      - name: Apply pinned Ruff formatter
+        run: pre-commit run ruff-format --all-files || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ruff-formatted-files
+          path: |
+            src/djobs/auto_hook.py
+            src/djobs/entrypoint.py
+            tests/unit/test_auto_hook.py
+          if-no-files-found: error

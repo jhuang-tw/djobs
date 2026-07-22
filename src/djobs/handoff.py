@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from djobs.mcp_server import configure
+from djobs.observations import capture_repository_snapshot, recent_observations
 from djobs.workspace import (
     AgentSession,
     Workspace,
@@ -92,9 +93,6 @@ def _recover(queue: Any, repo: Any) -> None:
     try:
         queue.recover_expired_leases()
         queue.reap_stale_agents()
-        # Older queue recovery can leave a max-attempt task in retry_scheduled
-        # without run_after. Normalize that orphan state so it is claimable again
-        # instead of remaining permanently stuck.
         with repo._lock:
             repo._connection.execute(
                 "UPDATE jobs SET status = 'pending', updated_at = ? "
@@ -104,7 +102,6 @@ def _recover(queue: Any, repo: Any) -> None:
             )
             repo._connection.commit()
     except Exception:
-        # Recovery is best effort. The coding task must remain usable when djobs fails.
         return
 
 
@@ -147,7 +144,7 @@ def _compact_row(row: Any, current_agent: str) -> dict[str, Any]:
 def _bounded(result: dict[str, Any], token_budget: int) -> str:
     budget = max(64, min(int(token_budget), 4000))
     result["budget"] = {"requested_tokens": budget, "estimated_tokens": 0}
-    removable = ("recent_completed", "failed", "other_agents", "tasks")
+    removable = ("recent_completed", "failed", "other_agents", "tasks", "observations")
     while True:
         estimate = _estimate_tokens(result)
         result["budget"]["estimated_tokens"] = estimate
@@ -184,7 +181,7 @@ def sync_workspace(
     max_items: int = 6,
     token_budget: int = 500,
 ) -> str:
-    """Return the next repository-scoped work without requiring IDs or paths."""
+    """Return repository-scoped tasks and observations without claiming work."""
 
     try:
         workspace, agent, queue, repo = _resolve(
@@ -194,6 +191,8 @@ def sync_workspace(
             session_id=session_id,
         )
         _recover(queue, repo)
+        capture_repository_snapshot(repo, workspace, agent)
+        observations = recent_observations(repo, workspace, limit=max_items)
         placeholders, params = _scope_sql(workspace)
         limit = max(1, min(int(max_items), 20))
         with repo._lock:
@@ -237,17 +236,19 @@ def sync_workspace(
         available = [item for item in active if item.get("owner") is None]
         own = [item for item in active if item.get("owner") == "self"]
 
-        if not active and not failed and not recent:
+        if not active and not failed and not recent and not observations:
             return _dumps({"ok": True, "workspace": workspace.name, "state": "empty"})
 
         if own:
             next_step = f"Continue task {own[0]['id']}."
         elif available:
-            next_step = f"Claim and continue task {available[0]['id']} with checkpoint()."
+            next_step = f"Claim task {available[0]['id']} only when intentional."
         elif failed:
             next_step = f"Inspect failed task {failed[0]['id']} before retrying."
         elif other:
             next_step = "Choose work not owned by another live agent."
+        elif observations:
+            next_step = "Review recent repository observations; claim work only when intentional."
         else:
             next_step = "Review recent completed evidence and continue normal coding."
 
@@ -262,11 +263,13 @@ def sync_workspace(
                 "failed": len(failed),
                 "recent_completed": len(recent),
                 "owned_by_others": len(other),
+                "observations": len(observations),
             },
             "tasks": active[:limit],
             "other_agents": other[:limit],
             "failed": failed[:limit],
             "recent_completed": recent,
+            "observations": observations[:limit],
             "next_step": next_step,
         }
         return _bounded(result, token_budget)

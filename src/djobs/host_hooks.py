@@ -117,17 +117,14 @@ def _strip_managed(groups: Any) -> list[dict[str, Any]]:
 
 
 def _load(path: Path, *, force: bool) -> dict[str, Any]:
+    del force  # Repair may replace djobs handlers, but never unrelated malformed settings.
     if not path.exists():
         return {}
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        if force:
-            return {}
         raise ValueError(f"refusing to modify malformed JSON at {path}: {exc}") from exc
     if not isinstance(value, dict):
-        if force:
-            return {}
         raise ValueError(f"refusing to modify non-object JSON at {path}")
     return value
 

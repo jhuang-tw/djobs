@@ -51,7 +51,22 @@ jobs:
         run: mypy
 
       - name: Pytest
-        run: pytest -q --tb=short
+        id: pytest
+        continue-on-error: true
+        run: pytest -q --tb=short > pytest-report.txt 2>&1
+
+      - name: Upload pytest report
+        if: steps.pytest.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: headless-pytest-report
+          path: pytest-report.txt
+
+      - name: Stop after pytest failure
+        if: steps.pytest.outcome == 'failure'
+        run: |
+          cat pytest-report.txt
+          exit 1
 
       - name: Install extension dependencies
         working-directory: vscode-ext
@@ -74,7 +89,7 @@ jobs:
       - name: Commit finalized refactor
         run: |
           git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git config user.email '41898218+github-actions[bot]@users.noreply.github.com'
           git add -A
           git commit -m 'refactor: make VS Code integration headless'
           git push origin HEAD:refactor/vscode-headless

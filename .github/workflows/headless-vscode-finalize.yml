@@ -24,7 +24,40 @@ jobs:
           node-version: '20'
 
       - name: Apply headless extension refactor
-        run: python tools/apply_headless_vscode.py
+        run: |
+          python tools/apply_headless_vscode.py
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          package_path = Path('vscode-ext/package.json')
+          package = json.loads(package_path.read_text(encoding='utf-8'))
+          package['displayName'] = 'djobs — Coding Checkpoints'
+          package_path.write_text(json.dumps(package, indent=2) + '\n', encoding='utf-8')
+
+          extension_readme = Path('vscode-ext/README.md')
+          text = extension_readme.read_text(encoding='utf-8')
+          text = text.replace('# djobs — Coding Token Saver', '# djobs — Coding Checkpoints')
+          extension_readme.write_text(text, encoding='utf-8')
+
+          client_path = Path('vscode-ext/src/djobsClient.ts')
+          client = client_path.read_text(encoding='utf-8')
+          client = client.replace('djobs.mcp_server', 'djobs.delta_mcp')
+          client_path.write_text(client, encoding='utf-8')
+
+          guard_path = Path('tests/unit/test_release_site_guards.py')
+          guard = guard_path.read_text(encoding='utf-8')
+          guard = guard.replace(
+              '    assert package["displayName"] == "djobs — Agent Checkpoints"\n'
+              '    assert "Crash-proof checkpoints" in package["description"]\n',
+              '    assert package["displayName"] == "djobs — Coding Checkpoints"\n'
+              '    positioning = f\'{package["displayName"]} {package["description"]}\'.lower()\n'
+              '    assert "coding" in positioning\n'
+              '    assert "checkpoint" in positioning\n'
+              '    assert "context" in positioning\n',
+          )
+          guard_path.write_text(guard, encoding='utf-8')
+          PY
 
       - name: Remove one-shot migration machinery
         run: |
@@ -51,22 +84,7 @@ jobs:
         run: mypy
 
       - name: Pytest
-        id: pytest
-        continue-on-error: true
-        run: pytest -q --tb=short > pytest-report.txt 2>&1
-
-      - name: Upload pytest report
-        if: steps.pytest.outcome == 'failure'
-        uses: actions/upload-artifact@v4
-        with:
-          name: headless-pytest-report
-          path: pytest-report.txt
-
-      - name: Stop after pytest failure
-        if: steps.pytest.outcome == 'failure'
-        run: |
-          cat pytest-report.txt
-          exit 1
+        run: pytest -q --tb=short
 
       - name: Install extension dependencies
         working-directory: vscode-ext
@@ -83,13 +101,13 @@ jobs:
       - name: Guard headless architecture
         run: |
           test ! -f vscode-ext/src/tasksProvider.ts
-          ! grep -R -n -E 'createTreeView|createStatusBarItem|setInterval|djobsTasks|autoRefreshInterval|promptActions\.enabled|tasksProvider' \
+          ! grep -R -n -E 'createTreeView|createStatusBarItem|setInterval|djobsTasks|autoRefreshInterval|promptActions\.enabled|tasksProvider|djobs\.mcp_server' \
             vscode-ext/src vscode-ext/package.json README.md docs/index.html
 
       - name: Commit finalized refactor
         run: |
           git config user.name 'github-actions[bot]'
-          git config user.email '41898218+github-actions[bot]@users.noreply.github.com'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
           git commit -m 'refactor: make VS Code integration headless'
           git push origin HEAD:refactor/vscode-headless

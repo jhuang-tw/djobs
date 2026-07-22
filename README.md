@@ -98,7 +98,7 @@ The workspace resolver uses this order:
 3. The enclosing Git repository root.
 4. The server's startup directory.
 
-Starting from `repo/src/feature` resolves to `repo`. Windows `\\` and `/` spellings compare equally, drive letters are case-insensitive, and trailing separators are ignored. New records use a deterministic repository ID, while reads also search compatible legacy path-based `correlation_id` values.
+Starting from `repo/src/feature` resolves to `repo`. Windows `\` and `/` spellings compare equally, drive letters are case-insensitive, and trailing separators are ignored. New records use a deterministic repository ID, while reads also search compatible legacy path-based `correlation_id` values.
 
 Different repositories remain isolated even though Codex and Claude Code share one local database.
 
@@ -136,7 +136,7 @@ At the end of a normal turn, the automatic `Stop` hook releases resumable work r
 ### Explicit database
 
 ```powershell
-$env:DJOBS_DB = "D:\\state\\team-djobs.db"
+$env:DJOBS_DB = "D:\state\team-djobs.db"
 djobs-mcp
 ```
 

@@ -38,20 +38,32 @@ jobs:
           python -m json.tool vscode-ext/package-lock.json >/dev/null
           git diff --check
 
-      - name: Validate Python
-        run: |
-          pip install -e '.[dev,pg]'
-          ruff check src/ tests/
-          ruff format --check src/ tests/
-          mypy
-          pytest -q --tb=short
+      - name: Install Python dependencies
+        run: pip install -e '.[dev,pg]'
 
-      - name: Validate VS Code extension
+      - name: Ruff lint
+        run: ruff check src/ tests/
+
+      - name: Ruff format
+        run: ruff format --check src/ tests/
+
+      - name: Mypy
+        run: mypy
+
+      - name: Pytest
+        run: pytest -q --tb=short
+
+      - name: Install extension dependencies
         working-directory: vscode-ext
-        run: |
-          npm ci
-          npx tsc -p ./ --noEmit
-          npm run compile
+        run: npm ci
+
+      - name: TypeScript check
+        working-directory: vscode-ext
+        run: npx tsc -p ./ --noEmit
+
+      - name: Compile extension
+        working-directory: vscode-ext
+        run: npm run compile
 
       - name: Guard headless architecture
         run: |

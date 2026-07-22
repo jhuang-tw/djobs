@@ -94,6 +94,23 @@ def test_gain_filters_by_workspace(tmp_path: Path) -> None:
     assert all(item["correlation_id"] == "workspace-a" for item in report["history"])
 
 
+def test_gain_all_scope_aggregates_workspaces(tmp_path: Path) -> None:
+    db = tmp_path / "gain.db"
+    _, queue = _queue(db)
+    for workspace in ("workspace-a", "workspace-b"):
+        job = queue.submit(
+            "task",
+            {"summary": workspace},
+            correlation_id=workspace,
+        )
+        queue.complete(job.id, evidence=f"completed {workspace}")
+
+    report = build_gain_report(db, None)
+
+    assert report["scope"] == "all workspaces"
+    assert report["all_time"]["completed_records"] == 2
+
+
 def test_gain_cli_json_defaults_to_current_workspace(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

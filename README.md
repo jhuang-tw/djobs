@@ -2,7 +2,7 @@
 
 <!-- mcp-name: io.github.jhuang-tw/djobs -->
 
-**Token-saving durable context for AI coding agents.** djobs gives Codex, Claude Code, Gemini, Copilot, Cursor, Cline, and any MCP-compatible coding agent durable, resumable task memory — so long, multi-file work survives crashes, context loss, or session interruptions without replaying completed work. It ships MCP tools, agent instructions, and a VS Code sidebar; the runtime installs and manages itself.
+**Token-saving durable context for AI coding agents.** djobs gives Codex, Claude Code, Gemini, Copilot, Cursor, Cline, and any MCP-compatible coding agent durable, resumable task memory — so long, multi-file work survives crashes, context loss, or session interruptions without replaying completed work. It ships deterministic lifecycle hooks, context-efficient MCP tools, agent instructions, and a VS Code sidebar; setup is one command.
 
 [![CI](https://github.com/jhuang-tw/djobs/actions/workflows/ci.yml/badge.svg)](https://github.com/jhuang-tw/djobs/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/djobs.svg)](https://pypi.org/project/djobs/)
@@ -24,28 +24,29 @@ When the IDE crashes, the chat disconnects, or you accidentally close the window
 
 ## The Fix
 
-djobs gives your agent three tools that solve this:
+djobs combines deterministic hooks for the common path with MCP tools for
+structured, multi-step work:
 
-| Tool | What it does |
-|------|-------------|
-| `enqueue_task` | Save each file as a durable task — survives any crash |
-| `complete_task` | Mark a file done after the agent edits it |
-| `resume_session` | On next chat, find all unfinished files instantly |
+| Layer | What it does |
+|-------|-------------|
+| Automatic `preToolUse` hook | Rewrites meaningful shell commands before execution and records a durable checkpoint without relying on the model |
+| Automatic `sessionStart` hook | Injects unfinished and failed checkpoints into the next session |
+| MCP workflow tools | Track semantic multi-file tasks with `enqueue_batch`, `complete_batch`, `resume_delta`, evidence, dependencies, and multi-agent claims |
 
 ```
 You: "Add docstrings to all 20 files in src/"
 
-  Agent calls enqueue_task for each file  ← checkpoint saved
-  Agent edits file 1 → complete_task      ✅
-  Agent edits file 2 → complete_task      ✅
+  djobs hook checkpoints meaningful commands automatically
+  Agent edits file 1 → structured MCP task completes ✅
+  Agent edits file 2 → structured MCP task completes ✅
   ...
-  Agent edits file 12 → complete_task     ✅
+  Agent reaches file 12
   💥 VS Code crashes
 
 You reopen VS Code, start a new chat: "hi"
 
-  Agent calls resume_session              ← finds 8 incomplete tasks
-  Agent edits file 13 → complete_task     ✅
+  sessionStart injects the remaining work automatically
+  Agent continues with file 13                        ✅
   ...
   Agent edits file 20 → complete_task     ✅
   Done — zero files lost, zero files re-done.
@@ -53,7 +54,7 @@ You reopen VS Code, start a new chat: "hi"
 
 Everything is stored in a local SQLite file. No Redis, no Docker, no cloud service.
 
-**Measured on this repo:** `djobs token-savings` estimated 12,136 replay/re-plan tokens avoided across 20 completed workflow tasks (82.6% less context to replay). The model is explicit and reproducible: `djobs token-savings --correlation-id <workspace> --format json`.
+See the value directly with `djobs gain`. It reports estimated tokens saved over the last 24 hours, 30 days, and all time, split between automatic command checkpoints and structured workflows. The estimate is explicit and exportable rather than presented as provider billing data.
 
 ## Compatibility Status
 
@@ -85,9 +86,9 @@ broader real-world validation.
 > file — so recovery is exact and auditable rather than approximate. The two are complementary: one
 > helps an agent *remember*, djobs helps it *finish and prove* the work.
 
-> **Maturity — early but tested.** 388 passing tests, CI across Python 3.11–3.13, SQLite and optional
-> PostgreSQL backends. Marked Alpha while the public API stabilizes; the core enqueue → complete →
-> resume flow is stable and used daily.
+> **Maturity — early but tested.** CI covers Python 3.11–3.14, SQLite and optional PostgreSQL
+> backends. Marked Alpha while the public API stabilizes; the core checkpoint → resume flow is
+> stable and used daily.
 
 ---
 
@@ -105,14 +106,14 @@ Install the
 from the Marketplace, then run **`djobs: Set up / Repair djobs`** from the
 Command Palette (or click **Set up djobs** when the extension offers).
 
-That one step installs the runtime, wires the MCP server, installs the agent
-instructions, and adds the task sidebar. No terminal, no manual config.
+That one step installs the runtime, wires the MCP server, installs deterministic
+lifecycle hooks and agent instructions, and adds the task sidebar. No manual config.
 
 After setup, you keep talking normally — “continue”, “fix this”, “run tests”,
 “retry”, “the previous run failed”, or “release” are enough. The extension does
-not generate, copy, or open Chat prompts. It registers MCP tools, installs the
-agent guidance, and shows the durable task state; the agent decides when to call
-`resume_session`, enqueue multi-step work, and finish each unit with evidence.
+not generate, copy, or open Chat prompts. Meaningful terminal commands are
+checkpointed before execution, failed checkpoints are restored at the next
+session, and MCP remains available for semantic multi-step workflows.
 
 ### 2. Any MCP agent (Codex, Claude Code, Gemini, Cursor, Cline, …)
 
@@ -122,15 +123,14 @@ One command wires the current project for any MCP-compatible agent:
 djobs init
 ```
 
-It writes `.vscode/mcp.json`, installs the agent guidance block in
-`.github/copilot-instructions.md`, runs `djobs doctor`, and prints next steps.
-It auto-detects the right interpreter, so the wiring works even in a JavaScript,
-Go, or Rust repo with no Python environment.
+It writes `.vscode/mcp.json`, installs `.github/hooks/djobs.json`, installs the
+agent guidance block in `.github/copilot-instructions.md`, runs `djobs doctor`,
+and prints next steps. It auto-detects the right interpreter, so the wiring works
+even in a JavaScript, Go, or Rust repo with no Python environment.
 
-> **djobs is not only an MCP tool.** It also installs agent instructions so
-> coding agents proactively call `resume_session`, `enqueue_task`,
-> `complete_task`, and `fail_task` during long or risky work — you don't have to
-> remember to tell them.
+> **djobs does not rely on the model remembering.** Deterministic hooks handle
+> command checkpointing and session recovery. Agent instructions and MCP tools
+> add richer file-level planning, evidence, dependencies, and multi-agent state.
 
 <details>
 <summary>Installing the djobs runtime (only if setup asks)</summary>
@@ -154,6 +154,8 @@ Then run `djobs init` in any project.
 ```bash
 djobs install-mcp           # write only .vscode/mcp.json
 djobs install-instructions  # write only the agent guidance block
+djobs hook install          # write only .github/hooks/djobs.json
+djobs gain                  # show 24h / 30d / all-time token savings
 djobs doctor                # diagnose an existing setup
 ```
 
@@ -161,10 +163,11 @@ Verify the setup at any time:
 
 ```bash
 djobs doctor
-# [OK  ] djobs package: v0.7.3 ...
+# [OK  ] djobs package: v0.10.0 ...
 # [OK  ] queue db (global default): ~/.djobs/global.db — exists, writable
 # [OK  ] mcp.json wiring: command='djobs-mcp' — found
 # [OK  ] agent guidance block: present in .github/copilot-instructions.md
+# [OK  ] automatic command hooks: installed at .github/hooks/djobs.json
 ```
 
 <details>
@@ -245,22 +248,54 @@ pin any interpreter explicitly with `djobs install-mcp --python /path/to/python`
 
 ---
 
-## Making Your Agent Use djobs Automatically
+## Automatic Command Rewriting
 
-After installing, your agent has the MCP tools available — but it won't use them unless you tell it to. Add the following to your agent instructions (e.g. `.github/copilot-instructions.md` or any `.agent.md`):
+`djobs init` installs a deterministic `preToolUse` hook. Before a meaningful
+Bash or PowerShell command runs, the hook substitutes a `djobs hook run`
+wrapper through the host's supported tool-argument mutation API. The original
+command output and exit code are preserved.
 
+The default **smart** mode checkpoints tests, builds, linters, type checks, and
+other substantial compound commands. It skips read-only commands such as
+`git status` and shell-state-only commands such as `cd` or `export`.
+
+```bash
+djobs hook install --mode smart   # recommended
+djobs hook install --mode all     # checkpoint almost every terminal command
+djobs hook install --mode off     # install hooks but disable rewriting
+djobs hook install --global       # share ~/.djobs/global.db with MCP
+djobs hook doctor                 # validate the hook file
 ```
-At the start of every session, call resume_session to find unfinished work.
-For multi-file tasks, enqueue each file as a durable task and call complete_task after each edit.
+
+Hook processing is fail-open: if djobs cannot inspect or checkpoint a command,
+it returns control to the host instead of blocking the user's work. `djobs pause`
+disables both automatic rewriting and session-start recovery without deleting data.
+
+Successful automatic command checkpoints are archived after their audit evidence
+is recorded, keeping the active sidebar clean. Failed or interrupted checkpoints
+remain visible and are injected into the next session automatically.
+
+
+### Token Savings Analytics
+
+Like RTK's `gain` view, djobs makes its value visible instead of asking users to
+trust a marketing percentage:
+
+```bash
+djobs gain                         # current workspace: 24h / 30d / all time
+djobs gain --graph                 # 30-day ASCII graph
+djobs gain --history               # recent records and their estimated savings
+djobs gain --daily                 # non-empty day-by-day totals
+djobs gain --all --format json     # every workspace, machine-readable export
 ```
 
-**What this gives you:**
-- On every new chat, unfinished work is automatically surfaced
-- For multi-file tasks (>3 files), each file is tracked as a durable task
-- After editing each file, progress is recorded
-- If a session crashes, the next chat auto-resumes from where it stopped — no questions asked
+`djobs stats` and `djobs state` are aliases for the same report.
 
-You can also use the `djobs install-instructions` CLI command to add the guidance block automatically.
+The report separates **automatic hook savings** from **durable workflow savings**
+and also shows unfinished or failed checkpoints whose compact context is protected
+for recovery. Numbers estimate avoided replay, re-reading, and re-planning using a
+published formula (`4` characters per token and `600` re-plan tokens per completed
+record by default). They are intentionally labeled estimates, not API billing data.
 
 ---
 
@@ -287,9 +322,9 @@ Beyond the three core tools, djobs also provides:
 - **`check_task` / `list_tasks`** — Inspect individual tasks or list by workspace.
 - **`health`** — Queue depth by status at a glance.
 - **`djobs doctor`** — One-shot setup check: confirms djobs is installed, the queue DB is writable, and `.vscode/mcp.json` is wired correctly. Run it (or "djobs: Diagnose Setup" in VS Code) whenever something feels off.
-- **`djobs token-savings`** — Estimate how many replay/re-plan tokens a workflow
-  avoids because completed task state and evidence are durable. Example:
-  `djobs token-savings --correlation-id C:\my\repo --format json`.
+- **`djobs gain`** — RTK-style 24h / 30d / all-time savings analytics with source
+  breakdowns, daily history, an ASCII graph, and JSON export. The older
+  `djobs token-savings` command remains available for one-workflow estimates.
 - **Multi-agent coordination** — Several agents share one queue: `claim_task` (atomic, exclusive), `heartbeat_task`, `release_task`, task dependencies (`depends_on`), resource locks (`resource_key`), and an agent registry (`register_agent` / `agent_heartbeat` / `list_agents`).
 - **Web dashboard** — `djobs dashboard` serves a read-only, cross-agent view of queue health, every task, and the live agent fleet at `http://127.0.0.1:8787` (stdlib only, no extra deps). **Local-only by design:** no authentication, binds to `127.0.0.1`; for remote access use an SSH tunnel rather than exposing a public interface.
 - **Retry with backoff** — Failed tasks can retry automatically.
@@ -307,7 +342,7 @@ cd djobs
 python -m venv .venv && .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest -q              # 379 tests (18 skipped without Postgres)
+pytest -q              # tests
 ruff check src/ tests/ # lint
 ```
 
@@ -320,7 +355,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 djobs includes a VS Code sidebar extension for visual workflow control:
 
 - **Workflow dashboard** — tasks grouped by workflow and action type with progress indicators
-- **Native MCP setup** — registers the djobs MCP server without manual config in VS Code
+- **Native MCP + hook setup** — registers the MCP server and deterministic lifecycle hooks without manual config
 - **Agent guidance installer** — teaches compatible agents to resume first and
   create durable djobs tasks before multi-step edits
 - **Task cleanup controls** — right-click a task to archive it, delete it, view
@@ -350,7 +385,8 @@ cd vscode-ext && npm install && npm run package
 - [x] Published on PyPI
 - [x] `complete_task` evidence field — agent records what it changed
 - [x] VS Code sidebar — workflow dashboard, skip/archive, inspect evidence
-- [x] Agent guidance installer — nudges agents to resume/enqueue before editing
+- [x] Deterministic lifecycle hooks — rewrite meaningful commands and resume failed/interrupted checkpoints
+- [x] Agent guidance installer — adds semantic multi-file workflow guidance
 - [x] CLI workflow control — `djobs skip`, `djobs accept-before`, `djobs archive-workflow`
 - [x] Multi-agent coordination — shared-queue claim, dependencies, resource locks, agent registry
 - [x] Web dashboard — `djobs dashboard` cross-agent global view

@@ -26,7 +26,13 @@ from djobs.queue.service import QueueService
 from djobs.storage.sqlite import SQLiteJobRepository
 
 _HOOK_RELATIVE_PATH = Path(".github/hooks/djobs.json")
-_INCOMPLETE_STATUSES = ("pending", "running", "retry_scheduled")
+_RECOVERABLE_STATUSES = (
+    "pending",
+    "running",
+    "retry_scheduled",
+    "failed",
+    "dead_lettered",
+)
 _VALID_MODES = {"off", "smart", "all"}
 _MAX_COMMAND_CHARS = 4000
 
@@ -186,12 +192,30 @@ def _command_field(args: dict[str, Any]) -> str | None:
     return None
 
 
-def _shell_kind(tool_name: str) -> str | None:
-    lowered = tool_name.strip().lower()
-    if lowered in {"bash", "shell"}:
-        return "bash"
+def _shell_kind(
+    payload: dict[str, Any],
+    *,
+    platform_name: str | None = None,
+) -> str | None:
+    """Resolve the original terminal shell across Copilot and VS Code payloads."""
+
+    lowered = _tool_name(payload).strip().lower()
     if lowered in {"powershell", "pwsh"}:
         return "powershell"
+    if lowered in {"bash", "shell"}:
+        # PascalCase/VS Code-compatible payloads use the Claude name
+        # ``Bash`` for both bash and PowerShell. The extension-host OS is
+        # the only deterministic discriminator in that normalized form.
+        if "hook_event_name" in payload and (platform_name or os.name) == "nt":
+            return "powershell"
+        return "bash"
+    if lowered in {
+        "runterminalcommand",
+        "run_in_terminal",
+        "runinterminal",
+        "terminal",
+    }:
+        return "powershell" if (platform_name or os.name) == "nt" else "bash"
     return None
 
 
@@ -250,7 +274,7 @@ def rewrite_pre_tool_payload(
 ) -> dict[str, Any]:
     """Return a preToolUse decision, rewriting meaningful shell commands."""
 
-    shell = _shell_kind(_tool_name(payload))
+    shell = _shell_kind(payload)
     args = _tool_args(payload)
     if shell is None or args is None:
         return {}
@@ -277,7 +301,19 @@ def rewrite_pre_tool_payload(
         "mode": resolved_mode,
     }
     args[field] = f"djobs hook run --payload {_encode_envelope(envelope)}"
-    return {"permissionDecision": "allow", "modifiedArgs": args}
+
+    # Copilot CLI/cloud consumes the top-level fields. VS Code consumes
+    # hookSpecificOutput.updatedInput. Returning both makes the same hook
+    # file deterministic across hosts; unknown fields are ignored.
+    return {
+        "permissionDecision": "allow",
+        "modifiedArgs": args,
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "updatedInput": args,
+        },
+    }
 
 
 def _command_label(command: str) -> str:
@@ -365,6 +401,9 @@ def run_wrapped_payload(payload: dict[str, Any]) -> int:
                     task_id,
                     evidence=(f"automatic command checkpoint: exit 0 in {elapsed:.2f}s"),
                 )
+                # Successful command checkpoints remain auditable but should
+                # not flood the active task/sidebar view.
+                queue.archive(task_id, "Automatic command completed")
             else:
                 queue.fail(
                     task_id,
@@ -387,7 +426,7 @@ def session_start_context(payload: dict[str, Any]) -> dict[str, Any]:
         repo = SQLiteJobRepository.from_path(db_path)
         jobs = repo.list_jobs_by_correlation_ids(
             correlation_id_variants(cwd),
-            statuses=_INCOMPLETE_STATUSES,
+            statuses=_RECOVERABLE_STATUSES,
         )
     except Exception as exc:
         _debug(f"session recovery failed: {exc}")
@@ -408,10 +447,18 @@ def session_start_context(payload: dict[str, Any]) -> dict[str, Any]:
     if len(jobs) > len(shown):
         remaining = len(jobs) - len(shown)
         lines.append(f"- ... and {remaining} more; use resume_capsule for details.")
-    return {"additionalContext": "\n".join(lines)}
+
+    context = "\n".join(lines)
+    return {
+        "additionalContext": context,
+        "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": context,
+        },
+    }
 
 
-def _hook_config(mode: str) -> dict[str, Any]:
+def _hook_config(mode: str, db_path: str | None = None) -> dict[str, Any]:
     bash_guard = "if command -v djobs >/dev/null 2>&1; then djobs hook {event} || true; fi"
     powershell_guard = (
         "if (Get-Command djobs -ErrorAction SilentlyContinue) {{ "
@@ -421,22 +468,33 @@ def _hook_config(mode: str) -> dict[str, Any]:
     )
 
     def command_hook(event: str, *, matcher: str | None = None) -> dict[str, Any]:
+        environment = {"DJOBS_HOOK_MODE": mode}
+        if db_path is not None:
+            environment["DJOBS_DB"] = db_path
         item: dict[str, Any] = {
             "type": "command",
             "bash": bash_guard.format(event=event),
             "powershell": powershell_guard.format(event=event),
             "timeoutSec": 10,
-            "env": {"DJOBS_HOOK_MODE": mode},
+            "env": environment,
         }
         if matcher is not None:
             item["matcher"] = matcher
         return item
 
+    # Lower-camel event names are native to Copilot CLI/cloud. VS Code
+    # converts this format to PascalCase and maps the OS-specific command
+    # properties automatically.
     return {
         "version": 1,
         "hooks": {
-            "SessionStart": [command_hook("session-start")],
-            "PreToolUse": [command_hook("pre", matcher="Bash")],
+            "sessionStart": [command_hook("session-start")],
+            "preToolUse": [
+                command_hook(
+                    "pre",
+                    matcher=("bash|powershell|runTerminalCommand|run_in_terminal"),
+                )
+            ],
         },
     }
 
@@ -446,12 +504,14 @@ def install_hooks(
     *,
     mode: str = "smart",
     force: bool = False,
+    db_path: Path | str | None = None,
 ) -> Path:
     """Install an idempotent repository hook config for compatible coding agents."""
 
     target = (root or Path.cwd()) / _HOOK_RELATIVE_PATH
     resolved_mode = _normalise_mode(mode)
-    content = json.dumps(_hook_config(resolved_mode), indent=2) + "\n"
+    resolved_db = str(Path(db_path).expanduser().resolve()) if db_path is not None else None
+    content = json.dumps(_hook_config(resolved_mode, resolved_db), indent=2) + "\n"
 
     if target.exists() and not force:
         existing = target.read_text(encoding="utf-8")
@@ -534,6 +594,19 @@ def main(argv: list[str] | None = None) -> int:
         choices=sorted(_VALID_MODES),
         default="smart",
     )
+
+    db_group = install_parser.add_mutually_exclusive_group()
+    db_group.add_argument(
+        "--db",
+        default=None,
+        help="Use this SQLite database for both automatic hooks and MCP.",
+    )
+    db_group.add_argument(
+        "--global",
+        dest="use_global",
+        action="store_true",
+        help="Use the shared queue at ~/.djobs/global.db.",
+    )
     install_parser.add_argument("--force", action="store_true")
 
     subparsers.add_parser("pre", help="Handle a preToolUse event from stdin")
@@ -564,7 +637,13 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     if args.hook_command == "install":
-        install_hooks(Path(args.root), mode=args.mode, force=args.force)
+        hook_db = Path.home() / ".djobs" / "global.db" if args.use_global else args.db
+        install_hooks(
+            Path(args.root),
+            mode=args.mode,
+            force=args.force,
+            db_path=hook_db,
+        )
         return 0
     if args.hook_command == "pre":
         return _cmd_pre()

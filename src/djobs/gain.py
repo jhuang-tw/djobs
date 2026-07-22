@@ -114,10 +114,7 @@ def _query_jobs(
     repo: SQLiteJobRepository,
     correlation_id: str | None,
 ) -> list[Any]:
-    columns = (
-        "id, type, status, payload_json, correlation_id, last_error, "
-        "created_at, updated_at"
-    )
+    columns = "id, type, status, payload_json, correlation_id, last_error, created_at, updated_at"
     with repo._lock:
         if correlation_id is None:
             return list(
@@ -163,9 +160,7 @@ def _record_from_row(
     replay_text = "\n".join(part for part in (row["type"], summary, evidence) if part)
     durable_tokens = _estimate_tokens(durable_text, chars_per_token)
     replay_tokens = (
-        redo_overhead_tokens + _estimate_tokens(replay_text, chars_per_token)
-        if completed
-        else 0
+        redo_overhead_tokens + _estimate_tokens(replay_text, chars_per_token) if completed else 0
     )
     saved_tokens = max(0, replay_tokens - durable_tokens) if completed else 0
     event_at = (
@@ -200,9 +195,7 @@ def _summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
         selected = [record for record in completed if record["source"] == source]
         sources[source] = {
             "completed_records": len(selected),
-            "estimated_saved_tokens": sum(
-                record["estimated_saved_tokens"] for record in selected
-            ),
+            "estimated_saved_tokens": sum(record["estimated_saved_tokens"] for record in selected),
         }
     return {
         "completed_records": len(completed),

@@ -1,39 +1,73 @@
 name: CI
 
 on:
+  push:
+    branches: [main]
   pull_request:
     branches: [main]
 
-permissions:
-  contents: write
-
 jobs:
-  finalize-product:
-    if: github.actor != 'github-actions[bot]'
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: feat/adoption-readiness
-          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - name: Finalize automatic hooks and gain analytics
-        run: python tools/finalize_auto_hook.py
-      - name: Validate final product files
-        run: |
-          pip install -e ".[dev,pg]"
-          ruff format --config pyproject.toml src tests
-          ruff check --config pyproject.toml src tests
-          mypy
-          pytest -q --tb=short
-      - name: Commit product files and restore standard CI
-        run: |
-          rm tools/apply_auto_hook_compat.py tools/finalize_auto_hook.py
-          git show origin/main:.github/workflows/ci.yml > .github/workflows/ci.yml
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "feat: add automatic hooks and token savings analytics"
-          git push origin HEAD:feat/adoption-readiness
+      # Use the same pinned ruff version as the local pre-push hook
+      # (.pre-commit-config.yaml) so local and CI can never drift.
+      - run: pip install pre-commit
+      - run: pre-commit run ruff-check --all-files
+      - run: pre-commit run ruff-format --all-files
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e ".[dev,pg]"
+      - run: mypy
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[dev]"
+      - run: pytest -q --tb=short
+
+  test-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: djobs
+          POSTGRES_PASSWORD: djobs
+          POSTGRES_DB: djobs
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U djobs"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DJOBS_TEST_PG_DSN: postgresql://djobs:djobs@localhost:5432/djobs
+      DJOBS_REQUIRE_PG: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e ".[dev,pg]"
+      - name: Run tests against PostgreSQL backend
+        run: pytest -q --tb=short tests/integration/test_repository_contract.py
+

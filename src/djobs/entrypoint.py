@@ -51,7 +51,13 @@ def _cmd_init_with_hooks(
     for target in cli._resolve_instruction_targets(args.instructions_target):
         cli._write_instructions_to(target)
 
-    install_hooks(Path.cwd(), mode="smart", force=args.force)
+    hook_db = cli._global_db() if args.use_global else getattr(args, "db", None)
+    install_hooks(
+        Path.cwd(),
+        mode="smart",
+        force=args.force,
+        db_path=hook_db,
+    )
 
     print()
     original_doctor(argparse.Namespace(as_json=False))
@@ -74,6 +80,11 @@ def main() -> None:
         from djobs.auto_hook import main as run_hook_cli
 
         raise SystemExit(run_hook_cli(sys.argv[2:]))
+
+    if len(sys.argv) > 1 and sys.argv[1] in {"gain", "stats", "state"}:
+        from djobs.gain import main as run_gain_cli
+
+        raise SystemExit(run_gain_cli(sys.argv[2:]))
 
     from djobs import cli
     from djobs.auto_hook import print_hook_doctor

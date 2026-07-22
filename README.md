@@ -40,7 +40,7 @@ cloud service.
 
 ### VS Code and GitHub Copilot
 
-Install the **djobs — Agent Checkpoints** extension from the Marketplace, then
+Install the **djobs — Coding Checkpoints** extension from the Marketplace, then
 run **djobs: Set up / Repair djobs** from the Command Palette.
 
 The extension installs or repairs the Python runtime, registers the MCP server,
@@ -136,6 +136,7 @@ is not presented as proof of full end-to-end validation on every agent.
 
 - Queue data stays local unless you intentionally point clients at a shared database.
 - Default MCP auto-approval is read-only; write tools remain explicit unless enabled.
+- Coding MCP entry points do not start background workers or schedulers; run `djobs serve` explicitly when general-purpose job execution is wanted.
 - `djobs pause` disables rewriting and recovery without deleting state.
 - The local dashboard binds to `127.0.0.1` by default and has no public-auth layer.
 - Tool output is treated as data, not as instructions that override the user.

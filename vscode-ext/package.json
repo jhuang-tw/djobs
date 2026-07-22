@@ -2,7 +2,7 @@
   "name": "djobs",
   "displayName": "djobs \u2014 Coding Checkpoints",
   "description": "Automatic coding checkpoints that reduce repeated context and command work.",
-  "version": "0.12.1",
+  "version": "0.13.0",
   "publisher": "jhuang-tw",
   "license": "MIT",
   "icon": "media/icon-128.png",

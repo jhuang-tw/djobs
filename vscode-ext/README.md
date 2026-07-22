@@ -7,6 +7,8 @@
 The extension is intentionally headless. It does not add an Activity Bar icon, task
 sidebar, polling loop, or background dashboard. It installs or repairs the djobs
 runtime, registers the MCP server, and installs deterministic coding hooks.
+The registered server exposes only six coding-focused tools; advanced queue, fleet,
+lease, and audit schemas stay out of the default agent context.
 
 ## Setup
 

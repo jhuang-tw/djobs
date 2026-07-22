@@ -50,7 +50,8 @@ pg = [
 
 [project.scripts]
 djobs = "djobs.entrypoint:main"
-djobs-mcp = "djobs.delta_mcp:main"
+djobs-mcp = "djobs.coding_mcp:main"
+djobs-mcp-full = "djobs.delta_mcp:main"
 
 [tool.hatch.version]
 path = "src/djobs/__init__.py"

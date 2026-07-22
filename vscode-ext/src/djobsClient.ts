@@ -102,14 +102,14 @@ export class DjobsClient {
     let args: string[];
     if (configured) {
       command = configured;
-      args = ['-m', 'djobs.delta_mcp'];
+      args = ['-m', 'djobs.coding_mcp'];
     } else {
       const venvPython = process.platform === 'win32'
         ? path.join(this.workspaceRoot, '.venv', 'Scripts', 'python.exe')
         : path.join(this.workspaceRoot, '.venv', 'bin', 'python');
       if (fs.existsSync(venvPython)) {
         command = venvPython;
-        args = ['-m', 'djobs.delta_mcp'];
+        args = ['-m', 'djobs.coding_mcp'];
       } else {
         const consoleScript = this.which('djobs-mcp');
         if (consoleScript) {
@@ -117,7 +117,7 @@ export class DjobsClient {
           args = [];
         } else {
           command = process.platform === 'win32' ? 'python' : 'python3';
-          args = ['-m', 'djobs.delta_mcp'];
+          args = ['-m', 'djobs.coding_mcp'];
         }
       }
     }

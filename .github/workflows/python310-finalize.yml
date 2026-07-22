@@ -102,13 +102,20 @@ jobs:
           cat py310-ruff-report.txt
           exit 1
 
-      - name: Validate Python 3.10
-        run: |
-          python -m compileall -q src tests
-          ruff check src/ tests/
-          ruff format --check src/ tests/
-          mypy
-          pytest -q --tb=short
+      - name: Compile on Python 3.10
+        run: python -m compileall -q src tests
+
+      - name: Ruff check on Python 3.10 target
+        run: ruff check src/ tests/
+
+      - name: Ruff format check
+        run: ruff format --check src/ tests/
+
+      - name: Mypy with Python 3.10 target
+        run: mypy
+
+      - name: Pytest on Python 3.10
+        run: pytest -q --tb=short
 
       - name: Validate extension
         working-directory: vscode-ext

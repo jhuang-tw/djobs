@@ -6,6 +6,7 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -30,7 +31,7 @@ def shared_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return database
 
 
-def _json(raw: str) -> dict[str, object]:
+def _json(raw: str) -> dict[str, Any]:
     value = json.loads(raw)
     assert isinstance(value, dict)
     return value
@@ -65,10 +66,9 @@ def test_codex_hands_same_repo_work_to_claude_and_back(
     claude_sync = _json(
         sync_workspace(cwd=str(repo), agent_type="claude", session_id="claude-1")
     )
-    assert any(task["id"] == task_id for task in claude_sync["tasks"])  # type: ignore[index]
+    assert any(task["id"] == task_id for task in claude_sync["tasks"])
     assert any(
-        "tests remain" in task.get("evidence", "")
-        for task in claude_sync["tasks"]  # type: ignore[index]
+        "tests remain" in task.get("evidence", "") for task in claude_sync["tasks"]
     )
 
     claude_claim = _json(
@@ -93,7 +93,7 @@ def test_codex_hands_same_repo_work_to_claude_and_back(
     codex_sync = _json(
         sync_workspace(cwd=str(repo), agent_type="codex", session_id="codex-2")
     )
-    assert any(task["id"] == task_id for task in codex_sync["tasks"])  # type: ignore[index]
+    assert any(task["id"] == task_id for task in codex_sync["tasks"])
 
 
 def test_sync_needs_no_correlation_id_and_reads_legacy_path_state(
@@ -109,7 +109,7 @@ def test_sync_needs_no_correlation_id_and_reads_legacy_path_state(
 
     result = _json(sync_workspace(cwd=str(repo), agent_type="codex", session_id="one"))
 
-    assert any(task["id"] == legacy.id for task in result["tasks"])  # type: ignore[index]
+    assert any(task["id"] == legacy.id for task in result["tasks"])
 
 
 def test_different_repositories_are_completely_isolated(
@@ -127,7 +127,7 @@ def test_different_repositories_are_completely_isolated(
 def test_two_agents_cannot_claim_the_same_task(tmp_path: Path, shared_db: Path) -> None:
     repo = _repo(tmp_path / "repo")
 
-    def claim(agent: str) -> dict[str, object]:
+    def claim(agent: str) -> dict[str, Any]:
         return _json(
             checkpoint(
                 "Same work",

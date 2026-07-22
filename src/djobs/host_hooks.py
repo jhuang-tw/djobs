@@ -1,9 +1,8 @@
-"""Install user-scoped Codex and Claude Code lifecycle hooks safely."""
+"""Install thin lifecycle adapters without making the core client-specific."""
 
 from __future__ import annotations
 
 import json
-import os
 import shlex
 import subprocess
 import sys
@@ -11,21 +10,35 @@ from pathlib import Path
 from typing import Any, Sequence
 
 _MANAGED_TOKEN = "djobs.hook_entrypoint"
-_EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop")
+_KIMI_BEGIN = "# >>> djobs managed observation hooks >>>"
+_KIMI_END = "# <<< djobs managed observation hooks <<<"
+_JSON_EVENTS = (
+    "SessionStart",
+    "UserPromptSubmit",
+    "PreToolUse",
+    "PostToolUse",
+    "PostToolUseFailure",
+    "Stop",
+    "PreCompact",
+    "PreCompress",
+    "AfterTool",
+    "SessionEnd",
+)
+_SUPPORTED = ("codex", "claude", "gemini", "kimi")
 
 
 def _command(argv: Sequence[str], *, windows: bool = False) -> str:
     return subprocess.list2cmdline(list(argv)) if windows else shlex.join(list(argv))
 
 
-def _hook_argv(event: str, host: str, database: Path, mode: str) -> list[str]:
+def _hook_argv(event: str, client: str, database: Path, mode: str) -> list[str]:
     return [
         sys.executable,
         "-m",
         "djobs.hook_entrypoint",
         event,
-        "--host",
-        host,
+        "--client",
+        client,
         "--db",
         str(database.expanduser().resolve()),
         "--mode",
@@ -33,68 +46,106 @@ def _hook_argv(event: str, host: str, database: Path, mode: str) -> list[str]:
     ]
 
 
-def _handler(event: str, host: str, database: Path, mode: str) -> dict[str, Any]:
-    argv = _hook_argv(event, host, database, mode)
-    item: dict[str, Any] = {
+def _json_handler(event: str, client: str, database: Path, mode: str) -> dict[str, Any]:
+    argv = _hook_argv(event, client, database, mode)
+    if client == "claude":
+        return {
+            "type": "command",
+            "command": argv[0],
+            "args": argv[1:],
+            "timeout": 15,
+            "statusMessage": "Recording djobs repository observations",
+        }
+    command = _command(argv)
+    if client == "gemini":
+        return {
+            "type": "command",
+            "command": command,
+            "name": f"djobs-{event}",
+            "timeout": 15000,
+            "description": "Record read-only repository observations for cross-agent context.",
+        }
+    return {
         "type": "command",
+        "command": command,
+        "commandWindows": _command(argv, windows=True),
         "timeout": 15,
-        "statusMessage": "Synchronizing djobs handoff state",
+        "statusMessage": "Recording djobs repository observations",
     }
-    if host == "claude":
-        # Claude Code supports exec form. It avoids shell quoting differences on
-        # native Windows, Git Bash, macOS, and Linux.
-        item["command"] = argv[0]
-        item["args"] = argv[1:]
-    else:
-        item["command"] = _command(argv)
-        item["commandWindows"] = _command(argv, windows=True)
-    return item
+
+
+def _specs(client: str) -> tuple[tuple[str, str, str | None], ...]:
+    """Map native hook events to the normalized djobs event protocol."""
+
+    if client == "codex":
+        return (
+            ("SessionStart", "session-start", "startup|resume|clear|compact"),
+            ("PostToolUse", "post", "Bash|apply_patch|Edit|Write"),
+            ("PreCompact", "pre-compact", "manual|auto"),
+        )
+    if client == "claude":
+        return (
+            ("SessionStart", "session-start", "startup|resume|clear|compact"),
+            ("PostToolUse", "post", "Bash|apply_patch|Edit|Write"),
+            ("PostToolUseFailure", "post-failure", "Bash|apply_patch|Edit|Write"),
+            ("PreCompact", "pre-compact", "manual|auto"),
+            ("SessionEnd", "session-end", None),
+        )
+    if client == "gemini":
+        return (
+            ("SessionStart", "session-start", "startup|resume|clear"),
+            ("AfterTool", "post", "run_shell_command|write_file|replace|write_.*"),
+            ("PreCompress", "pre-compact", "*"),
+            ("SessionEnd", "session-end", "*"),
+        )
+    if client == "kimi":
+        return (
+            ("SessionStart", "session-start", "startup|resume"),
+            ("PostToolUse", "post", "Bash|Write|Edit|apply_patch"),
+            ("PostToolUseFailure", "post-failure", "Bash|Write|Edit|apply_patch"),
+            ("PreCompact", "pre-compact", "manual|auto"),
+            ("SessionEnd", "session-end", "exit"),
+        )
+    raise ValueError(f"unsupported client adapter: {client}")
 
 
 def managed_hooks(
-    host: str,
+    client: str,
     database: Path,
     mode: str = "smart",
 ) -> dict[str, list[dict[str, Any]]]:
-    if host not in {"codex", "claude"}:
-        raise ValueError(f"unsupported host: {host}")
-    return {
-        "SessionStart": [
-            {
-                "matcher": "startup|resume|clear|compact",
-                "hooks": [_handler("session-start", host, database, mode)],
-            }
-        ],
-        "UserPromptSubmit": [{"hooks": [_handler("user-prompt", host, database, mode)]}],
-        "PreToolUse": [
-            {
-                "matcher": "^Bash$",
-                "hooks": [_handler("pre", host, database, mode)],
-            }
-        ],
-        "PostToolUse": [
-            {
-                "matcher": "Bash|apply_patch|Edit|Write",
-                "hooks": [_handler("post", host, database, mode)],
-            }
-        ],
-        "Stop": [{"hooks": [_handler("stop", host, database, mode)]}],
-    }
+    """Return host-native passive observation hooks for JSON-configured clients."""
+
+    if client == "kimi":
+        raise ValueError("Kimi hooks use TOML; call install_host_hooks")
+    desired: dict[str, list[dict[str, Any]]] = {}
+    for native_event, normalized_event, matcher in _specs(client):
+        group: dict[str, Any] = {
+            "hooks": [_json_handler(normalized_event, client, database, mode)]
+        }
+        if matcher is not None:
+            group["matcher"] = matcher
+        desired.setdefault(native_event, []).append(group)
+    return desired
 
 
-def hook_path(host: str, home: Path | None = None) -> Path:
+def hook_path(client: str, home: Path | None = None) -> Path:
     root = home or Path.home()
-    if host == "codex":
+    if client == "codex":
         return root / ".codex" / "hooks.json"
-    if host == "claude":
+    if client == "claude":
         return root / ".claude" / "settings.json"
-    raise ValueError(f"unsupported host: {host}")
+    if client == "gemini":
+        return root / ".gemini" / "settings.json"
+    if client == "kimi":
+        return root / ".kimi-code" / "config.toml"
+    raise ValueError(f"unsupported client adapter: {client}")
 
 
 def _contains_managed(value: Any) -> bool:
-    if not isinstance(value, dict):
-        return False
-    return _MANAGED_TOKEN in json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return isinstance(value, dict) and _MANAGED_TOKEN in json.dumps(
+        value, ensure_ascii=False, separators=(",", ":")
+    )
 
 
 def _strip_managed(groups: Any) -> list[dict[str, Any]]:
@@ -116,8 +167,7 @@ def _strip_managed(groups: Any) -> list[dict[str, Any]]:
     return kept
 
 
-def _load(path: Path, *, force: bool) -> dict[str, Any]:
-    del force  # Repair may replace djobs handlers, but never unrelated malformed settings.
+def _load_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     try:
@@ -129,14 +179,95 @@ def _load(path: Path, *, force: bool) -> dict[str, Any]:
     return value
 
 
-def _hooks_object(document: dict[str, Any], host: str) -> dict[str, Any]:
+def _install_json_hooks(
+    client: str,
+    database: Path,
+    *,
+    home: Path | None,
+    mode: str,
+) -> dict[str, Any]:
+    path = hook_path(client, home)
+    document = _load_json(path)
     hooks = document.get("hooks")
     if hooks is None:
         hooks = {}
         document["hooks"] = hooks
     if not isinstance(hooks, dict):
-        raise ValueError(f"the hooks field for {host} is not an object")
-    return hooks
+        raise ValueError(f"the hooks field for {client} is not an object")
+    desired = managed_hooks(client, database, mode)
+    before = json.dumps(document, ensure_ascii=False, sort_keys=True)
+    for event in _JSON_EVENTS:
+        combined = [*_strip_managed(hooks.get(event)), *desired.get(event, [])]
+        if combined:
+            hooks[event] = combined
+        else:
+            hooks.pop(event, None)
+    if client == "codex" and "description" not in document:
+        document["description"] = "User hooks including passive djobs observations."
+    content = json.dumps(document, ensure_ascii=False, indent=2) + "\n"
+    after = json.dumps(document, ensure_ascii=False, sort_keys=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if before != after or not path.exists():
+        path.write_text(content, encoding="utf-8")
+        status = "configured"
+    else:
+        status = "unchanged"
+    return {"host": client, "status": status, "path": str(path)}
+
+
+def _kimi_block(database: Path, mode: str) -> str:
+    lines = [_KIMI_BEGIN]
+    for native_event, normalized_event, matcher in _specs("kimi"):
+        command = _command(_hook_argv(normalized_event, "kimi", database, mode))
+        lines.extend(
+            [
+                "[[hooks]]",
+                f"event = {json.dumps(native_event)}",
+                f"matcher = {json.dumps(matcher or '')}",
+                f"command = {json.dumps(command)}",
+                "timeout = 15",
+                "",
+            ]
+        )
+    lines.append(_KIMI_END)
+    return "\n".join(lines) + "\n"
+
+
+def _strip_kimi_block(content: str) -> tuple[str, bool]:
+    begin = content.find(_KIMI_BEGIN)
+    end = content.find(_KIMI_END)
+    if begin < 0 and end < 0:
+        return content, False
+    if begin < 0 or end < begin:
+        raise ValueError("refusing to modify a malformed djobs block in Kimi config")
+    end += len(_KIMI_END)
+    if end < len(content) and content[end] == "\n":
+        end += 1
+    prefix = content[:begin].rstrip()
+    separator = "\n" if prefix else ""
+    return prefix + separator + content[end:].lstrip(), True
+
+
+def _install_kimi_hooks(
+    database: Path,
+    *,
+    home: Path | None,
+    mode: str,
+) -> dict[str, Any]:
+    path = hook_path("kimi", home)
+    original = path.read_text(encoding="utf-8") if path.exists() else ""
+    base, _ = _strip_kimi_block(original)
+    content = base.rstrip()
+    if content:
+        content += "\n\n"
+    content += _kimi_block(database, mode)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if content != original:
+        path.write_text(content, encoding="utf-8")
+        status = "configured"
+    else:
+        status = "unchanged"
+    return {"host": "kimi", "status": status, "path": str(path)}
 
 
 def install_host_hooks(
@@ -147,34 +278,29 @@ def install_host_hooks(
     mode: str = "smart",
     force: bool = False,
 ) -> dict[str, Any]:
-    """Merge djobs hooks while preserving every unrelated hook and setting."""
+    """Merge only djobs-managed adapters, preserving unrelated configuration."""
 
-    path = hook_path(host, home)
-    document = _load(path, force=force)
-    hooks = _hooks_object(document, host)
-    desired = managed_hooks(host, database, mode)
-    before = json.dumps(document, ensure_ascii=False, sort_keys=True)
-    for event in _EVENTS:
-        existing = _strip_managed(hooks.get(event))
-        hooks[event] = [*existing, *desired[event]]
-    if host == "codex" and "description" not in document:
-        document["description"] = "User hooks including automatic djobs cross-agent handoff."
-    content = json.dumps(document, ensure_ascii=False, indent=2) + "\n"
-    after = json.dumps(document, ensure_ascii=False, sort_keys=True)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if before != after or not path.exists():
-        path.write_text(content, encoding="utf-8")
-        status = "configured"
-    else:
-        status = "unchanged"
-    return {"host": host, "status": status, "path": str(path)}
+    del force  # Repair replaces managed entries but never bypasses config safety.
+    if host not in _SUPPORTED:
+        raise ValueError(f"unsupported client adapter: {host}")
+    if host == "kimi":
+        return _install_kimi_hooks(database, home=home, mode=mode)
+    return _install_json_hooks(host, database, home=home, mode=mode)
 
 
 def remove_host_hooks(host: str, *, home: Path | None = None) -> dict[str, Any]:
     path = hook_path(host, home)
     if not path.exists():
         return {"host": host, "status": "absent", "path": str(path)}
-    document = _load(path, force=False)
+    if host == "kimi":
+        original = path.read_text(encoding="utf-8")
+        content, changed = _strip_kimi_block(original)
+        if not changed:
+            return {"host": host, "status": "absent", "path": str(path)}
+        path.write_text(content, encoding="utf-8")
+        return {"host": host, "status": "removed", "path": str(path)}
+
+    document = _load_json(path)
     hooks = document.get("hooks")
     changed = False
     if isinstance(hooks, dict):
@@ -200,10 +326,15 @@ def host_hook_doctor(host: str, *, home: Path | None = None) -> dict[str, Any]:
     if not path.exists():
         return {"host": host, "installed": False, "path": str(path)}
     try:
-        document = _load(path, force=False)
-        hooks = document.get("hooks", {})
-        text = json.dumps(hooks, separators=(",", ":"))
-        installed = all(event in hooks for event in _EVENTS) and _MANAGED_TOKEN in text
-    except ValueError:
+        if host == "kimi":
+            text = path.read_text(encoding="utf-8")
+            installed = _KIMI_BEGIN in text and _KIMI_END in text and _MANAGED_TOKEN in text
+        else:
+            document = _load_json(path)
+            hooks = document.get("hooks", {})
+            text = json.dumps(hooks, separators=(",", ":"))
+            required = {event for event, _normalized, _matcher in _specs(host)}
+            installed = required.issubset(hooks) and _MANAGED_TOKEN in text
+    except (OSError, ValueError):
         installed = False
     return {"host": host, "installed": installed, "path": str(path)}

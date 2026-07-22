@@ -1,12 +1,17 @@
 # djobs
 
-**Install once. Open the same repository in Codex or Claude Code. Continue where the other agent stopped without asking either model to run a handoff command.**
+**Shared, local repository memory for any coding agent — without letting hooks guess who owns the work.**
 
-`djobs` is a local-first durable checkpoint layer for coding agents. One shared SQLite database stores compact repository-scoped work state and evidence. Deterministic host hooks perform the normal synchronization lifecycle, while expiring leases prevent two agents from silently taking the same resumable task.
+`djobs` separates two concerns that coding tools often mix together:
 
-No cloud account, Redis, daemon, per-repository initialization, correlation ID, workspace ID, or manually supplied database path is required for the normal workflow.
+1. **Observations are automatic and read-only.** Tool results, Git working-tree changes, compaction, and session boundaries can be recorded without creating or moving a task.
+2. **Ownership is explicit.** A task is claimed, handed off, or completed only through `checkpoint()` and `handoff()` (or their advanced CLI/API equivalents).
 
-## Quick Start
+The core is client-neutral. Codex, Claude Code, Gemini CLI, and Kimi Code have built-in thin adapters, while any future or custom agent can use the same normalized event command, MCP server, or Git sidecar.
+
+> Gemini and Kimi are model families. Automatic integration depends on the **client hosting the model**. A Kimi model inside Kimi Code, Cursor, or a custom agent has different lifecycle capabilities, so djobs keeps adapters outside the core.
+
+## Quick start
 
 ```powershell
 pipx install djobs
@@ -14,124 +19,186 @@ djobs setup all
 djobs doctor
 ```
 
-Then restart any already-running Codex or Claude Code session.
+`setup all` detects and configures the clients installed on the machine:
 
-For Codex, open `/hooks` once, review the installed `djobs` commands, and trust them. Codex deliberately does not execute new non-managed command hooks until the user approves their exact definitions.
+- Codex
+- Claude Code
+- Gemini CLI
+- Kimi Code
 
-After that, neither agent needs to remember a djobs command:
+Missing clients are skipped with a copyable/manual instruction. Existing MCP servers, permissions, settings, and unrelated hooks are preserved.
+
+After restarting an already-running client, opening the same Git repository gives each supported adapter a compact, read-only view of:
+
+- explicitly tracked unfinished work and current owners;
+- failed and recently completed evidence;
+- recent tool observations;
+- actual Git working-tree changes, including changes made by an agent that had no djobs hook.
+
+Nothing is claimed merely because a session started, a prompt was submitted, a tool ran, or a turn ended.
+
+## Universal architecture
 
 ```text
-Codex session starts
-  -> SessionStart automatically finds the Git repository
-  -> unfinished work is synchronized and atomically claimed
-
-You submit a coding request
-  -> UserPromptSubmit automatically creates or resumes a durable task
-
-Codex uses Bash or edits files
-  -> PostToolUse automatically heartbeats the lease and stores bounded evidence
-
-The Codex turn stops
-  -> Stop automatically releases resumable work
-
-Claude Code opens the same repository
-  -> SessionStart automatically claims that released task and injects its state
+                    ┌─────────────────────────────┐
+Codex adapter ─────▶│                             │
+Claude adapter ────▶│ client-neutral event input  │
+Gemini adapter ────▶│                             │
+Kimi adapter ──────▶│   bounded observations      │
+custom adapter ────▶│   + Git snapshots           │
+filesystem sidecar ▶│                             │
+                    └──────────────┬──────────────┘
+                                   │
+                           ~/.djobs/global.db
+                                   │
+                    ┌──────────────┴──────────────┐
+                    │ compact MCP / CLI reads     │
+                    │ explicit task ownership     │
+                    └─────────────────────────────┘
 ```
 
-Setup is user-scoped and idempotent. You do **not** run `djobs init` in every repository.
+The shared SQLite database is repository-scoped with deterministic workspace IDs. SQLite WAL mode, busy timeouts, atomic claims, leases, and bounded payloads allow multiple local clients to coexist.
 
-### Set up one host
+## What happens automatically
+
+Automatic adapters may:
+
+- load compact state at session start without claiming it;
+- record successful and failed tool outcomes;
+- snapshot Git state and report changed paths;
+- save a small marker before context compaction;
+- record a real session end where the client exposes one;
+- heartbeat a task that the same session **already claimed explicitly**.
+
+Automatic adapters never:
+
+- turn every user prompt into a task;
+- claim the newest pending task at startup;
+- release work at every model `Stop` event;
+- infer that work is complete from natural-language output;
+- overwrite another client's lease.
+
+## Explicit ownership flow
+
+```text
+Codex opens repository A
+  -> SessionStart reads tasks and observations only
+  -> checkpoint("Implement parser", path="src/parser.py")
+  -> Codex now owns that explicit task lease
+  -> tool observations refresh only that existing lease
+  -> handoff(task_id, "Parser complete; edge tests remain")
+
+Gemini CLI opens repository A
+  -> SessionStart reads the released task and Git observations
+  -> checkpoint("Implement parser", path="src/parser.py")
+  -> resumes the same task instead of creating a duplicate
+```
+
+If an agent disappears without a handoff, its lease eventually expires and normal recovery makes the work available again.
+
+## Built-in client adapters
+
+| Client | User configuration | Passive events |
+|---|---|---|
+| Codex | `~/.codex/hooks.json` | session start, tool result, pre-compact |
+| Claude Code | `~/.claude/settings.json` | session start, tool success/failure, pre-compact, session end |
+| Gemini CLI | `~/.gemini/settings.json` | session start, after-tool, pre-compress, session end |
+| Kimi Code | `~/.kimi-code/config.toml` | session start, tool success/failure, pre-compact, session end |
+
+Kimi's user-level MCP entry is merged into `~/.kimi-code/mcp.json`. The other clients use their supported MCP registration commands. Only entries containing `djobs.hook_entrypoint` or the marked Kimi block are replaced or removed.
+
+For Codex, review and trust newly installed commands through `/hooks` when prompted. djobs does not bypass host security approval.
+
+### Configure one client
 
 ```powershell
 djobs setup codex
 djobs setup claude
+djobs setup gemini
+djobs setup kimi
 ```
 
 ### Repair or remove only djobs
 
 ```powershell
 djobs repair all
-djobs remove codex
-djobs remove claude
+djobs remove gemini
+djobs remove kimi
 ```
 
-Setup registers the `djobs` MCP server and safely merges lifecycle hooks into:
+Malformed JSON is never replaced automatically, even during repair.
 
-- Codex: `~/.codex/hooks.json`
-- Claude Code: `~/.claude/settings.json`
+## Any other agent or future client
 
-Only handler definitions containing `djobs.hook_entrypoint` are replaced or removed. Existing MCP servers, settings, permissions, and unrelated hooks remain untouched. When a host CLI is unavailable or rejects automatic MCP setup, djobs prints a one-line registration command instead of guessing.
+The normalized event entrypoint accepts an arbitrary client identifier:
 
-## Automatic lifecycle
+```bash
+# The client sends its native hook JSON on stdin.
+djobs agent-event session-start --client my-agent
+djobs agent-event post --client my-agent
+djobs agent-event post-failure --client my-agent
+djobs agent-event pre-compact --client my-agent
+djobs agent-event session-end --client my-agent
+```
 
-The default setup installs five host events:
+An adapter only maps native event names and payload fields to this command. It does not implement queue logic.
 
-| Event | Automatic behavior |
-|---|---|
-| `SessionStart` | Resolve the current Git repository, recover expired leases, synchronize compact state, and claim the newest resumable task. |
-| `UserPromptSubmit` | Create or resume one repository-scoped coding task for the session and heartbeat its lease. |
-| `PreToolUse` | Ensure resumable work is claimed and refresh its lease immediately before Bash execution. |
-| `PostToolUse` | Record bounded tool evidence and refresh the owned task lease after Bash or file edits. |
-| `Stop` | Release owned work with bounded turn evidence so another agent can claim it immediately. |
+For a client with no hook mechanism at all, use the agent-independent Git sidecar:
 
-The lifecycle code is invoked by the host, not by model judgment. MCP tools remain available for explicit refreshes, named checkpoints, authoritative completion, and backward compatibility.
+```bash
+djobs observe /path/to/repository --watch
+```
 
-## Manual tools for overrides and diagnostics
+The sidecar records real working-tree transitions. It cannot know the model's private prompt or reliably attribute a change to a process, but the next agent still receives grounded file-change evidence instead of an invented task summary.
 
-The compact coding MCP exposes four tools:
+MCP itself cannot force an arbitrary client to call a tool at session start. Therefore djobs does not claim that every possible client gets automatic context injection with no adapter. The universal guarantees are the shared data format, Git observation fallback, MCP/CLI access, and explicit ownership semantics.
+
+## Compact MCP tools
+
+The default server exposes four tools:
 
 | Tool | Purpose |
 |---|---|
-| `sync_workspace()` | Explicitly refresh current repository state under a token budget. Normal startup sync is automatic. |
-| `checkpoint(summary, path?, details?)` | Deliberately split work into a named checkpoint or claim a specific path beyond the automatic session task. |
-| `handoff(task_id, evidence, completed?)` | Explicitly release or complete work with authoritative bounded evidence. |
-| `resume_delta(correlation_id, ...)` | Backward-compatible revision recovery for existing integrations. |
+| `sync_workspace()` | Read tasks plus recent observations for the current repository under a token budget. It never claims work. |
+| `checkpoint(summary, path?, details?)` | Deliberately create/resume and atomically claim one unit of work. |
+| `handoff(task_id, evidence, completed?)` | Explicitly release or complete owned work with bounded evidence. |
+| `resume_delta(correlation_id, ...)` | Backward-compatible revision recovery for integrations already storing IDs. |
 
-The lower-level queue API remains available through `djobs-mcp-full` for advanced clients that explicitly need enqueue, claim, heartbeat, lease, audit, fleet, and health tools.
+Lower-level queue tools remain available through `djobs-mcp-full`.
 
-## Repository detection and isolation
+## Repository detection
 
-The workspace resolver uses this order:
+The workspace resolver uses:
 
-1. MCP client roots.
-2. A cwd supplied by the client or hook event.
-3. The enclosing Git repository root.
-4. The server's startup directory.
+1. MCP client roots;
+2. cwd supplied by a client, adapter, or event;
+3. the enclosing Git repository root;
+4. the process startup directory.
 
-Starting from `repo/src/feature` resolves to `repo`. Windows `\` and `/` spellings compare equally, drive letters are case-insensitive, and trailing separators are ignored. New records use a deterministic repository ID, while reads also search compatible legacy path-based `correlation_id` values.
-
-Different repositories remain isolated even though Codex and Claude Code share one local database.
-
-## Concurrency and recovery
-
-Each agent registration records its host type, session identity, repository, and last-seen time. Claims use an immediate SQLite transaction. A running task has an expiring lease and heartbeat. If an agent crashes or disappears, expired work is recovered and can be claimed by the next session.
-
-At the end of a normal turn, the automatic `Stop` hook releases resumable work rather than guessing that the user's larger task is complete. Use `handoff(..., completed=True)` when completion should be recorded authoritatively.
+Starting in `repo/src/feature` resolves to `repo`. Windows `\` and `/` spellings compare equally, drive letters are case-insensitive, and trailing separators are ignored. Different repositories remain isolated in the shared database.
 
 ## Local-first and fail-open behavior
 
-- The default database is `~/.djobs/global.db`, or `DJOBS_DB` when explicitly set.
-- SQLite uses WAL mode and a busy timeout for concurrent local clients.
-- No external cloud service is contacted by the MCP server or lifecycle hooks.
-- Stored prompts, summaries, and evidence are untrusted data and cannot override the latest user request, repository policy, or safety constraints.
-- Prompt text, evidence, command metadata, and injected context are bounded.
-- Empty synchronization produces a very small response.
-- Hook and storage errors return success with no injected instruction, allowing the original coding task to continue.
-- Existing project-level command-wrapper compatibility continues to preserve command stdout, stderr, and exit codes.
+- Default database: `~/.djobs/global.db`, overridden by `DJOBS_DB`.
+- No cloud account, Redis, or remote service is required.
+- Stored task text and observations are untrusted data, never executable instructions.
+- Tool output, metadata, and injected context are bounded.
+- Git observations contain concise status summaries, not full file contents.
+- Hook, sidecar, or storage failure does not block the coding client.
+- No prompt text is automatically persisted as a task.
 
 ## Compatibility status
 
 | Surface | Validation level |
 |---|---|
-| Repository resolver, shared SQLite, leases, isolation, and token bounds | Executed automated Python tests. |
-| Codex-to-Claude automatic prompt/tool/stop/session handoff | Executed integration simulation using separate host sessions against one real SQLite database. |
-| Codex user-hook merge and command generation | Executed unit tests against the documented `~/.codex/hooks.json` schema. A real Codex host was not available in the isolated build environment. |
-| Claude Code user-hook merge and command generation | Executed unit tests against the documented `~/.claude/settings.json` schema. A real Claude Code host was not available in the isolated build environment. |
-| Codex hook trust | Requires one user review in `/hooks`; djobs does not and should not bypass this security step. |
-| Native Windows host execution | Commands include an explicit Codex `commandWindows` override; real native-host execution still requires machine-level verification. |
-| Other MCP hosts | The MCP protocol remains compatible, but automatic lifecycle setup currently targets Codex and Claude Code. |
+| Repository resolution, shared SQLite, atomic claims, leases, isolation, token bounds | Automated Python tests. |
+| Passive observation versus explicit ownership | Automated integration tests against a real SQLite database. |
+| Arbitrary client identity and normalized event protocol | Automated tests. |
+| Codex, Claude, Gemini, and Kimi configuration merge | Unit tests against their documented configuration shapes. |
+| Real installed clients and native Windows/macOS/Linux behavior | Requires machine-level verification; not claimed by the isolated build environment. |
+| Unsupported clients | MCP/CLI and Git sidecar work; automatic context injection requires a thin adapter because no universal lifecycle-hook standard exists. |
 
-## Advanced and backward-compatible use
+## Advanced use
 
 ### Explicit database
 
@@ -142,13 +209,11 @@ djobs-mcp
 
 ### Per-repository database
 
-Per-repository mode remains available for advanced users:
-
 ```powershell
 djobs mcp --db .djobs/state.db
 ```
 
-Do not commit the database. The normal zero-config setup uses the shared user database plus repository scoping.
+Do not commit the database.
 
 ### Full MCP surface
 
@@ -158,23 +223,7 @@ djobs-mcp-full
 python -m djobs.delta_mcp
 ```
 
-Existing calls to `resume_delta(correlation_id=...)`, `resume_session`, enqueue/complete/fail, claim/heartbeat/release, and the Python queue APIs remain supported on their advanced entry points.
-
-### Existing VS Code workflow
-
-`djobs init`, `djobs install-mcp`, the VS Code extension, project hooks, dashboard, receipt, audit, and token-savings commands remain available. `djobs setup all` is the simpler user-scoped Codex/Claude path and does not write files into every project.
-
-## Useful commands
-
-```powershell
-djobs doctor
-djobs receipt --correlation-id <legacy-or-explicit-id>
-djobs audit
-djobs dashboard
-djobs token-savings
-djobs pause
-djobs unpause
-```
+Existing `correlation_id`, `resume_delta`, queue, audit, receipt, dashboard, pause, and token-savings interfaces remain available.
 
 ## Development
 

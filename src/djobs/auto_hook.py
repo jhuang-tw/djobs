@@ -31,8 +31,8 @@ _VALID_MODES = {"off", "smart", "all"}
 _MAX_COMMAND_CHARS = 4000
 
 _STATE_ONLY_RE = re.compile(
-    r"^\s*(?:cd|pushd|popd|export|source|alias|unalias|set\s+[A-Za-z_][A-Za-z0-9_]*=)\b"
-    r"[^;&|]*$",
+    r"^\s*(?:cd|pushd|popd|export|source|alias|unalias)\b[^;&|]*$"
+    r"|^\s*set\s+[A-Za-z_][A-Za-z0-9_]*=.*$",
     re.IGNORECASE,
 )
 
@@ -157,7 +157,8 @@ def _payload_session_id(payload: dict[str, Any]) -> str | None:
 
 def _payload_timestamp(payload: dict[str, Any]) -> str | int | float | None:
     raw = payload.get("timestamp")
-    return raw if isinstance(raw, (str, int, float)) and not isinstance(raw, bool) else None
+    valid_type = isinstance(raw, (str, int, float)) and not isinstance(raw, bool)
+    return raw if valid_type else None
 
 
 def _tool_name(payload: dict[str, Any]) -> str:
@@ -198,23 +199,27 @@ def _is_state_only(command: str) -> bool:
     return bool(_STATE_ONLY_RE.match(command))
 
 
+def _is_read_only(command: str) -> bool:
+    return any(
+        command == prefix.rstrip() or command.startswith(prefix)
+        for prefix in _READ_ONLY_PREFIXES
+    )
+
+
 def _looks_meaningful(command: str) -> bool:
     compact = " ".join(command.strip().lower().split())
     if not compact:
         return False
     if compact == "djobs" or compact.startswith("djobs "):
         return False
-    if _is_state_only(compact):
-        return False
-    if any(compact == prefix.rstrip() or compact.startswith(prefix) for prefix in _READ_ONLY_PREFIXES):
+    if _is_state_only(compact) or _is_read_only(compact):
         return False
 
     padded = f" {compact}"
     if any(pattern in padded for pattern in _MEANINGFUL_PATTERNS):
         return True
-    if len(compact) >= 160 and any(operator in compact for operator in ("&&", "||", ";")):
-        return True
-    return False
+    operators = ("&&", "||", ";")
+    return len(compact) >= 160 and any(item in compact for item in operators)
 
 
 def _should_rewrite(command: str, mode: str) -> bool:
@@ -259,7 +264,9 @@ def rewrite_pre_tool_payload(
 
     resolved_mode = _normalise_mode(mode)
     cwd = _payload_cwd(payload)
-    if is_paused(_resolve_db_path(cwd)) or not _should_rewrite(command, resolved_mode):
+    if is_paused(_resolve_db_path(cwd)):
+        return {}
+    if not _should_rewrite(command, resolved_mode):
         return {}
 
     envelope = {
@@ -276,7 +283,7 @@ def rewrite_pre_tool_payload(
 
 def _command_label(command: str) -> str:
     label = " ".join(command.strip().split())
-    return label if len(label) <= 180 else f"{label[:179]}…"
+    return label if len(label) <= 180 else f"{label[:177]}..."
 
 
 def _execute_command(command: str, shell: str, cwd: str) -> int:
@@ -285,7 +292,14 @@ def _execute_command(command: str, shell: str, cwd: str) -> int:
         if executable is None:
             print("djobs hook: PowerShell executable not found", file=sys.stderr)
             return 127
-        argv = [executable, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command]
+        argv = [
+            executable,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            command,
+        ]
     else:
         executable = shutil.which("bash")
         if executable is not None:
@@ -303,9 +317,13 @@ def run_wrapped_payload(payload: dict[str, Any]) -> int:
     command = payload.get("command")
     shell = payload.get("shell")
     cwd = payload.get("cwd")
-    if not isinstance(command, str) or not isinstance(shell, str) or not isinstance(cwd, str):
+    valid = isinstance(command, str) and isinstance(shell, str) and isinstance(cwd, str)
+    if not valid:
         print("djobs hook: invalid wrapped command payload", file=sys.stderr)
         return 2
+    assert isinstance(command, str)
+    assert isinstance(shell, str)
+    assert isinstance(cwd, str)
 
     task_id: str | None = None
     queue: QueueService | None = None
@@ -329,7 +347,7 @@ def run_wrapped_payload(payload: dict[str, Any]) -> int:
                 max_attempts=1,
             )
             task_id = job.id
-        except Exception as exc:  # checkpoint failure must never block the user's command
+        except Exception as exc:  # checkpoint failures must not block user commands
             _debug(f"checkpoint creation failed: {exc}")
 
     try:
@@ -346,10 +364,16 @@ def run_wrapped_payload(payload: dict[str, Any]) -> int:
             if return_code == 0:
                 queue.complete(
                     task_id,
-                    evidence=f"automatic command checkpoint: exit 0 in {elapsed:.2f}s",
+                    evidence=(
+                        "automatic command checkpoint: "
+                        f"exit 0 in {elapsed:.2f}s"
+                    ),
                 )
             else:
-                queue.fail(task_id, f"automatic command checkpoint: exit {return_code}")
+                queue.fail(
+                    task_id,
+                    f"automatic command checkpoint: exit {return_code}",
+                )
         except Exception as exc:
             _debug(f"checkpoint finalization failed: {exc}")
     return return_code
@@ -386,15 +410,21 @@ def session_start_context(payload: dict[str, Any]) -> dict[str, Any]:
         label = summary if isinstance(summary, str) and summary else job.type
         lines.append(f"- [{job.status.value}] {label}")
     if len(jobs) > len(shown):
-        lines.append(f"- ... and {len(jobs) - len(shown)} more; use resume_capsule for details.")
+        remaining = len(jobs) - len(shown)
+        lines.append(f"- ... and {remaining} more; use resume_capsule for details.")
     return {"additionalContext": "\n".join(lines)}
 
 
 def _hook_config(mode: str) -> dict[str, Any]:
-    bash_guard = "if command -v djobs >/dev/null 2>&1; then djobs hook {event} || true; fi"
+    bash_guard = (
+        "if command -v djobs >/dev/null 2>&1; "
+        "then djobs hook {event} || true; fi"
+    )
     powershell_guard = (
         "if (Get-Command djobs -ErrorAction SilentlyContinue) {{ "
-        "djobs hook {event}; if ($LASTEXITCODE -ne 0) {{ exit 0 }} }}"
+        "djobs hook {event}; "
+        "if ($LASTEXITCODE -ne 0) {{ exit 0 }} "
+        "}}"
     )
 
     def command_hook(event: str, *, matcher: str | None = None) -> dict[str, Any]:
@@ -438,7 +468,8 @@ def install_hooks(
         try:
             parsed = json.loads(existing)
         except json.JSONDecodeError as exc:
-            raise ValueError(f"refusing to replace malformed hook config {target}: {exc}") from exc
+            message = f"refusing to replace malformed hook config {target}: {exc}"
+            raise ValueError(message) from exc
         if isinstance(parsed, dict) and parsed.get("version") == 1:
             print(f"Updating djobs-managed hook config in {target}")
         else:
@@ -453,7 +484,7 @@ def install_hooks(
 def hook_doctor(root: Path | None = None) -> tuple[bool, str]:
     target = (root or Path.cwd()) / _HOOK_RELATIVE_PATH
     if not target.exists():
-        return False, f"{target} not found — run 'djobs hook install'"
+        return False, f"{target} not found - run 'djobs hook install'"
     try:
         data = json.loads(target.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
@@ -490,22 +521,53 @@ def _cmd_session_start() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="djobs hook", description="Automatic agent hook support")
+    parser = argparse.ArgumentParser(
+        prog="djobs hook",
+        description="Automatic agent hook support",
+    )
     subparsers = parser.add_subparsers(dest="hook_command", required=True)
 
-    install_parser = subparsers.add_parser("install", help="Install automatic repository hooks")
-    install_parser.add_argument("--root", default=".", help="Repository root (default: current)")
-    install_parser.add_argument("--mode", choices=sorted(_VALID_MODES), default="smart")
+    install_parser = subparsers.add_parser(
+        "install",
+        help="Install automatic repository hooks",
+    )
+    install_parser.add_argument(
+        "--root",
+        default=".",
+        help="Repository root (default: current)",
+    )
+    install_parser.add_argument(
+        "--mode",
+        choices=sorted(_VALID_MODES),
+        default="smart",
+    )
     install_parser.add_argument("--force", action="store_true")
 
     subparsers.add_parser("pre", help="Handle a preToolUse event from stdin")
-    subparsers.add_parser("session-start", help="Handle a sessionStart event from stdin")
+    subparsers.add_parser(
+        "session-start",
+        help="Handle a sessionStart event from stdin",
+    )
 
-    run_parser = subparsers.add_parser("run", help="Run a hook-rewritten shell command")
-    run_parser.add_argument("--payload", required=True, help="URL-safe encoded command envelope")
+    run_parser = subparsers.add_parser(
+        "run",
+        help="Run a hook-rewritten shell command",
+    )
+    run_parser.add_argument(
+        "--payload",
+        required=True,
+        help="URL-safe encoded command envelope",
+    )
 
-    doctor_parser = subparsers.add_parser("doctor", help="Check automatic hook installation")
-    doctor_parser.add_argument("--root", default=".", help="Repository root (default: current)")
+    doctor_parser = subparsers.add_parser(
+        "doctor",
+        help="Check automatic hook installation",
+    )
+    doctor_parser.add_argument(
+        "--root",
+        default=".",
+        help="Repository root (default: current)",
+    )
 
     args = parser.parse_args(argv)
     if args.hook_command == "install":

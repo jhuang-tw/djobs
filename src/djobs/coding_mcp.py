@@ -33,6 +33,31 @@ async def _roots(context: Context) -> list[Any]:
     return list(roots) if roots is not None else []
 
 
+def _field(value: Any, name: str) -> Any:
+    if isinstance(value, dict):
+        return value.get(name)
+    return getattr(value, name, None)
+
+
+def _cwd(context: Context) -> str | None:
+    """Read an optional host/request cwd without exposing it in the tool schema."""
+
+    request_context = getattr(context, "request_context", None)
+    request = _field(request_context, "request")
+    candidates = (
+        _field(request_context, "meta"),
+        request,
+        _field(request, "params"),
+        _field(_field(request, "params"), "_meta"),
+    )
+    for source in candidates:
+        for name in ("cwd", "workingDirectory", "workspaceFolder", "rootPath"):
+            value = _field(source, name)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return None
+
+
 @_server.tool()
 async def sync_workspace(
     context: Context,
@@ -43,6 +68,7 @@ async def sync_workspace(
 
     return _sync_workspace(
         roots=await _roots(context),
+        cwd=_cwd(context),
         token_budget=token_budget,
         max_items=max_items,
     )
@@ -63,6 +89,7 @@ async def checkpoint(
         path=path,
         details=details,
         roots=await _roots(context),
+        cwd=_cwd(context),
         lease_seconds=lease_seconds,
     )
 
@@ -81,6 +108,7 @@ async def handoff(
         evidence,
         completed=completed,
         roots=await _roots(context),
+        cwd=_cwd(context),
     )
 
 

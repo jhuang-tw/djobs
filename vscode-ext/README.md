@@ -1,88 +1,59 @@
-# djobs
+# djobs — Agent Checkpoints
 
-![djobs - crash-proof task memory for AI coding agents](https://raw.githubusercontent.com/jhuang-tw/djobs/main/vscode-ext/media/banner.png)
+![djobs agent checkpoints](https://raw.githubusercontent.com/jhuang-tw/djobs/main/vscode-ext/media/banner.png)
 
-**Token-saving durable context for your AI coding agent.** djobs gives Codex,
-Claude, Gemini, Copilot, Cursor, Cline, and any MCP-compatible agent durable,
-resumable task memory so long, multi-file work survives IDE crashes, context
-loss, and closed chats - nothing lost, nothing redone, fewer tokens replaying
-finished work.
+**Crash-proof checkpoints and resumable task memory for AI coding agents.**
 
-This extension is the one-click way to set djobs up: it installs and manages the
-runtime for you, wires the MCP server, installs the agent instructions, and adds
-a task sidebar. You do not manage Python or config by hand.
+This extension is the one-click setup and task view for djobs. It installs or
+repairs the runtime, registers the MCP server, installs deterministic lifecycle
+hooks, runs diagnostics, and shows recoverable work in the sidebar.
 
-## Get started
+## Setup
 
-1. Install this extension.
-2. Run **djobs: Set up / Repair djobs** from the Command Palette (or click
-   **Set up djobs** when the extension offers).
-3. Start a new agent session and keep talking normally.
+1. Install the extension.
+2. Run **djobs: Set up / Repair djobs** from the Command Palette.
+3. Start a new compatible agent session and work normally.
 
-The extension does not generate, copy, or open Chat prompts. It wires MCP tools,
-installs agent guidance, and shows durable task state in the sidebar. A
-compatible MCP agent can then call `resume_session`, create djobs tasks before
-multi-step edits, and finish each unit with evidence.
+Meaningful terminal commands are checkpointed before execution. Failed or
+interrupted checkpoints can be injected into the next session; successful
+checkpoints remain auditable without filling the active task view.
 
-After that, keep talking normally: "continue", "fix this", "run tests", "retry",
-"the previous run failed", or "release" are enough. The installed agent guidance
-tells the AI to bring djobs in before editing; you do not need to mention djobs
-in every prompt.
+## What the extension provides
 
-The setup step installs the runtime if needed, registers the MCP server,
-installs the agent guidance block, and verifies everything with `djobs doctor`.
-Use **djobs: Diagnose Setup** anytime to re-check.
+- Automatic `preToolUse` command checkpointing and `sessionStart` recovery setup.
+- MCP server registration for structured multi-file workflows.
+- Current-workspace and global queue views.
+- Pause/resume, archive, delete, history, evidence, and setup diagnostics.
+- Optional prompt actions, disabled by default.
+- Local SQLite storage by default; no hosted service required.
 
-## Compatibility status
+## See the savings
 
-This extension is implemented and tested with **GitHub Copilot in VS Code**.
-djobs is MCP-based and is intended to work with Codex, Claude, Gemini, Cursor,
-Cline, and other MCP-capable coding-agent hosts, but those non-Copilot flows are
-not yet fully end-to-end tested.
+Run in the integrated terminal:
 
-## Upgrading from an older version
+```bash
+djobs gain
+djobs gain --graph
+djobs gain --history
+djobs gain --all --format json
+```
 
-Version 0.8.5 removes the older prompt-driving commands and auto-takeover
-settings. After upgrade, the extension only manages setup, MCP registration,
-diagnostics, and the task sidebar. It also checks the VS Code Marketplace at
-most once per day and tells you when a newer djobs extension version is
-available, because VS Code auto-update can lag or be disabled.
+The report separates automatic checkpoints from structured workflows and labels
+its numbers as estimates rather than provider billing data.
 
-Version 0.8.6 adds visible **Enable Prompt Actions** and **Disable Prompt
-Actions** commands to the sidebar toolbar and Command Palette.
+## Compatibility
 
-Version 0.9.0 adds **Pause djobs** / **Resume djobs** and updates stale Python
-packages automatically when the installed CLI is too old for those commands. It
-also pairs with the new **AI Work Receipt** (`djobs receipt` / the `work_receipt`
-MCP tool), an evidence-backed, git-aware summary of what the agent actually did.
+Automatic hooks, setup, and the sidebar are implemented and tested with GitHub
+Copilot in VS Code. MCP workflows can be used by other MCP-compatible hosts;
+automatic behavior depends on each host's hook protocol and still needs broader
+real-world validation.
 
-Prompt actions are available only if you explicitly enable
-`djobs.promptActions.enabled`. When enabled, the sidebar shows **Prompt Agent to
-Finish Workflow**; when disabled (the default), djobs never opens Chat or asks
-whether to enable prompt actions. Use the sidebar toolbar command **Enable
-Prompt Actions** (play-circle icon) or the Command Palette command **djobs:
-Enable Prompt Actions** to turn it on for the current workspace.
+## Privacy and control
 
-## What the sidebar shows
+Queue data is local unless you configure a shared database. Default MCP write
+actions are conservative. **Pause djobs** disables rewriting and recovery without
+deleting state. Prompt actions remain opt-in.
 
-- djobs tasks grouped by workflow and status.
-- Explicit `djobs: Active/Paused` and `Prompt actions: On/Off` rows, so you can
-   see switch state without guessing from toolbar icons.
-- A **Pause djobs / Resume djobs** toolbar button. Pausing temporarily stops
-  agents from resuming or enqueueing tasks (useful when a stuck task keeps
-  dragging the agent back); it deletes nothing and is reversible.
-- Stale (long-unfinished) and blocked tasks flagged, with one-click archive.
-- Right-click a task to archive it, permanently delete it, view its audit
-   history, copy its ID, or inspect its raw JSON.
-- Skip or archive stale work without asking an agent to do it. Archive keeps the
-   audit trail; delete removes the task and its events.
-- When the current workspace has no active tasks, the empty state explains that
-   tasks appear when an MCP-enabled agent records them.
-
-## Advanced
-
-The extension drives the `djobs` CLI under the hood. If you prefer to manage the
-runtime yourself, install it once globally (`uv tool install djobs` or
-`pipx install djobs` with Python 3.11+) and run `djobs init` in a project; the
-extension will detect and use it. If djobs lives in a non-default interpreter,
-set `djobs.pythonPath` in VS Code settings.
+For commands, architecture, and troubleshooting, use the repository
+[README](https://github.com/jhuang-tw/djobs). Report issues in the repository's
+issue tracker.

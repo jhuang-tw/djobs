@@ -7,18 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Versioning policy
 
-This repository ships two independently versioned artifacts:
-
-- **`djobs` Python package** — the durable queue, MCP server, and CLI. It is
-  **pre-1.0**: the public API may still change between minor versions.
-- **`djobs` VS Code extension** (under `vscode-ext/`) — a thin, read-only
-  sidebar over the CLI. Its UI surface is small and stable, so it carries its
-  own version line and may sit at a higher number than the Python package.
-
-Entries below are tagged `[core]` or `[ext]` when a change applies to only one
-artifact.
+The Python package, VS Code extension, and MCP Registry manifest are released in
+lockstep from the version in `src/djobs/__init__.py`. The project is pre-1.0, so
+public interfaces may still change between minor versions. Entries below use
+`[core]`, `[ext]`, `[docs]`, or `[release]` to identify the affected surface.
 
 ## [Unreleased]
+
+## [0.11.0] - 2026-07-22
+
+### Added
+- `[core]` **Deterministic command checkpoints.** `djobs init` now installs compatible `preToolUse` and `sessionStart` hooks that checkpoint meaningful Bash and PowerShell commands before execution, preserve output and exit status, and restore failed or interrupted work without relying on the model to remember an MCP call.
+- `[core]` **Explainable savings analytics.** Added `djobs gain` with `stats` and `state` aliases, 24-hour, 30-day, and all-time views, source breakdowns, daily history, an ASCII graph, recent records, and JSON export. Values are explicitly labeled estimates rather than provider billing data.
+
+### Changed
+- `[core]` **Cleaner checkpoint lifecycle.** Successful automatic checkpoints are archived after evidence is recorded, while failed and interrupted checkpoints remain visible and recoverable. Hook processing remains fail-open, and custom or global database paths are shared with MCP configuration.
+- `[docs]` **One maintained documentation system.** Rewrote the README, contributor guide, AI contributor rules, release runbook, Marketplace page, package metadata, MCP manifest, and public website around one product description and a conservative compatibility matrix.
+- `[ext]` **Marketplace discoverability.** Renamed the extension surface to Agent Checkpoints, added supported metadata, categories, and search terms, and aligned the extension README with automatic hooks and `djobs gain`.
+
+### Removed
+- `[docs]` **Stale duplicated documentation and scratch tooling.** Removed phase roadmaps, AI handoff snapshots, obsolete architecture and implementation notes, duplicated Durable Coder prompts, machine-specific contributor skills, accidental diff files, and outdated packaging/release scripts that contradicted the current code or release workflow.
 
 ## [0.10.0] - 2026-07-21
 

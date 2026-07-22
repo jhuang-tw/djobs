@@ -5,11 +5,11 @@ build-backend = "hatchling.build"
 [project]
 name = "djobs"
 dynamic = ["version"]
-description = "Durable workflow state and context-efficient MCP orchestration for coding agents."
+description = "Crash-proof checkpoints and resumable task memory for AI coding agents."
 requires-python = ">=3.11"
 license = "MIT"
 readme = "README.md"
-keywords = ["mcp", "mcp-server", "ai-agent", "ai-coding-agent", "codex", "claude-code", "gemini", "copilot", "cursor", "cline", "context-efficiency", "crash-recovery", "workflow-state", "durable", "sqlite", "audit-log"]
+keywords = ["ai-agent", "coding-agent", "agent-checkpoint", "agent-memory", "crash-recovery", "context-recovery", "resumable-workflow", "token-savings", "mcp", "model-context-protocol", "copilot", "claude-code", "codex", "cursor", "cline", "gemini", "multi-agent", "workflow-state", "sqlite"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",

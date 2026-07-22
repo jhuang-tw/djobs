@@ -5,7 +5,19 @@ from __future__ import annotations
 import enum
 
 
-class JobStatus(enum.StrEnum):
+class _StrEnum(str, enum.Enum):
+    """Python 3.10-compatible subset of :class:`enum.StrEnum`.
+
+    Members remain real strings for JSON/database interoperability, while
+    ``str(member)`` and f-string formatting return the stored value just like
+    Python 3.11's ``StrEnum``.
+    """
+
+    def __str__(self) -> str:
+        return str.__str__(self)
+
+
+class JobStatus(_StrEnum):
     """All possible job states.
 
     Phase 1 transitions:
@@ -29,7 +41,7 @@ class JobStatus(enum.StrEnum):
     ARCHIVED = "archived"
 
 
-class AgentStatus(enum.StrEnum):
+class AgentStatus(_StrEnum):
     """Liveness state of a registered agent (Phase M4: agent registry).
 
     online  -> the agent has heartbeated recently and can take work.

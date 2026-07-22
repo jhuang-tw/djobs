@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -79,7 +79,7 @@ def test_retry_or_dead_letter_schedules_retry_when_attempts_remain(tmp_path) -> 
     queue = QueueService(SQLiteJobRepository.from_path(tmp_path / "jobs.db"))
     submitted_job = queue.submit("demo.echo", max_attempts=2)
     claimed_job = queue.claim("worker-1")
-    now = datetime(2026, 5, 23, 1, 2, 3, tzinfo=UTC)
+    now = datetime(2026, 5, 23, 1, 2, 3, tzinfo=timezone.utc)
 
     assert claimed_job is not None
     retry_job = queue.retry_or_dead_letter(claimed_job.id, "temporary outage", now=now)
@@ -114,7 +114,7 @@ def test_promote_due_retries(tmp_path) -> None:
     queue = QueueService(SQLiteJobRepository.from_path(tmp_path / "jobs.db"))
     submitted_job = queue.submit("demo.echo", max_attempts=2)
     claimed_job = queue.claim("worker-1")
-    now = datetime(2026, 5, 23, 1, 2, 3, tzinfo=UTC)
+    now = datetime(2026, 5, 23, 1, 2, 3, tzinfo=timezone.utc)
 
     assert claimed_job is not None
     retry_job = queue.retry_or_dead_letter(claimed_job.id, "temporary outage", now=now)

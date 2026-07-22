@@ -15,7 +15,7 @@ import os
 import random
 import threading
 import time
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from djobs.api.ai_handlers import AI_HANDLERS
@@ -62,7 +62,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     # 1. Batch submit
     # ------------------------------------------------------------------
-    batch_id = f"batch-{datetime.now(UTC).strftime('%H%M%S')}"
+    batch_id = f"batch-{datetime.now(timezone.utc).strftime('%H%M%S')}"
     jobs_spec = [
         {
             "type": "ai.summarize",

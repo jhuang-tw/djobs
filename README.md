@@ -13,7 +13,7 @@ estimated context savings visible.
 [![PyPI](https://img.shields.io/pypi/v/djobs.svg)](https://pypi.org/project/djobs/)
 [![Website](https://img.shields.io/badge/website-GitHub%20Pages-21835b.svg)](https://jhuang-tw.github.io/djobs/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 
 <p align="center">
   <img src="docs/demo.svg" alt="djobs crash recovery demo" width="700">
@@ -40,7 +40,7 @@ cloud service.
 
 ### VS Code and GitHub Copilot
 
-Install the **djobs — Agent Checkpoints** extension from the Marketplace, then
+Install the **djobs — Coding Checkpoints** extension from the Marketplace, then
 run **djobs: Set up / Repair djobs** from the Command Palette.
 
 The extension installs or repairs the Python runtime, registers the MCP server,
@@ -136,6 +136,7 @@ is not presented as proof of full end-to-end validation on every agent.
 
 - Queue data stays local unless you intentionally point clients at a shared database.
 - Default MCP auto-approval is read-only; write tools remain explicit unless enabled.
+- Coding MCP entry points do not start background workers or schedulers; run `djobs serve` explicitly when general-purpose job execution is wanted.
 - `djobs pause` disables rewriting and recovery without deleting state.
 - The local dashboard binds to `127.0.0.1` by default and has no public-auth layer.
 - Tool output is treated as data, not as instructions that override the user.

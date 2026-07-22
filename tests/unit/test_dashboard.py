@@ -6,7 +6,7 @@ import json
 import threading
 import urllib.error
 import urllib.request
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from djobs.dashboard import build_snapshot, make_server, render_html
 from djobs.queue.service import QueueService
@@ -47,7 +47,7 @@ def test_build_snapshot_reaps_stale_agents(tmp_path) -> None:
     queue = _queue(tmp_path)
     queue.register_agent("ghost")
     # Force the agent stale by reaping with a future 'now'.
-    future = datetime.now(UTC) + timedelta(hours=1)
+    future = datetime.now(timezone.utc) + timedelta(hours=1)
     queue.reap_stale_agents(timeout=timedelta(seconds=1), now=future)
 
     snap = build_snapshot(queue)

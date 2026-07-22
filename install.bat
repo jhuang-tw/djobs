@@ -36,7 +36,7 @@ if not defined PY (
 )
 if not defined PY (
     echo [ERROR] Python was not found on PATH.
-    echo         Install Python 3.11+ from https://www.python.org/downloads/
+    echo         Install Python 3.10+ from https://www.python.org/downloads/
     echo         and re-run this script.
     goto :fail
 )
@@ -116,7 +116,7 @@ if not defined PY (
 )
 if not defined PY (
     echo [ERROR] Python was not found on PATH.
-    echo         Install Python 3.11+ from https://www.python.org/downloads/
+    echo         Install Python 3.10+ from https://www.python.org/downloads/
     echo         and re-run this script.
     goto :fail
 )

@@ -14,6 +14,18 @@ public interfaces may still change between minor versions. Entries below use
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-07-22
+
+### Changed
+- `[core]` **Passive coding MCP.** The normal, low-token, and delta-context MCP entry points now initialize only the durable queue and stdio server. They no longer start a worker pool or scheduler behind the coding agent.
+
+### Removed
+- `[core]` **Implicit background polling.** Removed the embedded daemon thread, its two-second worker polling, five-second scheduler polling, built-in handler registration, and process-exit thread cleanup from MCP startup.
+
+### Compatibility
+- `[core]` The standalone `djobs serve` command, `Daemon`, `WorkerPool`, and handler APIs remain available for users who explicitly need general-purpose job execution; only automatic startup inside coding-agent MCP processes was removed.
+- `[core]` **Python 3.10 support.** Lowered the runtime floor from Python 3.11 to 3.10, replaced 3.11-only `datetime.UTC` usage with `timezone.utc`, and added Python 3.10 to the tested CI matrix.
+
 ## [0.12.0] - 2026-07-22
 
 ### Changed

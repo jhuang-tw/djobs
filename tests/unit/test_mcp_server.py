@@ -670,11 +670,11 @@ class TestResumeAnnotations:
 
     def _backdate(self, task_id: str, days: int) -> None:
         """Push a task's created_at into the past (simulates an old workflow)."""
-        from datetime import UTC, datetime, timedelta
+        from datetime import datetime, timedelta, timezone
 
         from djobs.mcp_server import _get_queue
 
-        past = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+        past = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
         repo = _get_queue()._repository
         with repo._lock:
             repo._connection.execute(

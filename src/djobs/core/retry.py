@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 
 @dataclass(frozen=True)
@@ -33,7 +33,7 @@ class RetryPolicy:
 
     def next_run_after(self, attempt: int, now: datetime | None = None) -> datetime:
         """Return the UTC time when the next retry should become eligible."""
-        current_time = now or datetime.now(UTC)
+        current_time = now or datetime.now(timezone.utc)
         if current_time.tzinfo is None:
-            current_time = current_time.replace(tzinfo=UTC)
-        return current_time.astimezone(UTC) + self.calculate_delay(attempt)
+            current_time = current_time.replace(tzinfo=timezone.utc)
+        return current_time.astimezone(timezone.utc) + self.calculate_delay(attempt)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -52,7 +52,7 @@ def test_gain_splits_automatic_and_workflow_savings(tmp_path: Path) -> None:
     report = build_gain_report(
         db,
         correlation_id,
-        now=datetime.now(UTC),
+        now=datetime.now(timezone.utc),
     )
 
     totals = report["all_time"]

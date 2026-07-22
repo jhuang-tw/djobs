@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -71,7 +71,7 @@ class SchedulerLoop:
 
         Returns a :class:`TickResult` summarising what happened.
         """
-        now = now or datetime.now(UTC)
+        now = now or datetime.now(timezone.utc)
         result = TickResult()
 
         try:

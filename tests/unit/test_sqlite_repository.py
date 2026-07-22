@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import threading
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -51,7 +51,7 @@ def test_claim_next_job_returns_none_when_empty(tmp_path) -> None:
 
 def test_future_run_after_job_is_not_claimed(tmp_path) -> None:
     repository = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
-    future_time = datetime.now(UTC) + timedelta(hours=1)
+    future_time = datetime.now(timezone.utc) + timedelta(hours=1)
     repository.create_job(Job(type="demo.echo", run_after=future_time))
 
     assert repository.claim_next_job("worker-1") is None
@@ -96,7 +96,7 @@ def test_mark_retry_scheduled_updates_run_after_and_event(tmp_path) -> None:
     repository = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
     job = repository.create_job(Job(type="demo.echo", max_attempts=2))
     claimed_job = repository.claim_next_job("worker-1")
-    run_after = datetime.now(UTC) + timedelta(seconds=5)
+    run_after = datetime.now(timezone.utc) + timedelta(seconds=5)
 
     assert claimed_job is not None
     retry_job = repository.mark_retry_scheduled(claimed_job.id, "temporary outage", run_after)
@@ -116,11 +116,11 @@ def test_promote_due_retries_moves_job_back_to_pending(tmp_path) -> None:
     repository = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
     job = repository.create_job(Job(type="demo.echo", max_attempts=2))
     claimed_job = repository.claim_next_job("worker-1")
-    run_after = datetime.now(UTC) - timedelta(seconds=1)
+    run_after = datetime.now(timezone.utc) - timedelta(seconds=1)
 
     assert claimed_job is not None
     repository.mark_retry_scheduled(claimed_job.id, "temporary outage", run_after)
-    promoted_jobs = repository.promote_due_retries(now=datetime.now(UTC))
+    promoted_jobs = repository.promote_due_retries(now=datetime.now(timezone.utc))
     stored_job = repository.require_job(job.id)
 
     assert [promoted_job.id for promoted_job in promoted_jobs] == [job.id]
@@ -138,12 +138,12 @@ def test_promote_due_retries_ignores_future_retry(tmp_path) -> None:
     repository = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
     job = repository.create_job(Job(type="demo.echo", max_attempts=2))
     claimed_job = repository.claim_next_job("worker-1")
-    run_after = datetime.now(UTC) + timedelta(minutes=10)
+    run_after = datetime.now(timezone.utc) + timedelta(minutes=10)
 
     assert claimed_job is not None
     repository.mark_retry_scheduled(claimed_job.id, "temporary outage", run_after)
 
-    assert repository.promote_due_retries(now=datetime.now(UTC)) == []
+    assert repository.promote_due_retries(now=datetime.now(timezone.utc)) == []
     assert repository.require_job(job.id).status == JobStatus.RETRY_SCHEDULED
 
 
@@ -380,7 +380,7 @@ def test_mark_stale_agents_offline_reaps_only_stale(tmp_path) -> None:
     assert repository.get_agent("agent-1").status == AgentStatus.ONLINE
 
     # Evaluated far in the future with a tiny timeout, the agent is now stale.
-    future = datetime.now(UTC) + timedelta(hours=1)
+    future = datetime.now(timezone.utc) + timedelta(hours=1)
     reaped = repository.mark_stale_agents_offline(timeout=timedelta(seconds=1), now=future)
     assert {a.id for a in reaped} == {"agent-1"}
     assert repository.get_agent("agent-1").status == AgentStatus.OFFLINE
@@ -389,7 +389,7 @@ def test_mark_stale_agents_offline_reaps_only_stale(tmp_path) -> None:
 def test_reaped_agent_comes_back_online_on_heartbeat(tmp_path) -> None:
     repository = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
     repository.register_agent("agent-1")
-    future = datetime.now(UTC) + timedelta(hours=1)
+    future = datetime.now(timezone.utc) + timedelta(hours=1)
     repository.mark_stale_agents_offline(timeout=timedelta(seconds=1), now=future)
     assert repository.get_agent("agent-1").status == AgentStatus.OFFLINE
 
@@ -401,7 +401,7 @@ def test_list_agents_filters_by_status(tmp_path) -> None:
     repository = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
     repository.register_agent("online-1")
     repository.register_agent("offline-1")
-    future = datetime.now(UTC) + timedelta(hours=1)
+    future = datetime.now(timezone.utc) + timedelta(hours=1)
     # Reap everyone, then bring one back.
     repository.mark_stale_agents_offline(timeout=timedelta(seconds=1), now=future)
     repository.agent_heartbeat("online-1")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -32,7 +33,9 @@ def _cmd_mcp_context_efficient(args: argparse.Namespace) -> None:
     from djobs.mcp_server import configure
 
     if getattr(args, "db", None):
-        configure(args.db)
+        database = str(Path(args.db).expanduser().resolve())
+        os.environ["DJOBS_DB"] = database
+        configure(database)
 
     from djobs.coding_mcp import main as run_mcp_server
 

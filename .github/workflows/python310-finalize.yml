@@ -23,7 +23,7 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Harden datetime import migration
+      - name: Harden compatibility migration
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -38,6 +38,9 @@ jobs:
               'return "from datetime import " + ", ".join(names)',
               'return match.group("indent") + "from datetime import " + ", ".join(names)',
           )
+          # ci.yml is committed separately through the GitHub connector because
+          # the Actions token cannot update workflow files.
+          text = text.replace('    update_ci()\n', '')
           path.write_text(text, encoding='utf-8')
           PY
 
@@ -59,10 +62,8 @@ jobs:
           cat py310-migration-report.txt
           exit 1
 
-      - name: Remove one-shot migration machinery
-        run: |
-          rm tools/apply_python310.py
-          rm .github/workflows/python310-finalize.yml
+      - name: Remove migration script
+        run: rm tools/apply_python310.py
 
       - name: Validate manifests and diff
         run: |
@@ -83,39 +84,17 @@ jobs:
           python -m pip install -e '.[dev,pg]'
 
       - name: Normalize migrated Python files
-        id: normalize
-        continue-on-error: true
         run: |
-          ruff format src/ tests/ > py310-ruff-report.txt 2>&1
-          ruff check --fix src/ tests/ >> py310-ruff-report.txt 2>&1
+          ruff format src/ tests/
+          ruff check --fix src/ tests/
 
-      - name: Upload Ruff report
-        if: steps.normalize.outcome == 'failure'
-        uses: actions/upload-artifact@v4
-        with:
-          name: py310-ruff-report
-          path: py310-ruff-report.txt
-
-      - name: Stop after Ruff failure
-        if: steps.normalize.outcome == 'failure'
+      - name: Validate Python 3.10
         run: |
-          cat py310-ruff-report.txt
-          exit 1
-
-      - name: Compile on Python 3.10
-        run: python -m compileall -q src tests
-
-      - name: Ruff check on Python 3.10 target
-        run: ruff check src/ tests/
-
-      - name: Ruff format check
-        run: ruff format --check src/ tests/
-
-      - name: Mypy with Python 3.10 target
-        run: mypy
-
-      - name: Pytest on Python 3.10
-        run: pytest -q --tb=short
+          python -m compileall -q src tests
+          ruff check src/ tests/
+          ruff format --check src/ tests/
+          mypy
+          pytest -q --tb=short
 
       - name: Validate extension
         working-directory: vscode-ext
@@ -133,28 +112,10 @@ jobs:
           ! grep -R -n -E 'from datetime import[^$]*\bUTC\b' src tests
 
       - name: Commit finalized compatibility update
-        id: publish
-        continue-on-error: true
         run: |
-          {
-            git status --short
-            git config user.name 'github-actions[bot]'
-            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-            git add -A
-            git diff --cached --stat
-            git commit -m 'compat: support Python 3.10 and newer'
-            git push origin HEAD:refactor/remove-mcp-daemon
-          } > py310-publish-report.txt 2>&1
-
-      - name: Upload publish report
-        if: steps.publish.outcome == 'failure'
-        uses: actions/upload-artifact@v4
-        with:
-          name: py310-publish-report
-          path: py310-publish-report.txt
-
-      - name: Stop after publish failure
-        if: steps.publish.outcome == 'failure'
-        run: |
-          cat py310-publish-report.txt
-          exit 1
+          rm -f py310-*.txt
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'compat: support Python 3.10 and newer'
+          git push origin HEAD:refactor/remove-mcp-daemon

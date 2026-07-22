@@ -112,35 +112,10 @@ jobs:
         run: ruff format --check src/ tests/
 
       - name: Mypy with Python 3.10 target
-        id: mypy310
-        continue-on-error: true
-        run: mypy > py310-mypy-report.txt 2>&1
-
-      - name: Upload mypy report
-        if: steps.mypy310.outcome == 'failure'
-        uses: actions/upload-artifact@v4
-        with:
-          name: py310-mypy-report
-          path: py310-mypy-report.txt
+        run: mypy
 
       - name: Pytest on Python 3.10
-        id: pytest310
-        continue-on-error: true
-        run: pytest -q --tb=short > py310-pytest-report.txt 2>&1
-
-      - name: Upload pytest report
-        if: steps.pytest310.outcome == 'failure'
-        uses: actions/upload-artifact@v4
-        with:
-          name: py310-pytest-report
-          path: py310-pytest-report.txt
-
-      - name: Stop after Python 3.10 validation failure
-        if: steps.mypy310.outcome == 'failure' || steps.pytest310.outcome == 'failure'
-        run: |
-          test ! -f py310-mypy-report.txt || cat py310-mypy-report.txt
-          test ! -f py310-pytest-report.txt || cat py310-pytest-report.txt
-          exit 1
+        run: pytest -q --tb=short
 
       - name: Validate extension
         working-directory: vscode-ext
@@ -158,9 +133,28 @@ jobs:
           ! grep -R -n -E 'from datetime import[^$]*\bUTC\b' src tests
 
       - name: Commit finalized compatibility update
+        id: publish
+        continue-on-error: true
         run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
-          git commit -m 'compat: support Python 3.10 and newer'
-          git push origin HEAD:refactor/remove-mcp-daemon
+          {
+            git status --short
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add -A
+            git diff --cached --stat
+            git commit -m 'compat: support Python 3.10 and newer'
+            git push origin HEAD:refactor/remove-mcp-daemon
+          } > py310-publish-report.txt 2>&1
+
+      - name: Upload publish report
+        if: steps.publish.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: py310-publish-report
+          path: py310-publish-report.txt
+
+      - name: Stop after publish failure
+        if: steps.publish.outcome == 'failure'
+        run: |
+          cat py310-publish-report.txt
+          exit 1

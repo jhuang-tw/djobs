@@ -1,0 +1,68 @@
+name: Headless VS Code Finalizer
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  finalize:
+    if: github.head_ref == 'refactor/vscode-headless' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refactor/vscode-headless
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Apply headless extension refactor
+        run: python tools/apply_headless_vscode.py
+
+      - name: Remove one-shot migration machinery
+        run: |
+          rm tools/apply_headless_vscode.py
+          rm .github/workflows/headless-vscode-finalize.yml
+
+      - name: Validate manifests
+        run: |
+          python -m json.tool server.json >/dev/null
+          python -m json.tool vscode-ext/package.json >/dev/null
+          python -m json.tool vscode-ext/package-lock.json >/dev/null
+          git diff --check
+
+      - name: Validate Python
+        run: |
+          pip install -e '.[dev,pg]'
+          ruff check src/ tests/
+          ruff format --check src/ tests/
+          mypy
+          pytest -q --tb=short
+
+      - name: Validate VS Code extension
+        working-directory: vscode-ext
+        run: |
+          npm ci
+          npx tsc -p ./ --noEmit
+          npm run compile
+
+      - name: Guard headless architecture
+        run: |
+          test ! -f vscode-ext/src/tasksProvider.ts
+          ! grep -R -n -E 'createTreeView|createStatusBarItem|setInterval|djobsTasks|autoRefreshInterval|promptActions\.enabled|tasksProvider' \
+            vscode-ext/src vscode-ext/package.json README.md docs/index.html
+
+      - name: Commit finalized refactor
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'refactor: make VS Code integration headless'
+          git push origin HEAD:refactor/vscode-headless

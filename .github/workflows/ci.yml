@@ -22,13 +22,27 @@ jobs:
         with:
           python-version: "3.13"
       - name: Apply automatic hook compatibility migration
-        run: python tools/apply_auto_hook_compat.py
+        id: migration
+        continue-on-error: true
+        run: python tools/apply_auto_hook_compat.py > migration.log 2>&1
+      - name: Upload migration diagnostics
+        if: steps.migration.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: hook-migration-diagnostics
+          path: migration.log
+          if-no-files-found: error
+      - name: Stop after migration failure
+        if: steps.migration.outcome == 'failure'
+        run: |
+          cat migration.log
+          exit 1
       - run: pip install ruff==0.15.14
       - name: Apply pinned formatter
         run: ruff format --config pyproject.toml src tests
       - name: Commit product fixes and restore standard CI
         run: |
-          rm tools/apply_auto_hook_compat.py
+          rm tools/apply_auto_hook_compat.py migration.log
           git show origin/main:.github/workflows/ci.yml > .github/workflows/ci.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

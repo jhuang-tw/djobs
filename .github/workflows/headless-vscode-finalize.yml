@@ -74,6 +74,9 @@ jobs:
       - name: Install Python dependencies
         run: pip install -e '.[dev,pg]'
 
+      - name: Format migrated guard
+        run: ruff format tests/unit/test_release_site_guards.py
+
       - name: Ruff lint
         run: ruff check src/ tests/
 

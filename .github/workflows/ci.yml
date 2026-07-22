@@ -99,10 +99,30 @@ jobs:
           exit 1
       - run: pip install ruff==0.15.14
       - name: Apply pinned formatter
-        run: ruff format --config pyproject.toml src tests
+        id: formatter
+        continue-on-error: true
+        run: ruff format --config pyproject.toml src tests > formatter.log 2>&1
+      - name: Upload transformed files and formatter diagnostics
+        if: steps.formatter.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: transformed-hook-diagnostics
+          path: |
+            formatter.log
+            migration.log
+            src/djobs/auto_hook.py
+            src/djobs/entrypoint.py
+            tests/unit/test_auto_hook.py
+            README.md
+          if-no-files-found: error
+      - name: Stop after formatter failure
+        if: steps.formatter.outcome == 'failure'
+        run: |
+          cat formatter.log
+          exit 1
       - name: Commit product fixes and restore standard CI
         run: |
-          rm tools/apply_auto_hook_compat.py migration.log
+          rm tools/apply_auto_hook_compat.py migration.log formatter.log
           git show origin/main:.github/workflows/ci.yml > .github/workflows/ci.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

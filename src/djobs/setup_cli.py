@@ -1,8 +1,9 @@
-"""Idempotent one-time MCP and lifecycle-hook setup for Codex and Claude Code."""
+"""One-time MCP plus passive-observation setup for major coding-agent clients."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shlex
 import shutil
@@ -17,6 +18,7 @@ from djobs.workspace import shared_db_path
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 Which = Callable[[str], str | None]
+_CLIENTS = ("codex", "claude", "gemini", "kimi")
 
 
 @dataclass(frozen=True)
@@ -44,17 +46,23 @@ def _quoted(command: Sequence[str]) -> str:
 
 
 def setup_command(host: str, db: Path, server: Sequence[str] | None = None) -> list[str]:
-    """Build a copyable user-scope MCP registration command for one host."""
+    """Build a copyable user-scope MCP registration command where one exists."""
 
     server_command = list(server or _server_command())
-    env_args = [
-        "--env",
-        f"DJOBS_DB={db.expanduser().resolve()}",
-        "--env",
-        f"DJOBS_AGENT_TYPE={host}",
-    ]
+    database = db.expanduser().resolve()
     if host == "codex":
-        return ["codex", "mcp", "add", "djobs", *env_args, "--", *server_command]
+        return [
+            "codex",
+            "mcp",
+            "add",
+            "djobs",
+            "--env",
+            f"DJOBS_DB={database}",
+            "--env",
+            "DJOBS_AGENT_TYPE=codex",
+            "--",
+            *server_command,
+        ]
     if host == "claude":
         return [
             "claude",
@@ -63,10 +71,29 @@ def setup_command(host: str, db: Path, server: Sequence[str] | None = None) -> l
             "djobs",
             "--scope",
             "user",
-            *env_args,
+            "--env",
+            f"DJOBS_DB={database}",
+            "--env",
+            "DJOBS_AGENT_TYPE=claude",
             "--",
             *server_command,
         ]
+    if host == "gemini":
+        return [
+            "gemini",
+            "mcp",
+            "add",
+            "--scope",
+            "user",
+            "--env",
+            f"DJOBS_DB={database}",
+            "--env",
+            "DJOBS_AGENT_TYPE=gemini",
+            "djobs",
+            *server_command,
+        ]
+    if host == "kimi":
+        return []
     raise ValueError(f"unsupported host: {host}")
 
 
@@ -85,8 +112,93 @@ def _run(
 
 
 def _exists(host: Host, *, runner: Runner = subprocess.run) -> bool:
+    if host.name == "gemini":
+        result = _run([host.executable, "mcp", "list"], runner=runner)
+        return result.returncode == 0 and "djobs" in result.stdout.lower()
     result = _run([host.executable, "mcp", "get", "djobs"], runner=runner)
     return result.returncode == 0
+
+
+def _remove_command(host: Host) -> list[str]:
+    if host.name == "gemini":
+        return [host.executable, "mcp", "remove", "djobs", "--scope", "user"]
+    return [host.executable, "mcp", "remove", "djobs"]
+
+
+def _kimi_mcp_path(home: Path | None = None) -> Path:
+    return (home or Path.home()) / ".kimi-code" / "mcp.json"
+
+
+def _load_json_object(path: Path) -> dict[str, object]:
+    if not path.exists():
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"refusing to modify malformed JSON at {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"refusing to modify non-object JSON at {path}")
+    return value
+
+
+def _install_kimi_mcp(
+    database: Path,
+    server: Sequence[str] | None,
+    *,
+    home: Path | None,
+) -> dict[str, object]:
+    path = _kimi_mcp_path(home)
+    document = _load_json_object(path)
+    servers = document.get("mcpServers")
+    if servers is None:
+        servers = {}
+        document["mcpServers"] = servers
+    if not isinstance(servers, dict):
+        raise ValueError(f"the mcpServers field in {path} is not an object")
+    command = list(server or _server_command())
+    desired = {
+        "command": command[0],
+        "args": command[1:],
+        "env": {
+            "DJOBS_DB": str(database.expanduser().resolve()),
+            "DJOBS_AGENT_TYPE": "kimi",
+        },
+    }
+    before = json.dumps(document, ensure_ascii=False, sort_keys=True)
+    servers["djobs"] = desired
+    after = json.dumps(document, ensure_ascii=False, sort_keys=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if before != after or not path.exists():
+        content = json.dumps(document, ensure_ascii=False, indent=2) + "\n"
+        path.write_text(content, encoding="utf-8")
+        status = "configured"
+    else:
+        status = "unchanged"
+    return {"status": status, "path": str(path)}
+
+
+def _remove_kimi_mcp(*, home: Path | None) -> dict[str, object]:
+    path = _kimi_mcp_path(home)
+    if not path.exists():
+        return {"status": "absent", "path": str(path)}
+    document = _load_json_object(path)
+    servers = document.get("mcpServers")
+    if not isinstance(servers, dict) or "djobs" not in servers:
+        return {"status": "absent", "path": str(path)}
+    servers.pop("djobs", None)
+    if not servers:
+        document.pop("mcpServers", None)
+    path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return {"status": "removed", "path": str(path)}
+
+
+def _kimi_mcp_installed(*, home: Path | None) -> bool:
+    try:
+        document = _load_json_object(_kimi_mcp_path(home))
+    except ValueError:
+        return False
+    servers = document.get("mcpServers")
+    return isinstance(servers, dict) and isinstance(servers.get("djobs"), dict)
 
 
 def configure_host(
@@ -99,7 +211,7 @@ def configure_host(
     server: Sequence[str] | None = None,
     home: Path | None = None,
 ) -> dict[str, object]:
-    """Configure MCP plus deterministic hooks while preserving unrelated config."""
+    """Configure MCP plus a thin observation adapter, preserving unrelated config."""
 
     database = db or shared_db_path()
     host = _host(host_name, which=which)
@@ -108,38 +220,40 @@ def configure_host(
         return {
             "host": host_name,
             "status": "manual",
-            "command": _quoted(command),
-            "message": f"{host_name} CLI was not found; lifecycle hooks were not installed",
+            "command": _quoted(command) if command else "",
+            "message": f"{host_name} CLI was not found; no client configuration was changed",
         }
 
-    mcp_status = "unchanged"
-    mcp_message = "djobs MCP is already registered"
-    already_registered = _exists(host, runner=runner)
-    if already_registered and repair:
-        remove = _run([host.executable, "mcp", "remove", "djobs"], runner=runner)
-        if remove.returncode != 0:
-            return {
-                "host": host_name,
-                "status": "manual",
-                "command": _quoted(command),
-                "message": remove.stderr.strip() or "could not remove the old djobs entry",
-            }
-        already_registered = False
-
-    if not already_registered:
-        executable_command = [host.executable, *command[1:]]
-        result = _run(executable_command, runner=runner)
-        if result.returncode != 0:
-            return {
-                "host": host_name,
-                "status": "manual",
-                "command": _quoted(command),
-                "message": result.stderr.strip() or result.stdout.strip() or "registration failed",
-            }
-        mcp_status = "configured"
-        mcp_message = "registered the shared local djobs MCP"
-
     try:
+        if host_name == "kimi":
+            mcp = _install_kimi_mcp(database, server, home=home)
+            mcp_status = str(mcp["status"])
+            mcp_message = f"Kimi MCP {mcp_status} at {mcp['path']}"
+        else:
+            registered = _exists(host, runner=runner)
+            if registered and repair:
+                remove = _run(_remove_command(host), runner=runner)
+                if remove.returncode != 0:
+                    raise ValueError(remove.stderr.strip() or "could not remove old djobs MCP")
+                registered = False
+            if registered:
+                mcp_status = "unchanged"
+                mcp_message = "djobs MCP is already registered"
+            else:
+                executable_command = [host.executable, *command[1:]]
+                result = _run(executable_command, runner=runner)
+                if result.returncode != 0:
+                    return {
+                        "host": host_name,
+                        "status": "manual",
+                        "command": _quoted(command),
+                        "message": result.stderr.strip()
+                        or result.stdout.strip()
+                        or "registration failed",
+                    }
+                mcp_status = "configured"
+                mcp_message = "registered the shared local djobs MCP"
+
         hook_result = install_host_hooks(
             host_name,
             database,
@@ -151,8 +265,8 @@ def configure_host(
         return {
             "host": host_name,
             "status": "manual",
-            "command": _quoted(command),
-            "message": f"{mcp_message}; hook setup needs review: {exc}",
+            "command": _quoted(command) if command else "",
+            "message": f"configuration needs review: {exc}",
         }
 
     overall = "configured" if "configured" in {mcp_status, hook_result["status"]} else "unchanged"
@@ -162,7 +276,7 @@ def configure_host(
         "status": overall,
         "hooks": hook_result,
         "message": (
-            f"{mcp_message}; automatic session/prompt/tool/stop hooks "
+            f"{mcp_message}; passive session/tool observation adapter "
             f"{hook_result['status']} at {hook_result['path']}.{trust_note}"
         ),
     }
@@ -177,6 +291,17 @@ def remove_host(
 ) -> dict[str, object]:
     hook_result = remove_host_hooks(host_name, home=home)
     host = _host(host_name, which=which)
+    if host_name == "kimi":
+        try:
+            mcp = _remove_kimi_mcp(home=home)
+        except ValueError as exc:
+            return {"host": host_name, "status": "error", "message": str(exc)}
+        overall = "removed" if "removed" in {mcp["status"], hook_result["status"]} else "absent"
+        return {
+            "host": host_name,
+            "status": overall,
+            "message": f"Kimi MCP is {mcp['status']}; hooks are {hook_result['status']}",
+        }
     if host is None:
         return {
             "host": host_name,
@@ -189,16 +314,14 @@ def remove_host(
             "status": hook_result["status"],
             "message": f"djobs MCP was not registered; hooks are {hook_result['status']}",
         }
-    result = _run([host.executable, "mcp", "remove", "djobs"], runner=runner)
+    result = _run(_remove_command(host), runner=runner)
     mcp_status = "removed" if result.returncode == 0 else "error"
     return {
         "host": host_name,
         "status": mcp_status,
-        "message": (
-            result.stderr.strip()
-            or result.stdout.strip()
-            or f"removed djobs MCP; hooks are {hook_result['status']}"
-        ),
+        "message": result.stderr.strip()
+        or result.stdout.strip()
+        or f"removed djobs MCP; hooks are {hook_result['status']}",
     }
 
 
@@ -209,14 +332,18 @@ def doctor_results(
     home: Path | None = None,
 ) -> list[dict[str, object]]:
     results: list[dict[str, object]] = []
-    for name in ("codex", "claude"):
+    for name in _CLIENTS:
         host = _host(name, which=which)
         hook = host_hook_doctor(name, home=home)
+        if name == "kimi":
+            registered = _kimi_mcp_installed(home=home)
+        else:
+            registered = _exists(host, runner=runner) if host is not None else False
         results.append(
             {
                 "host": name,
                 "available": host is not None,
-                "registered": _exists(host, runner=runner) if host is not None else False,
+                "registered": registered,
                 "hooks": hook["installed"],
                 "hook_path": hook["path"],
             }
@@ -241,16 +368,16 @@ def print_setup_doctor() -> None:
             continue
         state = "registered" if item["registered"] else "not registered"
         available = "available" if item["available"] else "CLI not found"
-        hooks = "hooks installed" if item["hooks"] else "hooks missing"
+        hooks = "adapter installed" if item["hooks"] else "adapter missing"
         print(f"  {item['host']}: {available}, {state}, {hooks}")
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="djobs setup")
     parser.add_argument("action", choices=["setup", "repair", "remove"])
-    parser.add_argument("target", nargs="?", choices=["codex", "claude", "all"], default="all")
+    parser.add_argument("target", nargs="?", choices=[*_CLIENTS, "all"], default="all")
     args = parser.parse_args(argv)
-    targets = ["codex", "claude"] if args.target == "all" else [args.target]
+    targets = list(_CLIENTS) if args.target == "all" else [args.target]
 
     for target in targets:
         if args.action == "remove":

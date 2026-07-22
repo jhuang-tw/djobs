@@ -71,12 +71,37 @@ jobs:
           ruff check --fix src/ tests/
 
       - name: Validate Python implementation
+        id: validate_python
+        continue-on-error: true
         run: |
-          python -m compileall -q src tests
-          ruff check src/ tests/
-          ruff format --check src/ tests/
-          mypy
-          pytest -q --tb=short
+          set +e
+          status=0
+          {
+            echo '=== compileall ==='
+            python -m compileall -q src tests || status=$?
+            echo '=== ruff check ==='
+            ruff check src/ tests/ || status=$?
+            echo '=== ruff format ==='
+            ruff format --check src/ tests/ || status=$?
+            echo '=== mypy ==='
+            mypy || status=$?
+            echo '=== pytest ==='
+            pytest -q --tb=short || status=$?
+          } > minimal-mcp-python-validation.txt 2>&1
+          exit "$status"
+
+      - name: Upload Python validation report
+        if: steps.validate_python.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: minimal-mcp-python-validation
+          path: minimal-mcp-python-validation.txt
+
+      - name: Stop after Python validation failure
+        if: steps.validate_python.outcome == 'failure'
+        run: |
+          cat minimal-mcp-python-validation.txt
+          exit 1
 
       - name: Validate extension
         working-directory: vscode-ext
@@ -95,7 +120,7 @@ jobs:
 
       - name: Commit finalized implementation
         run: |
-          rm -f minimal-mcp-migration.txt
+          rm -f minimal-mcp-*.txt
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A

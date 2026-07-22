@@ -137,9 +137,13 @@ def test_extension_is_headless_and_coding_focused() -> None:
 def test_python_runtime_floor_is_310() -> None:
     pyproject = (_REPO / "pyproject.toml").read_text(encoding="utf-8")
     workflow = (_REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    readme = (_REPO / "README.md").read_text(encoding="utf-8")
+    contributing = (_REPO / "CONTRIBUTING.md").read_text(encoding="utf-8")
 
     assert 'requires-python = ">=3.10"' in pyproject
     assert '"Programming Language :: Python :: 3.10"' in pyproject
     assert 'target-version = "py310"' in pyproject
     assert 'python_version = "3.10"' in pyproject
     assert 'python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]' in workflow
+    assert "Python 3.10+" in readme
+    assert "supports Python 3.10 through 3.14" in contributing

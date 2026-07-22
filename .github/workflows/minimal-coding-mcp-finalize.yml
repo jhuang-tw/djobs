@@ -28,7 +28,9 @@ jobs:
       - name: Apply minimal MCP migration
         id: migrate
         continue-on-error: true
-        run: python tools/apply_minimal_coding_mcp.py > minimal-mcp-migration.txt 2>&1
+        run: |
+          python tools/apply_minimal_coding_mcp.py > minimal-mcp-migration.txt 2>&1
+          python tools/fix_minimal_mcp_tests.py >> minimal-mcp-migration.txt 2>&1
 
       - name: Upload migration report
         if: steps.migrate.outcome == 'failure'
@@ -43,8 +45,8 @@ jobs:
           cat minimal-mcp-migration.txt
           exit 1
 
-      - name: Remove migration script
-        run: rm tools/apply_minimal_coding_mcp.py
+      - name: Remove migration scripts
+        run: rm tools/apply_minimal_coding_mcp.py tools/fix_minimal_mcp_tests.py
 
       - name: Validate manifests and diff
         run: |

@@ -1,10 +1,8 @@
-"""Release, Pages, and SEO guardrails.
+"""Release, Pages, Marketplace, and documentation guardrails.
 
-These tests catch mistakes that are easy to miss locally but painful after a
-release: missing sitemap/robots deployment, generated GitHub Release notes
-replacing the curated changelog, and version sections missing from the
-changelog. They run in the normal pytest job, so publishing invariants fail in CI
-before a tag is pushed.
+These tests catch drift that is easy to miss locally but painful after a release:
+missing public assets, manifest mismatches, generated release notes replacing the
+curated changelog, and stale duplicate documentation returning to the repository.
 """
 
 from __future__ import annotations
@@ -20,11 +18,51 @@ _DOCS = _REPO / "docs"
 _CHANGELOG = _REPO / "CHANGELOG.md"
 _EXT_PACKAGE = _REPO / "vscode-ext" / "package.json"
 
+_CANONICAL_DOCS = (
+    "README.md",
+    "CONTRIBUTING.md",
+    "AGENTS.md",
+    "CHANGELOG.md",
+    "docs/RELEASE.md",
+    "docs/index.html",
+)
+
+_REMOVED_SURFACES = (
+    "CLAUDE.md",
+    ".agent.md",
+    ".github/agents/durable-coder.agent.md",
+    ".github/skills/djobs-development/SKILL.md",
+    "docs/ARCHITECTURE.md",
+    "docs/CONTEXT_EFFICIENCY.md",
+    "docs/HANDOFF.md",
+    "docs/IMPLEMENTATION_NOTES.md",
+    "docs/INTERNALS.md",
+    "docs/ROADMAP.md",
+    "CHANGES.diff",
+    "_pack_080.ps1",
+    "scripts/backfill_dev_tracking.py",
+    "scripts/release.ps1",
+)
+
 
 def test_pages_seo_files_exist() -> None:
     assert (_DOCS / "index.html").is_file()
     assert (_DOCS / "robots.txt").is_file()
     assert (_DOCS / "sitemap.xml").is_file()
+
+
+def test_canonical_documentation_is_small_and_nonduplicated() -> None:
+    for relative in _CANONICAL_DOCS:
+        assert (_REPO / relative).is_file(), f"missing canonical surface: {relative}"
+
+    for relative in _REMOVED_SURFACES:
+        assert not (_REPO / relative).exists(), f"stale duplicate surface returned: {relative}"
+
+    current_text = "\n".join(
+        (_REPO / relative).read_text(encoding="utf-8") for relative in _CANONICAL_DOCS
+    )
+    for relative in _REMOVED_SURFACES:
+        assert relative not in current_text, f"canonical docs link to removed surface: {relative}"
 
 
 def test_changelog_has_current_version_section() -> None:
@@ -47,6 +85,18 @@ def test_changelog_current_section_has_release_notes() -> None:
     body = match.group("body").strip()
     assert len(body) > 120
     assert re.search(r"^### ", body, re.MULTILINE)
+
+
+def test_marketplace_metadata_matches_product_positioning() -> None:
+    package = json.loads(_EXT_PACKAGE.read_text(encoding="utf-8"))
+    assert package["version"] == djobs.__version__
+    assert package["displayName"] == "djobs — Agent Checkpoints"
+    assert "Crash-proof checkpoints" in package["description"]
+    assert "Machine Learning" in package["categories"]
+    assert 1 <= len(package["keywords"]) <= 30
+    assert package["homepage"] == "https://jhuang-tw.github.io/djobs/"
+    assert package["bugs"]["url"] == "https://github.com/jhuang-tw/djobs/issues"
+    assert package["pricing"] == "Free"
 
 
 def test_extension_prompt_actions_are_opt_in() -> None:

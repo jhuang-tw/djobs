@@ -1,1 +1,1 @@
-https://github.com/jhuang-tw/djobs/archive/refs/heads/feature/zero-config-cross-agent-handoff.tar.gz
+Temporary isolated validation links; removed before final handoff.

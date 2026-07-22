@@ -137,3 +137,27 @@ def test_unknown_client_name_uses_same_observation_protocol(
     assert row["agent_type"] == "future-agent"
     assert row["event_type"] == "tool_failure"
     assert "write failed" in row["summary"]
+
+
+def test_first_snapshot_reports_existing_dirty_tree_from_uninstrumented_agent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _git_repo(tmp_path / "project")
+    (root / "tracked.txt").write_text("changed before djobs started\n", encoding="utf-8")
+    database = tmp_path / "shared.db"
+    repository = SQLiteJobRepository.from_path(database)
+    queue = QueueService(repository)
+    monkeypatch.setattr(handoff, "configure", lambda _path: queue)
+    monkeypatch.setenv("DJOBS_DB", str(database))
+
+    context = lifecycle.session_start(
+        {"cwd": str(root), "session_id": "future-session"},
+        agent_type="future-agent",
+    )
+    assert "repository_change" in context["additionalContext"]
+    row = repository._connection.execute(
+        "SELECT summary FROM agent_observations WHERE event_type = 'repository_change'"
+    ).fetchone()
+    assert row is not None
+    assert "tracked.txt" in row["summary"]

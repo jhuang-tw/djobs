@@ -54,15 +54,29 @@ jobs:
           npx tsc -p ./ --noEmit
           npm run compile
 
-      - name: Check removed references
+      - name: Scan removed references
+        id: references
+        continue-on-error: true
         run: |
-          if git grep -n -E 'docs/(INTERNALS|ARCHITECTURE|ROADMAP|HANDOFF|IMPLEMENTATION_NOTES|CONTEXT_EFFICIENCY)\.md|\.github/agents/durable-coder\.agent\.md|\.github/skills/djobs-development/SKILL\.md' -- ':!CHANGELOG.md'; then
-            echo 'Found a live reference to a removed documentation file.' >&2
-            exit 1
-          fi
+          git grep -n -E 'docs/(INTERNALS|ARCHITECTURE|ROADMAP|HANDOFF|IMPLEMENTATION_NOTES|CONTEXT_EFFICIENCY)\.md|\.github/agents/durable-coder\.agent\.md|\.github/skills/djobs-development/SKILL\.md' -- ':!CHANGELOG.md' > removed-reference-report.txt || true
+          cat removed-reference-report.txt
+          test ! -s removed-reference-report.txt
+
+      - name: Upload removed reference report
+        if: steps.references.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: removed-reference-report
+          path: removed-reference-report.txt
+          if-no-files-found: error
+
+      - name: Stop after removed reference failure
+        if: steps.references.outcome == 'failure'
+        run: exit 1
 
       - name: Commit finalized cleanup
         run: |
+          rm -f removed-reference-report.txt
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A

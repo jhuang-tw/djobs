@@ -109,6 +109,7 @@ def test_gain_all_scope_aggregates_workspaces(tmp_path: Path) -> None:
 
     assert report["scope"] == "all workspaces"
     assert report["all_time"]["completed_records"] == 2
+    assert report["all_time"]["sources"]["durable_workflow"]["completed_records"] == 2
 
 
 def test_gain_cli_json_defaults_to_current_workspace(

@@ -15,35 +15,29 @@ Tools
 - audit_log: Audit trail of job lifecycle events — "what did the AI do?".
 - health: Queue health summary (depth by status, totals).
 
-The server embeds a lightweight background daemon (WorkerPool + SchedulerLoop)
-that auto-starts when the MCP process launches.  Registered built-in handlers
-(e.g. ``echo``) are executed automatically; AI-powered tasks are handled by
-the Copilot agent itself via the normal tool-call flow.
+The MCP process is passive: it stores and retrieves durable coding state but
+does not start workers, schedulers, or polling threads. Agents perform coding
+work through the normal tool-call flow; ``djobs serve`` remains available for
+users who explicitly need the standalone general-purpose worker runtime.
 """
 
 from __future__ import annotations
 
-import atexit
 import json
-import logging
 import os
-import threading
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from djobs.cli import BUILTIN_HANDLERS, build_work_receipt
+from djobs.cli import build_work_receipt
 from djobs.core.constants import STALE_AFTER_DAYS
 from djobs.core.correlation import correlation_id_variants
 from djobs.core.models import Agent, Job, _new_id
 from djobs.core.pause import is_paused
-from djobs.daemon import Daemon
 from djobs.queue.service import QueueService
 from djobs.storage.sqlite import SQLiteJobRepository
-
-logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Server singleton — initialised lazily on first call or via configure().
@@ -66,8 +60,6 @@ _server = FastMCP(
 
 _queue: QueueService | None = None
 _db_path: str = os.environ.get("DJOBS_DB") or "djobs_mcp.db"
-_daemon: Daemon | None = None
-_daemon_thread: threading.Thread | None = None
 
 
 def configure(db_path: str | None = None) -> QueueService:
@@ -90,49 +82,6 @@ def _get_queue() -> QueueService:
         configure(_db_path)
     assert _queue is not None
     return _queue
-
-
-def _start_embedded_daemon() -> None:
-    """Start a background daemon thread that processes built-in handlers.
-
-    Called once during ``main()`` so the worker runs as long as the MCP
-    server process lives.  Safe to call multiple times (no-op after first).
-    """
-    global _daemon, _daemon_thread
-    if _daemon is not None:
-        return  # already running
-
-    q = _get_queue()
-    from djobs.worker.registry import HandlerRegistry
-
-    registry = HandlerRegistry()
-    for job_type, handler in BUILTIN_HANDLERS.items():
-        registry.register(job_type, handler)
-
-    _daemon = Daemon(
-        queue=q,
-        registry=registry,
-        max_concurrent=2,
-        poll_interval=2.0,
-        scheduler_interval=5.0,
-    )
-
-    stop = threading.Event()
-    _daemon_thread = threading.Thread(
-        target=_daemon.run_until,
-        args=(stop,),
-        daemon=True,
-        name="djobs-embedded-daemon",
-    )
-    _daemon_thread.start()
-
-    def _cleanup() -> None:
-        stop.set()
-        if _daemon_thread is not None:
-            _daemon_thread.join(timeout=5)
-
-    atexit.register(_cleanup)
-    logger.info("Embedded daemon started (handlers: %s)", list(BUILTIN_HANDLERS))
 
 
 def _dumps(obj: Any) -> str:
@@ -863,13 +812,9 @@ def audit_log(
 
 
 def main() -> None:
-    """Run the MCP server over stdio (used by VS Code).
+    """Run the passive MCP server over stdio (used by coding agents)."""
 
-    Also starts the embedded background daemon so built-in handlers
-    are processed automatically — zero user setup required.
-    """
     _get_queue()  # ensure db is initialised
-    _start_embedded_daemon()  # background worker for built-in handlers
     _server.run(transport="stdio")
 
 

@@ -28,7 +28,6 @@ from djobs.mcp_server import (
     _get_queue,
     _job_to_dict,
     _server,
-    _start_embedded_daemon,
 )
 
 _MAX_BATCH_ITEMS = 200
@@ -384,7 +383,6 @@ def main() -> None:
     """Run djobs with context-efficient tools registered by default."""
 
     _get_queue()
-    _start_embedded_daemon()
     _server.run(transport="stdio")
 
 

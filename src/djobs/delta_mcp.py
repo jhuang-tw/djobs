@@ -20,7 +20,6 @@ from djobs.low_token_mcp import (
     _estimate_tokens,
     _get_queue,
     _server,
-    _start_embedded_daemon,
 )
 from djobs.mcp_server import (
     _annotate_resume_tasks,
@@ -399,7 +398,6 @@ def main() -> None:
     """Run djobs with capsule, batch, and delta-context tools registered."""
 
     _get_queue()
-    _start_embedded_daemon()
     _server.run(transport="stdio")
 
 

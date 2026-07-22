@@ -23,6 +23,24 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Harden datetime import migration
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('tools/apply_python310.py')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace(
+              'r"^from datetime import (?P<body>\\([^)]*\\)|[^\\n]+)$", re.MULTILINE',
+              'r"^(?P<indent>[ \\t]*)from datetime import (?P<body>\\([^)]*\\)|[^\\n]+)$", re.MULTILINE',
+          )
+          text = text.replace(
+              'return "from datetime import " + ", ".join(names)',
+              'return match.group("indent") + "from datetime import " + ", ".join(names)',
+          )
+          path.write_text(text, encoding='utf-8')
+          PY
+
       - name: Apply Python 3.10 compatibility update
         id: migrate
         continue-on-error: true

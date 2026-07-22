@@ -1,6 +1,6 @@
 """Minimal MCP surface for coding checkpoints and context recovery.
 
-The default coding-agent server deliberately exposes only six tools.  The full
+The default coding-agent server deliberately exposes only six tools. The full
 multi-agent queue API remains available through ``djobs-mcp-full`` for users who
 explicitly need claims, leases, agent heartbeats, fleet views, or audit queries.
 Keeping those schemas out of the default server reduces the fixed MCP context
@@ -18,7 +18,6 @@ from djobs.low_token_mcp import complete_batch as _complete_batch
 from djobs.low_token_mcp import enqueue_batch as _enqueue_batch
 from djobs.mcp_server import _get_queue
 from djobs.mcp_server import check_task as _check_task
-from djobs.mcp_server import configure
 from djobs.mcp_server import fail_task as _fail_task
 from djobs.mcp_server import work_receipt as _work_receipt
 

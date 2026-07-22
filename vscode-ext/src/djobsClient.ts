@@ -208,7 +208,7 @@ export class DjobsClient {
     * Install djobs as a standalone tool, trying every reasonable strategy so the
     * user never has to touch a terminal. pipx is convenient, but it can itself be
     * installed with an older Python; if that Python cannot satisfy djobs'
-    * Requires-Python metadata, fall back to uv / py -3.11+ / pip instead of
+    * Requires-Python metadata, fall back to uv / py -3.10+ / pip instead of
     * surfacing pip's wall of resolver output.
    *
     * Throws `Error('NO_PYTHON_RUNTIME')` when no runtime is found (the extension
@@ -240,9 +240,9 @@ export class DjobsClient {
     const detail = errors.join(' | ');
     if (errors.some((error) => this.isRequiresPythonError(error))) {
       throw new Error(
-        'PYTHON_TOO_OLD: djobs requires Python 3.11 or newer, but the available '
+        'PYTHON_TOO_OLD: djobs requires Python 3.10 or newer, but the available '
         + 'installer runtimes could not satisfy that requirement. Install uv '
-        + '(recommended, no pre-existing Python needed) or Python 3.11+, then run setup again. '
+        + '(recommended, no pre-existing Python needed) or Python 3.10+, then run setup again. '
         + `Attempts: ${detail}`,
       );
     }
@@ -305,6 +305,7 @@ export class DjobsClient {
           { kind: 'pip', exe: py, pyArgs: ['-3.13'], isVenv: false },
           { kind: 'pip', exe: py, pyArgs: ['-3.12'], isVenv: false },
           { kind: 'pip', exe: py, pyArgs: ['-3.11'], isVenv: false },
+          { kind: 'pip', exe: py, pyArgs: ['-3.10'], isVenv: false },
           { kind: 'pip', exe: py, pyArgs: ['-3'], isVenv: false },
         );
       }
@@ -326,7 +327,7 @@ export class DjobsClient {
   private summarizeInstallError(detail: string): string {
     const compact = detail.replace(/\s+/g, ' ').trim();
     if (this.isRequiresPythonError(compact)) {
-      return 'Python runtime is too old for djobs (requires Python >=3.11)';
+      return 'Python runtime is too old for djobs (requires Python >=3.10)';
     }
     return compact.length > 320 ? `${compact.slice(0, 320)}...` : compact;
   }

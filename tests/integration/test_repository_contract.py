@@ -6,7 +6,7 @@ SQLite runs in-process; PostgreSQL is skipped if unavailable.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -121,7 +121,7 @@ def test_claim_returns_none_when_empty(repo) -> None:
 
 
 def test_future_run_after_not_claimed(repo) -> None:
-    far = datetime.now(UTC) + timedelta(hours=1)
+    far = datetime.now(timezone.utc) + timedelta(hours=1)
     repo.create_job(Job(type="a", run_after=far))
     assert repo.claim_next_job("w-1") is None
 
@@ -146,7 +146,7 @@ def test_mark_failed(repo) -> None:
 def test_mark_retry_scheduled(repo) -> None:
     repo.create_job(Job(type="a", max_attempts=3))
     claimed = repo.claim_next_job("w-1")
-    run_after = datetime.now(UTC) + timedelta(seconds=10)
+    run_after = datetime.now(timezone.utc) + timedelta(seconds=10)
     retried = repo.mark_retry_scheduled(claimed.id, "temp", run_after)
     assert retried.status == JobStatus.RETRY_SCHEDULED
     assert retried.run_after is not None
@@ -155,7 +155,7 @@ def test_mark_retry_scheduled(repo) -> None:
 def test_promote_due_retries(repo) -> None:
     repo.create_job(Job(type="a", max_attempts=3))
     claimed = repo.claim_next_job("w-1")
-    past = datetime.now(UTC) - timedelta(seconds=10)
+    past = datetime.now(timezone.utc) - timedelta(seconds=10)
     repo.mark_retry_scheduled(claimed.id, "temp", past)
 
     promoted = repo.promote_due_retries()
@@ -185,7 +185,7 @@ def test_recover_expired_leases(repo) -> None:
     repo.create_job(Job(type="a", max_attempts=3))
     repo.claim_next_job("w-crash", lease_duration=timedelta(seconds=1))
 
-    far = datetime.now(UTC) + timedelta(hours=1)
+    far = datetime.now(timezone.utc) + timedelta(hours=1)
     recovered = repo.recover_expired_leases(far)
     assert len(recovered) == 1
     assert recovered[0].status == JobStatus.PENDING

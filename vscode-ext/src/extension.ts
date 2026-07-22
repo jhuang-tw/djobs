@@ -168,7 +168,7 @@ async function runDjobsSetup(
     const detail = error instanceof Error ? error.message : String(error);
     if (detail === 'NO_PYTHON_RUNTIME') {
       const choice = await vscode.window.showErrorMessage(
-        'djobs needs Python 3.11+ or uv. Install one, then run setup again.',
+        'djobs needs Python 3.10+ or uv. Install one, then run setup again.',
         'Get uv',
         'Get Python',
       );
@@ -184,7 +184,7 @@ async function runDjobsSetup(
 
     if (detail.startsWith('PYTHON_TOO_OLD')) {
       vscode.window.showErrorMessage(
-        'djobs requires Python 3.11 or newer. Install uv or a newer Python, then run setup again.',
+        'djobs requires Python 3.10 or newer. Install uv or a newer Python, then run setup again.',
       );
       return;
     }

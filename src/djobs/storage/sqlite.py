@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -128,7 +128,7 @@ class SQLiteJobRepository:
         type_filter: list[str] | None = None,
     ) -> Job | None:
         with self._lock:
-            now = datetime.now(UTC)
+            now = datetime.now(timezone.utc)
             now_str = _serialize_datetime(now)
             lease_expires = _serialize_datetime(now + lease_duration)
 
@@ -212,7 +212,7 @@ class SQLiteJobRepository:
 
                 job = _row_to_job(row)
                 validate_transition(job.status, JobStatus.RUNNING)
-                updated_at = _serialize_datetime(datetime.now(UTC))
+                updated_at = _serialize_datetime(datetime.now(timezone.utc))
                 cursor.execute(
                     """
                     UPDATE jobs
@@ -289,7 +289,7 @@ class SQLiteJobRepository:
                     JobStatus.RETRY_SCHEDULED.value,
                     error,
                     _serialize_datetime(run_after),
-                    _serialize_datetime(datetime.now(UTC)),
+                    _serialize_datetime(datetime.now(timezone.utc)),
                     job_id,
                 ),
             )
@@ -368,7 +368,7 @@ class SQLiteJobRepository:
 
     def promote_due_retries(self, now: datetime | None = None) -> list[Job]:
         with self._lock:
-            current_time = _serialize_datetime(now or datetime.now(UTC))
+            current_time = _serialize_datetime(now or datetime.now(timezone.utc))
             rows = self._connection.execute(
                 """
                 SELECT * FROM jobs
@@ -391,7 +391,7 @@ class SQLiteJobRepository:
                     """,
                     (
                         JobStatus.PENDING.value,
-                        _serialize_datetime(datetime.now(UTC)),
+                        _serialize_datetime(datetime.now(timezone.utc)),
                         job.id,
                         JobStatus.RETRY_SCHEDULED.value,
                     ),
@@ -444,7 +444,7 @@ class SQLiteJobRepository:
                 )
             if job.leased_by != worker_id:
                 raise JobNotFoundError(f"Job {job_id!r} is not leased by worker {worker_id!r}")
-            now = datetime.now(UTC)
+            now = datetime.now(timezone.utc)
             new_expires = now + lease_duration
             self._connection.execute(
                 """
@@ -466,7 +466,7 @@ class SQLiteJobRepository:
 
     def recover_expired_leases(self, now: datetime | None = None) -> list[Job]:
         with self._lock:
-            current_time = _serialize_datetime(now or datetime.now(UTC))
+            current_time = _serialize_datetime(now or datetime.now(timezone.utc))
             rows = self._connection.execute(
                 """
                 SELECT * FROM jobs
@@ -494,7 +494,7 @@ class SQLiteJobRepository:
                     """,
                     (
                         target_status.value,
-                        _serialize_datetime(datetime.now(UTC)),
+                        _serialize_datetime(datetime.now(timezone.utc)),
                         job.id,
                         JobStatus.RUNNING.value,
                     ),
@@ -573,7 +573,7 @@ class SQLiteJobRepository:
     def count_stuck_running(self, now: datetime | None = None) -> int:
         """Count running jobs whose lease has expired (stuck tasks)."""
         if now is None:
-            now = datetime.now(UTC)
+            now = datetime.now(timezone.utc)
         with self._lock:
             row = self._connection.execute(
                 """SELECT COUNT(*) AS cnt FROM jobs
@@ -595,7 +595,7 @@ class SQLiteJobRepository:
     ) -> Agent:
         """Register or re-register an agent (upsert); marks it ONLINE."""
         with self._lock:
-            now = datetime.now(UTC)
+            now = datetime.now(timezone.utc)
             existing = self._connection.execute(
                 "SELECT * FROM agents WHERE id = ?", (agent_id,)
             ).fetchone()
@@ -652,7 +652,7 @@ class SQLiteJobRepository:
             ).fetchone()
             if row is None:
                 raise AgentNotFoundError(f"Agent {agent_id!r} is not registered")
-            now = datetime.now(UTC)
+            now = datetime.now(timezone.utc)
             self._connection.execute(
                 "UPDATE agents SET status = ?, last_heartbeat_at = ? WHERE id = ?",
                 (AgentStatus.ONLINE.value, _serialize_datetime(now), agent_id),
@@ -690,7 +690,7 @@ class SQLiteJobRepository:
     ) -> list[Agent]:
         """Mark ONLINE agents whose last heartbeat is older than *timeout* OFFLINE."""
         if now is None:
-            now = datetime.now(UTC)
+            now = datetime.now(timezone.utc)
         cutoff = now - timeout
         with self._lock:
             rows = self._connection.execute(
@@ -760,7 +760,7 @@ class SQLiteJobRepository:
             (
                 status.value,
                 last_error,
-                _serialize_datetime(datetime.now(UTC)),
+                _serialize_datetime(datetime.now(timezone.utc)),
                 job_id,
             ),
         )
@@ -883,8 +883,8 @@ def _serialize_datetime(value: datetime | None) -> str | None:
     if value is None:
         return None
     if value.tzinfo is None:
-        value = value.replace(tzinfo=UTC)
-    return value.astimezone(UTC).isoformat()
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat()
 
 
 def _parse_datetime(value: str | None) -> datetime | None:
@@ -892,7 +892,7 @@ def _parse_datetime(value: str | None) -> datetime | None:
         return None
     dt = datetime.fromisoformat(value)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
+        dt = dt.replace(tzinfo=timezone.utc)
     return dt
 
 

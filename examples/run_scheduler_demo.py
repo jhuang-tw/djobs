@@ -10,7 +10,7 @@ Demonstrates:
 from __future__ import annotations
 
 import os
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -53,7 +53,7 @@ def main() -> None:
     print("[2] worker-A claimed job (simulating crash, lease=1s)")
 
     # Scheduler tick at far-future recovers the expired lease
-    far = datetime.now(UTC) + timedelta(seconds=10)
+    far = datetime.now(timezone.utc) + timedelta(seconds=10)
     tick1 = scheduler.tick(now=far)
     print(f"[3] Scheduler tick: recovered={tick1.recovered}")
 
@@ -68,7 +68,7 @@ def main() -> None:
     if retry_job and retry_job.run_after:
         tick2 = scheduler.tick(now=retry_job.run_after)
     else:
-        tick2 = scheduler.tick(now=datetime.now(UTC) + timedelta(hours=1))
+        tick2 = scheduler.tick(now=datetime.now(timezone.utc) + timedelta(hours=1))
     print(f"[5] Scheduler tick: promoted={tick2.promoted}")
 
     # Worker-B retries — succeeds

@@ -8,7 +8,7 @@ A production system would export these to Prometheus, StatsD, etc.
 from __future__ import annotations
 
 import threading
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -19,7 +19,7 @@ class MetricsCollector:
         self._lock = threading.Lock()
         self._counters: dict[str, int] = {}
         self._gauges: dict[str, float] = {}
-        self._created_at = datetime.now(UTC)
+        self._created_at = datetime.now(timezone.utc)
 
     # ------------------------------------------------------------------
     # Counter operations (monotonically increasing)
@@ -67,4 +67,4 @@ class MetricsCollector:
         with self._lock:
             self._counters.clear()
             self._gauges.clear()
-            self._created_at = datetime.now(UTC)
+            self._created_at = datetime.now(timezone.utc)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import threading
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from djobs.core.states import JobStatus
 from djobs.queue.service import QueueService
@@ -33,7 +33,7 @@ def test_tick_promotes_due_retry(tmp_path) -> None:
 
     # Job is now retry_scheduled with a run_after in the near future.
     # Advance time past run_after so tick() promotes it.
-    far_future = datetime.now(UTC) + timedelta(hours=1)
+    far_future = datetime.now(timezone.utc) + timedelta(hours=1)
     result = scheduler.tick(now=far_future)
 
     assert result.promoted == 1
@@ -54,7 +54,7 @@ def test_tick_does_not_promote_future_retry(tmp_path) -> None:
     queue.retry_or_dead_letter(claimed.id, "boom")
 
     # run_after is slightly in the future — tick with current time should NOT promote
-    result = scheduler.tick(now=datetime.now(UTC))
+    result = scheduler.tick(now=datetime.now(timezone.utc))
 
     # RetryPolicy defaults: base_delay=1s, so the job isn't due yet at "now"
     # (it was just scheduled). In practice it may or may not promote depending
@@ -76,7 +76,7 @@ def test_tick_recovers_expired_lease(tmp_path) -> None:
     assert claimed is not None
 
     # Simulate worker crash: lease expires
-    far_future = datetime.now(UTC) + timedelta(hours=1)
+    far_future = datetime.now(timezone.utc) + timedelta(hours=1)
     result = scheduler.tick(now=far_future)
 
     assert result.recovered == 1
@@ -95,7 +95,7 @@ def test_tick_does_not_recover_active_lease(tmp_path) -> None:
     assert claimed is not None
 
     # Lease is still active (default 30s), tick at current time
-    result = scheduler.tick(now=datetime.now(UTC))
+    result = scheduler.tick(now=datetime.now(timezone.utc))
 
     assert result.recovered == 0
     assert result.errors == []
@@ -112,7 +112,7 @@ def test_tick_reaps_stale_agent(tmp_path) -> None:
     queue.register_agent("agent-1")
 
     # Advance time well past the stale timeout so the agent is reaped.
-    far_future = datetime.now(UTC) + timedelta(hours=1)
+    far_future = datetime.now(timezone.utc) + timedelta(hours=1)
     result = scheduler.tick(now=far_future)
 
     assert result.reaped == 1
@@ -128,7 +128,7 @@ def test_tick_does_not_reap_fresh_agent(tmp_path) -> None:
 
     queue.register_agent("agent-1")
 
-    result = scheduler.tick(now=datetime.now(UTC))
+    result = scheduler.tick(now=datetime.now(timezone.utc))
 
     assert result.reaped == 0
     assert result.errors == []
@@ -153,7 +153,7 @@ def test_tick_handles_both_promotions_and_recovery(tmp_path) -> None:
     claimed_b = queue.claim("w-crash")
     assert claimed_b is not None
 
-    far_future = datetime.now(UTC) + timedelta(hours=1)
+    far_future = datetime.now(timezone.utc) + timedelta(hours=1)
     result = scheduler.tick(now=far_future)
 
     assert result.promoted == 1
@@ -193,7 +193,7 @@ def test_tick_continues_after_promote_error(tmp_path) -> None:
     claimed = queue.claim("w-crash")
     assert claimed is not None
 
-    far_future = datetime.now(UTC) + timedelta(hours=1)
+    far_future = datetime.now(timezone.utc) + timedelta(hours=1)
     result = scheduler.tick(now=far_future)
 
     assert result.promoted == 0
@@ -268,7 +268,7 @@ def test_run_loop_promotes_jobs_across_ticks(tmp_path) -> None:
     def _tick_then_stop(now=None):
         nonlocal tick_count
         # First tick: use far-future so job gets promoted
-        far = datetime.now(UTC) + timedelta(hours=1)
+        far = datetime.now(timezone.utc) + timedelta(hours=1)
         r = original_tick(far)
         tick_count += 1
         if tick_count >= 2:

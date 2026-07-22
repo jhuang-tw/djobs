@@ -194,9 +194,9 @@ def test_inspect_stuck_running_task(tmp_path) -> None:
     repo.claim_next_job("worker-1", lease_duration=timedelta(seconds=1))
 
     # Simulate expired lease by backdating lease_expires_at
-    from datetime import UTC, datetime
+    from datetime import datetime, timezone
 
-    past = datetime.now(UTC) - timedelta(hours=1)
+    past = datetime.now(timezone.utc) - timedelta(hours=1)
     with repo._lock:
         repo._connection.execute(
             "UPDATE jobs SET lease_expires_at = ? WHERE id = ?",
@@ -224,9 +224,9 @@ def test_health_warns_on_stuck_running(tmp_path) -> None:
     repo.claim_next_job("w-1", lease_duration=timedelta(seconds=1))
 
     # Backdate lease to simulate expiry
-    from datetime import UTC, datetime
+    from datetime import datetime, timezone
 
-    past = datetime.now(UTC) - timedelta(hours=1)
+    past = datetime.now(timezone.utc) - timedelta(hours=1)
     with repo._lock:
         repo._connection.execute(
             "UPDATE jobs SET lease_expires_at = ? WHERE id = ?",

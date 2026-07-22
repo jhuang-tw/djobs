@@ -26,7 +26,7 @@ from __future__ import annotations
 import json
 import os
 from collections import Counter
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -137,7 +137,7 @@ def _annotate_resume_tasks(tasks: list[dict[str, Any]]) -> None:
     changing what is stored. Kept out of ``_job_to_dict`` so other tools stay
     lean; only ``resume_session`` pays the (small) cost.
     """
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
     incomplete_ids = {t["id"] for t in tasks}
     for t in tasks:
         created_raw = t.get("created_at")
@@ -145,7 +145,7 @@ def _annotate_resume_tasks(tasks: list[dict[str, Any]]) -> None:
             try:
                 created = datetime.fromisoformat(str(created_raw))
                 if created.tzinfo is None:
-                    created = created.replace(tzinfo=UTC)
+                    created = created.replace(tzinfo=timezone.utc)
                 age_days = (now - created).days
                 if age_days >= _STALE_AFTER_DAYS:
                     t["stale"] = True
@@ -686,16 +686,16 @@ def audit_log(
     if not hasattr(repo, "_connection"):
         return _dumps({"error": "audit_log requires SQLite backend"})
 
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
     try:
         since_dt = datetime.fromisoformat(since) if since else now - timedelta(hours=24)
         until_dt = datetime.fromisoformat(until) if until else now
     except ValueError as exc:
         return _dumps({"error": f"invalid datetime format: {exc}"})
     if since_dt.tzinfo is None:
-        since_dt = since_dt.replace(tzinfo=UTC)
+        since_dt = since_dt.replace(tzinfo=timezone.utc)
     if until_dt.tzinfo is None:
-        until_dt = until_dt.replace(tzinfo=UTC)
+        until_dt = until_dt.replace(tzinfo=timezone.utc)
 
     where_clauses = ["e.created_at >= ?", "e.created_at <= ?"]
     params: list[Any] = [since_dt.isoformat(), until_dt.isoformat()]

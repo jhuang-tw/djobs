@@ -19,7 +19,7 @@ from __future__ import annotations
 import html
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any
 
@@ -87,7 +87,7 @@ def build_snapshot(queue: QueueService, *, per_status_limit: int = 50) -> dict[s
             tasks.append(_job_to_dict(job))
 
     return {
-        "generated_at": datetime.now(UTC).isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "health": health,
         "agents": [_agent_to_dict(a) for a in agents],
         "tasks": tasks,

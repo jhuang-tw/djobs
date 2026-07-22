@@ -7,7 +7,7 @@ atomic, contention-free job claiming in multi-worker deployments.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any
 
 from djobs.core.errors import AgentNotFoundError, JobNotFoundError
@@ -40,8 +40,8 @@ def _serialize_dt(value: datetime | None) -> str | None:
     if value is None:
         return None
     if value.tzinfo is None:
-        value = value.replace(tzinfo=UTC)
-    return value.astimezone(UTC).isoformat()
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat()
 
 
 def _parse_dt(value: Any) -> datetime | None:
@@ -49,12 +49,12 @@ def _parse_dt(value: Any) -> datetime | None:
         return None
     if isinstance(value, datetime):
         if value.tzinfo is None:
-            return value.replace(tzinfo=UTC)
+            return value.replace(tzinfo=timezone.utc)
         return value
     # string fallback
     dt = datetime.fromisoformat(str(value))
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
+        dt = dt.replace(tzinfo=timezone.utc)
     return dt
 
 
@@ -284,7 +284,7 @@ class PostgresJobRepository:
         lease_duration: timedelta = DEFAULT_LEASE_DURATION,
         type_concurrency_limits: dict[str, int] | None = None,
     ) -> Job | None:
-        now = datetime.now(UTC)
+        now = datetime.now(timezone.utc)
         now_str = _serialize_dt(now)
         lease_expires = _serialize_dt(now + lease_duration)
 
@@ -337,7 +337,7 @@ class PostgresJobRepository:
 
             job = _row_to_job(row)
             validate_transition(job.status, JobStatus.RUNNING)
-            updated_at = _serialize_dt(datetime.now(UTC))
+            updated_at = _serialize_dt(datetime.now(timezone.utc))
             cur.execute(
                 """
                 UPDATE jobs
@@ -386,7 +386,7 @@ class PostgresJobRepository:
                     updated_at = %s
                 WHERE id = %s
                 """,
-                (JobStatus.SUCCEEDED.value, _serialize_dt(datetime.now(UTC)), job_id),
+                (JobStatus.SUCCEEDED.value, _serialize_dt(datetime.now(timezone.utc)), job_id),
             )
             metadata = {"evidence": evidence} if evidence else {}
             self._append_event(
@@ -414,7 +414,7 @@ class PostgresJobRepository:
                 (
                     JobStatus.FAILED.value,
                     error,
-                    _serialize_dt(datetime.now(UTC)),
+                    _serialize_dt(datetime.now(timezone.utc)),
                     job_id,
                 ),
             )
@@ -438,7 +438,7 @@ class PostgresJobRepository:
                     JobStatus.RETRY_SCHEDULED.value,
                     error,
                     _serialize_dt(run_after),
-                    _serialize_dt(datetime.now(UTC)),
+                    _serialize_dt(datetime.now(timezone.utc)),
                     job_id,
                 ),
             )
@@ -467,7 +467,7 @@ class PostgresJobRepository:
                 (
                     JobStatus.DEAD_LETTERED.value,
                     error,
-                    _serialize_dt(datetime.now(UTC)),
+                    _serialize_dt(datetime.now(timezone.utc)),
                     job_id,
                 ),
             )
@@ -505,7 +505,7 @@ class PostgresJobRepository:
                     updated_at = %s
                 WHERE id = %s
                 """,
-                (JobStatus.PENDING.value, _serialize_dt(datetime.now(UTC)), job_id),
+                (JobStatus.PENDING.value, _serialize_dt(datetime.now(timezone.utc)), job_id),
             )
             self._append_event(
                 cur,
@@ -522,7 +522,7 @@ class PostgresJobRepository:
     # ------------------------------------------------------------------
 
     def promote_due_retries(self, now: datetime | None = None) -> list[Job]:
-        current = _serialize_dt(now or datetime.now(UTC))
+        current = _serialize_dt(now or datetime.now(timezone.utc))
         promoted: list[Job] = []
         with self._conn.cursor() as cur:
             cur.execute(
@@ -544,7 +544,7 @@ class PostgresJobRepository:
                     """,
                     (
                         JobStatus.PENDING.value,
-                        _serialize_dt(datetime.now(UTC)),
+                        _serialize_dt(datetime.now(timezone.utc)),
                         job.id,
                         JobStatus.RETRY_SCHEDULED.value,
                     ),
@@ -555,7 +555,7 @@ class PostgresJobRepository:
         return promoted
 
     def recover_expired_leases(self, now: datetime | None = None) -> list[Job]:
-        current = _serialize_dt(now or datetime.now(UTC))
+        current = _serialize_dt(now or datetime.now(timezone.utc))
         recovered: list[Job] = []
         with self._conn.cursor() as cur:
             cur.execute(
@@ -583,7 +583,7 @@ class PostgresJobRepository:
                     """,
                     (
                         target.value,
-                        _serialize_dt(datetime.now(UTC)),
+                        _serialize_dt(datetime.now(timezone.utc)),
                         job.id,
                         JobStatus.RUNNING.value,
                     ),
@@ -621,7 +621,7 @@ class PostgresJobRepository:
                 )
             if job.leased_by != worker_id:
                 raise JobNotFoundError(f"Job {job_id!r} is not leased by worker {worker_id!r}")
-            now = datetime.now(UTC)
+            now = datetime.now(timezone.utc)
             cur.execute(
                 """
                 UPDATE jobs
@@ -668,7 +668,7 @@ class PostgresJobRepository:
     def count_stuck_running(self, now: datetime | None = None) -> int:
         """Count running jobs whose lease has expired (stuck tasks)."""
         if now is None:
-            now = datetime.now(UTC)
+            now = datetime.now(timezone.utc)
         with self._conn.cursor() as cur:
             cur.execute(
                 """SELECT COUNT(*) AS cnt FROM jobs
@@ -690,7 +690,7 @@ class PostgresJobRepository:
         metadata: dict[str, Any] | None = None,
     ) -> Agent:
         """Register or re-register an agent (upsert); marks it ONLINE."""
-        now = datetime.now(UTC)
+        now = datetime.now(timezone.utc)
         caps_json = json.dumps(list(capabilities or []), ensure_ascii=False)
         meta_json = json.dumps(dict(metadata or {}), ensure_ascii=False, sort_keys=True)
         with self._conn.cursor() as cur:
@@ -750,7 +750,7 @@ class PostgresJobRepository:
 
     def agent_heartbeat(self, agent_id: str) -> Agent:
         """Record a liveness ping; brings the agent back ONLINE if reaped."""
-        now = datetime.now(UTC)
+        now = datetime.now(timezone.utc)
         with self._conn.cursor() as cur:
             cur.execute("SELECT * FROM agents WHERE id = %s", (agent_id,))
             row = cur.fetchone()
@@ -790,7 +790,7 @@ class PostgresJobRepository:
     ) -> list[Agent]:
         """Mark ONLINE agents whose last heartbeat is older than *timeout* OFFLINE."""
         if now is None:
-            now = datetime.now(UTC)
+            now = datetime.now(timezone.utc)
         cutoff = now - timeout
         with self._conn.cursor() as cur:
             cur.execute(

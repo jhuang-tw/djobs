@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import threading
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from djobs.core.states import JobStatus
@@ -32,7 +32,7 @@ def test_scheduler_loop_full_lifecycle(tmp_path) -> None:
     repo.claim_next_job("worker-A", lease_duration=timedelta(seconds=1))
 
     # Scheduler tick at far-future recovers the expired lease
-    far = datetime.now(UTC) + timedelta(hours=1)
+    far = datetime.now(timezone.utc) + timedelta(hours=1)
     result = scheduler.tick(now=far)
 
     assert result.recovered == 1
@@ -86,7 +86,7 @@ def test_scheduler_loop_retry_promotion_end_to_end(tmp_path) -> None:
     assert mid.status == JobStatus.RETRY_SCHEDULED
 
     # Scheduler promotes the retry
-    far = datetime.now(UTC) + timedelta(hours=1)
+    far = datetime.now(timezone.utc) + timedelta(hours=1)
     tick = scheduler.tick(now=far)
     assert tick.promoted == 1
 
@@ -115,7 +115,7 @@ def test_scheduler_threaded_loop_integration(tmp_path) -> None:
 
     def _tick_and_stop(now=None):
         nonlocal tick_count
-        far = datetime.now(UTC) + timedelta(hours=1)
+        far = datetime.now(timezone.utc) + timedelta(hours=1)
         r = original_tick(far)
         tick_count += 1
         stop.set()

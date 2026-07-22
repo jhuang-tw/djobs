@@ -51,9 +51,9 @@ def test_pool_with_scheduler_retry_flow(tmp_path) -> None:
     assert mid.status == JobStatus.RETRY_SCHEDULED
 
     # Scheduler promotes
-    from datetime import UTC, datetime, timedelta
+    from datetime import datetime, timedelta, timezone
 
-    scheduler.tick(now=datetime.now(UTC) + timedelta(hours=1))
+    scheduler.tick(now=datetime.now(timezone.utc) + timedelta(hours=1))
 
     promoted = queue.get_job(submitted.id)
     assert promoted is not None

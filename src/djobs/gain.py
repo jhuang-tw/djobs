@@ -7,7 +7,7 @@ import json
 import math
 import os
 from collections import Counter, defaultdict
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -27,7 +27,11 @@ def _parse_dt(value: Any) -> datetime | None:
         result = datetime.fromisoformat(text)
     except ValueError:
         return None
-    return result.replace(tzinfo=UTC) if result.tzinfo is None else result.astimezone(UTC)
+    return (
+        result.replace(tzinfo=timezone.utc)
+        if result.tzinfo is None
+        else result.astimezone(timezone.utc)
+    )
 
 
 def _estimate_tokens(text: str, chars_per_token: float) -> int:
@@ -223,7 +227,7 @@ def build_gain_report(
     if redo_overhead_tokens < 0:
         raise ValueError("redo_overhead_tokens must be 0 or greater")
 
-    current = (now or datetime.now(UTC)).astimezone(UTC)
+    current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     repo = SQLiteJobRepository.from_path(db_path)
     success_by_job = _latest_success_events(repo)
     records = [
@@ -268,7 +272,7 @@ def build_gain_report(
 
     history = sorted(
         records,
-        key=lambda record: record["event_at"] or datetime.min.replace(tzinfo=UTC),
+        key=lambda record: record["event_at"] or datetime.min.replace(tzinfo=timezone.utc),
         reverse=True,
     )[:history_limit]
     history_output = [

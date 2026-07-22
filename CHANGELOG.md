@@ -24,6 +24,7 @@ public interfaces may still change between minor versions. Entries below use
 
 ### Compatibility
 - `[core]` The standalone `djobs serve` command, `Daemon`, `WorkerPool`, and handler APIs remain available for users who explicitly need general-purpose job execution; only automatic startup inside coding-agent MCP processes was removed.
+- `[core]` **Python 3.10 support.** Lowered the runtime floor from Python 3.11 to 3.10, replaced 3.11-only `datetime.UTC` usage with `timezone.utc`, and added Python 3.10 to the tested CI matrix.
 
 ## [0.12.0] - 2026-07-22
 

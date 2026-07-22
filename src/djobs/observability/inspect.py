@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from djobs.core.models import Job
@@ -17,7 +17,7 @@ def inspect_job(job: Job, events: list[JobEvent]) -> dict[str, Any]:
     """
     duration_seconds: float | None = None
     if job.started_at is not None:
-        end = job.updated_at or datetime.now(UTC)
+        end = job.updated_at or datetime.now(timezone.utc)
         duration_seconds = (end - job.started_at).total_seconds()
 
     event_timeline = [
@@ -41,7 +41,7 @@ def inspect_job(job: Job, events: list[JobEvent]) -> dict[str, Any]:
     if (
         job.status.value == "running"
         and job.lease_expires_at is not None
-        and job.lease_expires_at < datetime.now(UTC)
+        and job.lease_expires_at < datetime.now(timezone.utc)
     ):
         stuck = True
 

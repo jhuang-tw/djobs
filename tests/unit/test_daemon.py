@@ -182,7 +182,7 @@ class TestDaemon:
 
     def test_daemon_scheduler_promotes_retries(self, db_path):
         """Scheduler thread should promote retry-scheduled jobs."""
-        from datetime import UTC, datetime, timedelta
+        from datetime import datetime, timedelta, timezone
 
         repo = SQLiteJobRepository.from_path(db_path)
         q = QueueService(repo)
@@ -200,7 +200,7 @@ class TestDaemon:
         retried = q.retry_or_dead_letter(
             claimed.id,
             error="transient",
-            now=datetime.now(UTC) - timedelta(seconds=10),
+            now=datetime.now(timezone.utc) - timedelta(seconds=10),
         )
         assert retried.status.value == "retry_scheduled"
 
@@ -442,11 +442,11 @@ class TestCLI:
         assert dep.id not in by_id
 
     def test_explain_flags_stale_pending_task(self, tmp_path, capsys):
-        from datetime import UTC, datetime, timedelta
+        from datetime import datetime, timedelta, timezone
 
         db_path = tmp_path / "jobs.db"
         repo = SQLiteJobRepository.from_path(db_path)
-        old = datetime.now(UTC) - timedelta(days=30)
+        old = datetime.now(timezone.utc) - timedelta(days=30)
         repo.create_job(Job(type="lint", correlation_id="w", created_at=old))
 
         main(["explain", "--db", str(db_path), "--format", "json"])
@@ -458,12 +458,12 @@ class TestCLI:
         assert task["age_days"] >= 7
 
     def test_explain_scheduled_task(self, tmp_path, capsys):
-        from datetime import UTC, datetime, timedelta
+        from datetime import datetime, timedelta, timezone
 
         db_path = tmp_path / "jobs.db"
         repo = SQLiteJobRepository.from_path(db_path)
         queue = QueueService(repo)
-        future = datetime.now(UTC) + timedelta(hours=2)
+        future = datetime.now(timezone.utc) + timedelta(hours=2)
         queue.submit("deploy", correlation_id="w", run_after=future)
 
         main(["explain", "--db", str(db_path), "--format", "json"])

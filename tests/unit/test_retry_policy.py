@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -24,7 +24,7 @@ def test_calculate_delay_caps_at_max_delay() -> None:
 
 
 def test_next_run_after_uses_utc_now() -> None:
-    now = datetime(2026, 5, 23, 1, 2, 3, tzinfo=UTC)
+    now = datetime(2026, 5, 23, 1, 2, 3, tzinfo=timezone.utc)
     policy = RetryPolicy(base_delay_seconds=5)
 
     assert policy.next_run_after(1, now=now) == now + timedelta(seconds=5)

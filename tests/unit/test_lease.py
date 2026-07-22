@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -29,7 +29,7 @@ def test_claim_with_custom_lease_duration(tmp_path) -> None:
     repo = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
     repo.create_job(Job(type="demo.echo"))
 
-    before = datetime.now(UTC)
+    before = datetime.now(timezone.utc)
     claimed = repo.claim_next_job("worker-1", lease_duration=timedelta(minutes=5))
 
     assert claimed is not None
@@ -101,7 +101,7 @@ def test_recover_expired_leases_moves_to_pending(tmp_path) -> None:
     claimed = repo.claim_next_job("worker-1", lease_duration=timedelta(seconds=1))
 
     assert claimed is not None
-    future = datetime.now(UTC) + timedelta(seconds=10)
+    future = datetime.now(timezone.utc) + timedelta(seconds=10)
     recovered = repo.recover_expired_leases(now=future)
 
     assert len(recovered) == 1
@@ -118,7 +118,7 @@ def test_recover_does_not_touch_active_lease(tmp_path) -> None:
     claimed = repo.claim_next_job("worker-1", lease_duration=timedelta(minutes=10))
 
     assert claimed is not None
-    recovered = repo.recover_expired_leases(now=datetime.now(UTC))
+    recovered = repo.recover_expired_leases(now=datetime.now(timezone.utc))
 
     assert recovered == []
     assert repo.require_job(claimed.id).status == JobStatus.RUNNING
@@ -130,7 +130,7 @@ def test_recover_expired_lease_respects_max_attempts(tmp_path) -> None:
     claimed = repo.claim_next_job("worker-1", lease_duration=timedelta(seconds=1))
 
     assert claimed is not None
-    future = datetime.now(UTC) + timedelta(seconds=10)
+    future = datetime.now(timezone.utc) + timedelta(seconds=10)
     recovered = repo.recover_expired_leases(now=future)
 
     assert len(recovered) == 1

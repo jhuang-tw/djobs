@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from djobs.core.states import JobStatus
@@ -30,7 +30,7 @@ def test_expired_lease_recovery_and_rerun(tmp_path) -> None:
     assert claimed is not None
 
     # Simulate crash: lease expires without heartbeat
-    future = datetime.now(UTC) + timedelta(seconds=10)
+    future = datetime.now(timezone.utc) + timedelta(seconds=10)
     recovered = queue.recover_expired_leases(now=future)
     assert len(recovered) == 1
     assert recovered[0].status == JobStatus.PENDING

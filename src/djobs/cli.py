@@ -24,7 +24,7 @@ import logging
 import os
 import sys
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -67,7 +67,7 @@ def _parse_dt(value: Any) -> datetime | None:
         dt = datetime.fromisoformat(str(value))
     except (ValueError, TypeError):
         return None
-    return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
 def _explain_visible_task(
@@ -340,7 +340,7 @@ def _latest_evidence_by_job(repo: Any) -> dict[str, str | None]:
 def _cmd_status(args: argparse.Namespace) -> None:
     """JSON snapshot for the VS Code extension."""
     import json
-    from datetime import UTC, datetime
+    from datetime import datetime, timezone
 
     from djobs.storage.sqlite import SQLiteJobRepository
 
@@ -381,7 +381,7 @@ def _cmd_status(args: argparse.Namespace) -> None:
         tasks.append(item)
 
     result = {
-        "timestamp": datetime.now(UTC).isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "health": health_data,
         "paused": is_paused(args.db),
         "tasks": tasks,
@@ -715,7 +715,7 @@ def build_work_receipt(
         next_step = "No tasks recorded for this scope yet."
 
     receipt: dict[str, Any] = {
-        "timestamp": datetime.now(UTC).isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "scope": correlation_id or "all workspaces",
         "totals": {
             "completed": len(completed),
@@ -838,7 +838,7 @@ def _cmd_explain(args: argparse.Namespace) -> None:
     from djobs.storage.sqlite import SQLiteJobRepository
 
     repo = SQLiteJobRepository.from_path(args.db)
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
 
     columns = (
         "id, type, status, correlation_id, created_at, run_after, "
@@ -1537,13 +1537,13 @@ def _cmd_audit(args: argparse.Namespace) -> None:
     """Query the audit trail from the terminal."""
     import json
     from collections import Counter
-    from datetime import UTC, datetime, timedelta
+    from datetime import datetime, timedelta, timezone
 
     from djobs.storage.sqlite import SQLiteJobRepository
 
     repo = SQLiteJobRepository.from_path(args.db)
 
-    now = datetime.now(UTC)
+    now = datetime.now(timezone.utc)
     if args.since:
         try:
             since_dt = datetime.fromisoformat(args.since)
@@ -1553,7 +1553,7 @@ def _cmd_audit(args: argparse.Namespace) -> None:
     else:
         since_dt = now - timedelta(hours=24)
     if since_dt.tzinfo is None:
-        since_dt = since_dt.replace(tzinfo=UTC)
+        since_dt = since_dt.replace(tzinfo=timezone.utc)
 
     where_clauses = ["e.created_at >= ?"]
     params: list[Any] = [since_dt.isoformat()]

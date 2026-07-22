@@ -60,7 +60,7 @@ Setup registers the `djobs` MCP server and safely merges lifecycle hooks into:
 - Codex: `~/.codex/hooks.json`
 - Claude Code: `~/.claude/settings.json`
 
-Only handlers whose command contains `djobs.hook_entrypoint` are replaced or removed. Existing MCP servers, settings, permissions, and unrelated hooks remain untouched. When a host CLI is unavailable or rejects automatic MCP setup, djobs prints a one-line registration command instead of guessing.
+Only handler definitions containing `djobs.hook_entrypoint` are replaced or removed. Existing MCP servers, settings, permissions, and unrelated hooks remain untouched. When a host CLI is unavailable or rejects automatic MCP setup, djobs prints a one-line registration command instead of guessing.
 
 ## Automatic lifecycle
 
@@ -98,7 +98,7 @@ The workspace resolver uses this order:
 3. The enclosing Git repository root.
 4. The server's startup directory.
 
-Starting from `repo/src/feature` resolves to `repo`. Windows `\` and `/` spellings compare equally, drive letters are case-insensitive, and trailing separators are ignored. New records use a deterministic repository ID, while reads also search compatible legacy path-based `correlation_id` values.
+Starting from `repo/src/feature` resolves to `repo`. Windows `\\` and `/` spellings compare equally, drive letters are case-insensitive, and trailing separators are ignored. New records use a deterministic repository ID, while reads also search compatible legacy path-based `correlation_id` values.
 
 Different repositories remain isolated even though Codex and Claude Code share one local database.
 
@@ -117,7 +117,7 @@ At the end of a normal turn, the automatic `Stop` hook releases resumable work r
 - Prompt text, evidence, command metadata, and injected context are bounded.
 - Empty synchronization produces a very small response.
 - Hook and storage errors return success with no injected instruction, allowing the original coding task to continue.
-- Existing command stdout, stderr, and exit codes are preserved by the command wrapper.
+- Existing project-level command-wrapper compatibility continues to preserve command stdout, stderr, and exit codes.
 
 ## Compatibility status
 
@@ -136,7 +136,7 @@ At the end of a normal turn, the automatic `Stop` hook releases resumable work r
 ### Explicit database
 
 ```powershell
-$env:DJOBS_DB = "D:\state\team-djobs.db"
+$env:DJOBS_DB = "D:\\state\\team-djobs.db"
 djobs-mcp
 ```
 

@@ -117,7 +117,7 @@ def recent_observations(repo: Any, workspace: Any, limit: int = 6) -> list[dict[
     ]
 
 
-def _git_state(root: str) -> tuple[str, str] | None:
+def _git_state(root: str) -> tuple[str, str, bool] | None:
     try:
         head = subprocess.run(
             ["git", "-C", root, "rev-parse", "--verify", "HEAD"],
@@ -149,7 +149,7 @@ def _git_state(root: str) -> tuple[str, str] | None:
         summary = f"HEAD {head_text[:12]}; " + "; ".join(shown)
         if extra:
             summary += f"; +{extra} more"
-    return digest, summary
+    return digest, summary, bool(lines)
 
 
 def capture_repository_snapshot(repo: Any, workspace: Any, agent: Any) -> bool:
@@ -163,7 +163,7 @@ def capture_repository_snapshot(repo: Any, workspace: Any, agent: Any) -> bool:
     state = _git_state(workspace.root)
     if state is None:
         return False
-    digest, summary = state
+    digest, summary, dirty = state
     ensure_schema(repo)
     now = datetime.now(timezone.utc).isoformat()
     with repo._lock:
@@ -183,7 +183,9 @@ def capture_repository_snapshot(repo: Any, workspace: Any, agent: Any) -> bool:
             (workspace.workspace_id, digest, summary, now),
         )
         repo._connection.commit()
-    if previous is None or previous["digest"] == digest:
+    if previous is not None and previous["digest"] == digest:
+        return False
+    if previous is None and not dirty:
         return False
     record_observation(
         repo,

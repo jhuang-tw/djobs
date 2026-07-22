@@ -1,8 +1,8 @@
 name: Format artifact
 
 on:
-  push:
-    branches: [feat/adoption-readiness]
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: read

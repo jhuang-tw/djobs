@@ -16,7 +16,7 @@ pip install -e ".[dev,pg]"
 pre-commit install
 ```
 
-The project supports Python 3.11 through 3.14. PostgreSQL is optional at runtime
+The project supports Python 3.10 through 3.14. PostgreSQL is optional at runtime
 but the `pg` extra keeps type checking and repository-contract tests complete.
 
 ## Repository map
@@ -69,25 +69,3 @@ cd vscode-ext
 npx tsc -p ./ --noEmit
 npm run compile
 ```
-
-The PostgreSQL contract runs in CI against PostgreSQL 16. Local PostgreSQL tests
-run when `DJOBS_TEST_PG_DSN` is configured.
-
-## Pull requests
-
-- Create a focused branch from `main`.
-- Explain the user-visible problem and the design trade-off.
-- Keep generated files and temporary migration scripts out of the final diff.
-- Add or update tests.
-- Update `CHANGELOG.md` for user-facing changes.
-- Ensure every CI job passes before merging.
-
-## Releases
-
-Follow [docs/RELEASE.md](docs/RELEASE.md). `CHANGELOG.md` is the source for the
-GitHub Release body; `.github/workflows/publish.yml` performs the public publish.
-
-## Reporting issues
-
-Include expected versus actual behavior, minimal reproduction steps, operating
-system, Python version, agent host, and whether hooks or MCP tools were involved.

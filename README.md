@@ -1,160 +1,161 @@
 # djobs
 
-<!-- mcp-name: io.github.jhuang-tw/djobs -->
+**Install once. Connect Codex and Claude Code. Open the same repository. Continue where the other agent stopped.**
 
-**Crash-proof checkpoints and resumable task memory for AI coding agents.**
+`djobs` is a local-first durable checkpoint layer for coding agents. It keeps compact task state and evidence in one shared SQLite database, automatically scopes that state to the Git repository currently open in the MCP client, and uses expiring leases so two agents do not silently work on the same task.
 
-djobs keeps long coding work recoverable when a terminal command fails, an IDE
-closes, or a chat loses context. Deterministic hooks cover the common command
-path; compact MCP tools track structured multi-file work; `djobs gain` makes the
-estimated context savings visible.
+No cloud account, Redis, daemon, repository initialization, correlation ID, workspace ID, or SQLite path is required for the normal workflow.
 
-[![CI](https://github.com/jhuang-tw/djobs/actions/workflows/ci.yml/badge.svg)](https://github.com/jhuang-tw/djobs/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/djobs.svg)](https://pypi.org/project/djobs/)
-[![Website](https://img.shields.io/badge/website-GitHub%20Pages-21835b.svg)](https://jhuang-tw.github.io/djobs/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+## Quick Start
 
-<p align="center">
-  <img src="docs/demo.svg" alt="djobs crash recovery demo" width="700">
-</p>
-
-## Why djobs
-
-A coding agent can finish twelve files, lose its chat, then spend the next
-session re-reading the repository and guessing what remains. djobs stores exact
-work state in SQLite so completed work stays completed and failed or interrupted
-work can be resumed without replaying the whole conversation.
-
-| Layer | What it does |
-|---|---|
-| `preToolUse` hook | Rewrites meaningful Bash or PowerShell commands through a durable wrapper before execution. |
-| `sessionStart` hook | Injects unfinished and failed checkpoints into the next compatible session. |
-| Minimal MCP | Exposes six coding-focused tools for batches, deltas, evidence, and bounded recovery. |
-| `djobs gain` | Reports estimated savings for 24 hours, 30 days, and all time. |
-
-Everything is local by default: one SQLite file, no Redis, no broker, and no
-cloud service.
-
-## Quick start
-
-### VS Code and GitHub Copilot
-
-Install the **djobs — Coding Checkpoints** extension from the Marketplace, then
-run **djobs: Set up / Repair djobs** from the Command Palette.
-
-The extension installs or repairs the Python runtime, registers the MCP server,
-and installs deterministic lifecycle hooks without adding a persistent sidebar or poller.
-
-### CLI and MCP-compatible hosts
-
-Install the runtime once, then initialize each repository:
-
-```bash
+```powershell
 pipx install djobs
-cd your-repository
-djobs init
+djobs setup all
+djobs doctor
 ```
 
-`djobs init` writes the MCP configuration, installs the hook configuration,
-adds optional agent guidance, runs `djobs doctor`, and prints the resolved queue
-location.
+Then:
 
-Useful commands:
+1. Open the same Git repository in Codex and Claude Code.
+2. Let either agent create a checkpoint for long or risky work.
+3. Close or switch agents.
+4. The next agent calls `sync_workspace()` and receives the unfinished work, recent evidence, active owners, and a compact next step.
 
-```bash
-djobs doctor                 # verify runtime, MCP, database, and hooks
-djobs hook install           # install or repair hooks only
-djobs pause                  # temporarily disable hooks and recovery
-djobs unpause                # re-enable them
-djobs receipt                # evidence-backed work summary
-djobs gain                   # estimated token/context savings
+Setup is user-scoped and idempotent. You do **not** run `djobs init` in every repository.
+
+### Set up one host
+
+```powershell
+djobs setup codex
+djobs setup claude
 ```
 
-## Automatic command checkpoints
+### Repair or remove only djobs
 
-Smart mode checkpoints tests, builds, linters, type checks, and substantial
-compound commands. It skips shell-state commands such as `cd` and read-only
-commands such as `git status`.
-
-```bash
-djobs hook install --mode smart   # recommended
-djobs hook install --mode all     # checkpoint almost every terminal command
-djobs hook install --mode off     # keep config installed but disable rewriting
-djobs hook install --global       # share ~/.djobs/global.db with MCP
-djobs hook doctor                 # validate the installed hook file
+```powershell
+djobs repair all
+djobs remove codex
+djobs remove claude
 ```
 
-The wrapper preserves the original command output and exit code. Successful
-automatic checkpoints are archived after audit evidence is recorded; failed or
-interrupted checkpoints remain recoverable. Hook handling is fail-open: a djobs
-problem does not block the original coding task.
+The setup commands use each host's MCP CLI and operate only on the server named `djobs`. Existing MCP servers remain untouched. When a host CLI is unavailable or rejects automatic setup, djobs prints a one-line command you can copy directly.
 
-## Savings analytics
+## What the agents see
 
-```bash
-djobs gain                         # current workspace
-djobs gain --graph                 # 30-day ASCII graph
-djobs gain --history               # recent checkpoint estimates
-djobs gain --daily                 # daily non-empty totals
-djobs gain --all --format json     # all workspaces, machine-readable
-djobs stats                        # alias
-djobs state                        # alias
-```
+The default coding MCP intentionally exposes four tools:
 
-The report separates automatic-hook savings from durable-workflow savings. Its
-numbers estimate avoided replay, re-reading, and re-planning using published
-assumptions; they are not provider billing data.
-
-## Structured workflows
-
-For semantic multi-step work, the default MCP server exposes exactly six tools:
-
-- `resume_delta` for bounded changes since a saved revision.
-- `enqueue_batch` and `complete_batch` for many units in one round trip.
-- `check_task` only when one complete record is required.
-- `fail_task` for one unrecoverable checkpoint.
-- `work_receipt` for evidence plus Git working-tree checks.
-
-This deliberately keeps claim, lease, agent-registry, health, audit, and other
-queue schemas out of every coding session's fixed context. Users who explicitly
-need the complete multi-agent surface can launch `djobs-mcp-full` (or
-`python -m djobs.delta_mcp`). Standalone workers still use `djobs serve`.
-
-## Compatibility
-
-| Host | Current status |
+| Tool | Purpose |
 |---|---|
-| GitHub Copilot in VS Code | Automatic hooks, native MCP registration, setup, pause/resume, and diagnostics are implemented and tested. |
-| GitHub Copilot CLI/cloud hook format | Supported by the hook adapter and unit tests. |
-| Claude Code, Codex, Cursor, Cline, Gemini, other MCP hosts | MCP workflows are available when the host supports MCP. Automatic hook behavior depends on that host's hook protocol and still needs broader real-world validation. |
-| Plain browser chat without tools | Not automatic; djobs needs MCP or a compatible installed hook host. |
+| `sync_workspace()` | Resolve the current repo and return unfinished, failed, recently completed, and currently owned work under a token budget. |
+| `checkpoint(summary, path?, details?)` | Save or resume one unit of work and atomically claim it with an expiring lease. |
+| `handoff(task_id, evidence, completed?)` | Release work to another agent or complete it with bounded evidence. |
+| `resume_delta(correlation_id, ...)` | Backward-compatible revision recovery for existing integrations. |
 
-The compatibility table is intentionally conservative: shared protocol support
-is not presented as proof of full end-to-end validation on every agent.
+The lower-level queue API remains available through `djobs-mcp-full` for advanced clients that explicitly need enqueue, claim, heartbeat, lease, audit, fleet, and health tools.
 
-## Safety and privacy
+## How repository detection works
 
-- Queue data stays local unless you intentionally point clients at a shared database.
-- The default MCP exposes six coding tools; full queue and multi-agent schemas are opt-in.
-- Coding MCP entry points do not start background workers or schedulers; run `djobs serve` explicitly when general-purpose job execution is wanted.
-- `djobs pause` disables rewriting and recovery without deleting state.
-- The local dashboard binds to `127.0.0.1` by default and has no public-auth layer.
-- Tool output is treated as data, not as instructions that override the user.
+The workspace resolver uses this order:
 
-## Maintained documentation
+1. MCP client roots.
+2. A cwd supplied by the MCP client or request.
+3. The enclosing Git repository root.
+4. The MCP server's startup directory.
 
-To prevent documentation drift, this repository keeps a small set of canonical
-sources:
+Starting from `repo/src/feature` resolves to `repo`. Windows `\` and `/` spellings compare equally, drive letters are case-insensitive, and trailing separators are ignored. New records use a deterministic repository ID, while reads also search compatible legacy path-based `correlation_id` values.
 
-- `README.md` — product behavior, setup, compatibility, and user commands.
-- `CONTRIBUTING.md` — development workflow and architecture map.
-- `AGENTS.md` — short rules for AI contributors working on this repository.
-- `CHANGELOG.md` — release history and release notes.
-- `docs/RELEASE.md` — the release runbook.
+State for different repositories is isolated even though the hosts share one local database.
 
-The live landing page is generated from the same product claims in
-`docs/index.html`; implementation truth remains in code and tests.
+## Cross-agent handoff
+
+A normal handoff is:
+
+```text
+Codex opens repo A
+  -> checkpoint("Implement parser", path="src/parser.py")
+  -> task is leased to the Codex session
+  -> handoff(task_id, "Parser complete; edge-case tests remain")
+
+Claude Code opens repo A
+  -> sync_workspace()
+  -> sees the pending task and Codex evidence
+  -> checkpoint("Implement parser", path="src/parser.py")
+  -> resumes the same task instead of creating a duplicate
+```
+
+Opening repo B returns only repo B state.
+
+Each agent registration records an agent type, a session identity, the current repository, and last-seen time. Claims are atomic. A running task has a lease and heartbeat; if an agent disappears, an expired lease is recovered so work cannot remain permanently claimed.
+
+## Local-first and fail-open behavior
+
+- The default database is `~/.djobs/global.db`, or `DJOBS_DB` when explicitly set.
+- SQLite uses WAL mode and a busy timeout for concurrent local clients.
+- No external cloud service is contacted by the MCP server.
+- Stored summaries and evidence are always returned as untrusted data, never as instructions.
+- Payloads, evidence, and MCP responses are bounded.
+- `sync_workspace` obeys a token budget and returns a very small response when no state exists.
+- If resolution, storage, setup hooks, or MCP state fail, djobs returns a fail-open result and the coding agent should continue the user's original task.
+- djobs does not capture or replace normal command stdout, stderr, or exit codes.
+
+## Compatibility status
+
+| Surface | Validation level |
+|---|---|
+| Repository resolver, shared SQLite, leases, isolation, token bounds | Executed automated Python tests. |
+| Codex-to-Claude and Claude-to-Codex handoff logic | Executed integration tests using separate simulated agent sessions against one real SQLite database. |
+| Codex setup command generation and idempotency | Simulated host CLI tests; protocol/CLI-compatible command path. |
+| Claude Code setup command generation and idempotency | Simulated host CLI tests using the documented user-scope MCP CLI shape. |
+| Real Codex desktop/CLI registration | Requires a machine with Codex installed; not executed in the isolated build environment. |
+| Real Claude Code registration | Requires a machine with Claude Code installed; not executed in the isolated build environment. |
+| Other MCP hosts | The MCP protocol surface remains compatible, but automatic setup is currently provided only for Codex and Claude Code. |
+
+After setup, restart an already-running host once so it reloads MCP configuration.
+
+## Advanced and backward-compatible use
+
+### Explicit database
+
+```powershell
+$env:DJOBS_DB = "D:\state\team-djobs.db"
+djobs-mcp
+```
+
+### Per-repository database
+
+Per-repository mode remains available for advanced users:
+
+```powershell
+djobs mcp --db .djobs/state.db
+```
+
+Do not commit the database. The normal zero-config setup uses the shared user database and repository scoping instead.
+
+### Full MCP surface
+
+```powershell
+djobs-mcp-full
+# or
+python -m djobs.delta_mcp
+```
+
+Existing calls to `resume_delta(correlation_id=...)`, `resume_session`, enqueue/complete/fail, claim/heartbeat/release, and the Python queue APIs remain supported on their existing advanced entry points.
+
+### Existing VS Code workflow
+
+`djobs init`, `djobs install-mcp`, the VS Code extension, hooks, dashboard, receipt, audit, and token-savings commands remain available. `djobs setup all` is the simpler cross-agent path and does not write project files.
+
+## Useful commands
+
+```powershell
+djobs doctor
+djobs receipt --correlation-id <legacy-or-explicit-id>
+djobs audit
+djobs dashboard
+djobs token-savings
+djobs pause
+djobs unpause
+```
 
 ## Development
 
@@ -162,15 +163,22 @@ The live landing page is generated from the same product claims in
 git clone https://github.com/jhuang-tw/djobs.git
 cd djobs
 python -m venv .venv
-pip install -e ".[dev,pg]"
-pre-commit install
-pre-commit run --all-files
+# activate the venv
+python -m pip install -e ".[dev,pg]"
+
+ruff check src/ tests/
+ruff format --check src/ tests/
+mypy
 pytest -q
+
+cd vscode-ext
+npm ci
+npx tsc -p ./ --noEmit
+npm run compile
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) before changing code and
-[docs/RELEASE.md](docs/RELEASE.md) before publishing.
+See `CONTRIBUTING.md` and `AGENTS.md` before changing public behavior.
 
 ## License
 
-[MIT](LICENSE)
+MIT

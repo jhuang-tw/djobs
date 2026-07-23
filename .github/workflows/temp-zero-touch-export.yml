@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - feature/zero-touch-first-mcp-call
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: read

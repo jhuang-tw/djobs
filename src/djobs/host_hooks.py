@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import subprocess
 import sys
@@ -27,8 +28,15 @@ _JSON_EVENTS = (
 _SUPPORTED = ("codex", "claude", "gemini", "kimi")
 
 
-def _command(argv: Sequence[str], *, windows: bool = False) -> str:
-    return subprocess.list2cmdline(list(argv)) if windows else shlex.join(list(argv))
+def _command(argv: Sequence[str], *, windows: bool | None = None) -> str:
+    """Quote one hook command for the target shell.
+
+    JSON/TOML hook formats store a command string. Use native Windows quoting
+    when installing on Windows; POSIX shlex quoting is only correct on POSIX.
+    """
+
+    use_windows = os.name == "nt" if windows is None else windows
+    return subprocess.list2cmdline(list(argv)) if use_windows else shlex.join(list(argv))
 
 
 def _hook_argv(event: str, client: str, database: Path, mode: str) -> list[str]:
@@ -67,7 +75,7 @@ def _json_handler(event: str, client: str, database: Path, mode: str) -> dict[st
         }
     return {
         "type": "command",
-        "command": command,
+        "command": _command(argv, windows=False),
         "commandWindows": _command(argv, windows=True),
         "timeout": 15,
         "statusMessage": "Recording djobs repository observations",
@@ -82,6 +90,7 @@ def _specs(client: str) -> tuple[tuple[str, str, str | None], ...]:
             ("SessionStart", "session-start", "startup|resume|clear|compact"),
             ("PostToolUse", "post", "Bash|apply_patch|Edit|Write"),
             ("PreCompact", "pre-compact", "manual|auto"),
+            ("SessionEnd", "session-end", None),
         )
     if client == "claude":
         return (
@@ -92,11 +101,14 @@ def _specs(client: str) -> tuple[tuple[str, str, str | None], ...]:
             ("SessionEnd", "session-end", None),
         )
     if client == "gemini":
+        # Gemini lifecycle matchers are exact strings rather than regex
+        # alternations. Omitting them intentionally matches every documented
+        # startup/compression/end reason.
         return (
-            ("SessionStart", "session-start", "startup|resume|clear"),
+            ("SessionStart", "session-start", None),
             ("AfterTool", "post", "run_shell_command|write_file|replace|write_.*"),
-            ("PreCompress", "pre-compact", "*"),
-            ("SessionEnd", "session-end", "*"),
+            ("PreCompress", "pre-compact", None),
+            ("SessionEnd", "session-end", None),
         )
     if client == "kimi":
         return (

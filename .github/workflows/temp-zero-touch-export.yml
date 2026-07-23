@@ -1,0 +1,22 @@
+name: Temporary zero-touch export
+
+on:
+  push:
+    branches:
+      - feature/zero-touch-first-mcp-call
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Archive exact source
+        run: git archive --format=zip --output=djobs-source.zip HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: djobs-zero-touch-source
+          path: djobs-source.zip
+          retention-days: 1

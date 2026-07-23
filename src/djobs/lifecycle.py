@@ -8,20 +8,29 @@ explicit MCP/CLI action through ``checkpoint`` and ``handoff``.
 from __future__ import annotations
 
 import json
+import re
 from datetime import timedelta
 from typing import Any
 
 from djobs.handoff import _recover, _resolve, sync_workspace
-from djobs.observations import (
-    capture_repository_snapshot,
-    clean,
-    recent_observations,
-    record_observation,
-)
+from djobs.observations import capture_repository_snapshot, clean, record_observation
 
 _CODING_TYPES = ("coding-session", "coding-checkpoint")
 _LEASE_SECONDS = 600
 _MAX_EVIDENCE = 500
+_SECRET_ASSIGNMENT_RE = re.compile(
+    r"(?i)\b(api[_-]?key|access[_-]?token|token|password|passwd|secret|authorization)"
+    r"(\s*[:=]\s*|\s+)([^\s,;]+)"
+)
+_BEARER_RE = re.compile(r"(?i)(\bbearer\s+)[A-Za-z0-9._~+/=-]+")
+_URL_CREDENTIAL_RE = re.compile(r"(://[^:/\s]+:)[^@\s]+@")
+
+
+def _redact(value: Any) -> str:
+    text = str(value or "")
+    text = _BEARER_RE.sub(r"\1<redacted>", text)
+    text = _SECRET_ASSIGNMENT_RE.sub(r"\1\2<redacted>", text)
+    return _URL_CREDENTIAL_RE.sub(r"\1<redacted>@", text)
 
 
 def _cwd(payload: dict[str, Any]) -> str | None:
@@ -75,10 +84,10 @@ def _tool_input_label(payload: dict[str, Any]) -> str:
     raw = payload.get("tool_input", payload.get("toolInput", {}))
     if not isinstance(raw, dict):
         return ""
-    for key in ("command", "file_path", "path", "notebook_path"):
+    for key in ("file_path", "path", "notebook_path", "command"):
         value = raw.get(key)
         if isinstance(value, str) and value.strip():
-            return clean(value, 220)
+            return clean(_redact(value), 220)
     return ""
 
 
@@ -90,9 +99,9 @@ def _response_excerpt(payload: dict[str, Any], *, failed: bool) -> str:
         for key in ("stderr", "stdout", "error", "message", "output", "llmContent"):
             item = value.get(key)
             if item:
-                return clean(item, 220)
-        return clean(json.dumps(value, ensure_ascii=False, default=str), 220)
-    return clean(value, 220)
+                return clean(_redact(item), 220)
+        value = json.dumps(value, ensure_ascii=False, default=str)
+    return clean(_redact(value), 220)
 
 
 def _response_failed(payload: dict[str, Any]) -> bool:
@@ -159,14 +168,6 @@ def session_start(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]
     try:
         cwd = _cwd(payload)
         session_id = _session_id(payload)
-        workspace, agent, queue, repo = _resolve(
-            roots=None,
-            cwd=cwd,
-            agent_type=agent_type,
-            session_id=session_id,
-        )
-        _recover(queue, repo)
-        capture_repository_snapshot(repo, workspace, agent)
         synced = json.loads(
             sync_workspace(
                 cwd=cwd,
@@ -176,9 +177,11 @@ def session_start(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]
                 token_budget=450,
             )
         )
-        observations = recent_observations(repo, workspace, limit=5)
         tasks = synced.get("tasks") if isinstance(synced.get("tasks"), list) else []
         failed = synced.get("failed") if isinstance(synced.get("failed"), list) else []
+        observations = (
+            synced.get("observations") if isinstance(synced.get("observations"), list) else []
+        )
         if not tasks and not failed and not observations:
             return {}
 
@@ -196,7 +199,7 @@ def session_start(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]
                 f"- task [{item.get('status', 'pending')}] "
                 f"{clean(item.get('summary'), 260)}{suffix}"
             )
-        for item in observations:
+        for item in observations[:5]:
             tool = f"/{item['tool']}" if item.get("tool") else ""
             lines.append(
                 f"- observation [{item['agent']}:{item['event']}{tool}] "

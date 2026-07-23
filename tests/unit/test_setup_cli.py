@@ -93,6 +93,17 @@ def test_cli_timeout_is_reported_as_partial_without_traceback(tmp_path: Path) ->
     assert result["hooks"]["status"] == "configured"
 
 
+def test_claude_options_precede_server_name(tmp_path: Path) -> None:
+    command = setup_command("claude", tmp_path / "shared.db", ["djobs-mcp"])
+
+    assert command[:5] == ["claude", "mcp", "add", "--scope", "user"]
+    name_index = command.index("djobs")
+    separator_index = command.index("--")
+    assert name_index > command.index("DJOBS_AGENT_TYPE=claude")
+    assert separator_index == name_index + 1
+    assert command[separator_index + 1 :] == ["djobs-mcp"]
+
+
 def test_gemini_command_uses_user_scope_and_shared_database(tmp_path: Path) -> None:
     command = setup_command("gemini", tmp_path / "shared.db", ["djobs-mcp"])
     assert command[:3] == ["gemini", "mcp", "add"]

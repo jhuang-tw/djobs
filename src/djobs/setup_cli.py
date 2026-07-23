@@ -201,6 +201,45 @@ def _kimi_mcp_installed(*, home: Path | None) -> bool:
     return isinstance(servers, dict) and isinstance(servers.get("djobs"), dict)
 
 
+def _mcp_setup(
+    host: Host,
+    host_name: str,
+    database: Path,
+    command: list[str],
+    *,
+    repair: bool,
+    runner: Runner,
+    server: Sequence[str] | None,
+    home: Path | None,
+) -> tuple[str, str, str | None]:
+    """Configure only MCP and return status, message, and optional error."""
+
+    try:
+        if host_name == "kimi":
+            mcp = _install_kimi_mcp(database, server, home=home)
+            status = str(mcp["status"])
+            return status, f"Kimi MCP {status} at {mcp['path']}", None
+
+        registered = _exists(host, runner=runner)
+        if registered and repair:
+            remove = _run(_remove_command(host), runner=runner)
+            if remove.returncode != 0:
+                message = remove.stderr.strip() or remove.stdout.strip()
+                return "error", "existing djobs MCP was left unchanged", message or "remove failed"
+            registered = False
+        if registered:
+            return "unchanged", "djobs MCP is already registered", None
+
+        executable_command = [host.executable, *command[1:]]
+        result = _run(executable_command, runner=runner)
+        if result.returncode != 0:
+            message = result.stderr.strip() or result.stdout.strip() or "registration failed"
+            return "error", "djobs MCP registration failed", message
+        return "configured", "registered the shared local djobs MCP", None
+    except ValueError as exc:
+        return "error", "djobs MCP configuration needs review", str(exc)
+
+
 def configure_host(
     host_name: str,
     *,
@@ -211,7 +250,7 @@ def configure_host(
     server: Sequence[str] | None = None,
     home: Path | None = None,
 ) -> dict[str, object]:
-    """Configure MCP plus a thin observation adapter, preserving unrelated config."""
+    """Configure MCP and passive hooks independently, preserving partial success."""
 
     database = db or shared_db_path()
     host = _host(host_name, which=which)
@@ -224,36 +263,20 @@ def configure_host(
             "message": f"{host_name} CLI was not found; no client configuration was changed",
         }
 
-    try:
-        if host_name == "kimi":
-            mcp = _install_kimi_mcp(database, server, home=home)
-            mcp_status = str(mcp["status"])
-            mcp_message = f"Kimi MCP {mcp_status} at {mcp['path']}"
-        else:
-            registered = _exists(host, runner=runner)
-            if registered and repair:
-                remove = _run(_remove_command(host), runner=runner)
-                if remove.returncode != 0:
-                    raise ValueError(remove.stderr.strip() or "could not remove old djobs MCP")
-                registered = False
-            if registered:
-                mcp_status = "unchanged"
-                mcp_message = "djobs MCP is already registered"
-            else:
-                executable_command = [host.executable, *command[1:]]
-                result = _run(executable_command, runner=runner)
-                if result.returncode != 0:
-                    return {
-                        "host": host_name,
-                        "status": "manual",
-                        "command": _quoted(command),
-                        "message": result.stderr.strip()
-                        or result.stdout.strip()
-                        or "registration failed",
-                    }
-                mcp_status = "configured"
-                mcp_message = "registered the shared local djobs MCP"
+    mcp_status, mcp_message, mcp_error = _mcp_setup(
+        host,
+        host_name,
+        database,
+        command,
+        repair=repair,
+        runner=runner,
+        server=server,
+        home=home,
+    )
 
+    hook_result: dict[str, object] | None = None
+    hook_error: str | None = None
+    try:
         hook_result = install_host_hooks(
             host_name,
             database,
@@ -262,23 +285,31 @@ def configure_host(
             force=repair,
         )
     except ValueError as exc:
-        return {
-            "host": host_name,
-            "status": "manual",
-            "command": _quoted(command) if command else "",
-            "message": f"configuration needs review: {exc}",
-        }
+        hook_error = str(exc)
 
-    overall = "configured" if "configured" in {mcp_status, hook_result["status"]} else "unchanged"
+    hook_status = str(hook_result["status"]) if hook_result is not None else "error"
+    errors = [item for item in (mcp_error, hook_error) if item]
+    configured = "configured" in {mcp_status, hook_status}
+    if errors:
+        overall = "partial" if mcp_status != "error" or hook_status != "error" else "manual"
+    else:
+        overall = "configured" if configured else "unchanged"
+
     trust_note = " Open /hooks once to review and trust it." if host_name == "codex" else ""
+    hook_message = (
+        f"passive observation adapter {hook_status} at {hook_result['path']}"
+        if hook_result is not None
+        else f"passive observation adapter failed: {hook_error}"
+    )
+    error_note = f" Errors: {'; '.join(errors)}." if errors else ""
     return {
         "host": host_name,
         "status": overall,
-        "hooks": hook_result,
-        "message": (
-            f"{mcp_message}; passive session/tool observation adapter "
-            f"{hook_result['status']} at {hook_result['path']}.{trust_note}"
-        ),
+        "command": _quoted(command) if mcp_error and command else "",
+        "mcp": {"status": mcp_status, "error": mcp_error},
+        "hooks": hook_result
+        or {"host": host_name, "status": "error", "error": hook_error},
+        "message": f"{mcp_message}; {hook_message}.{error_note}{trust_note}",
     }
 
 
@@ -295,7 +326,11 @@ def remove_host(
         try:
             mcp = _remove_kimi_mcp(home=home)
         except ValueError as exc:
-            return {"host": host_name, "status": "error", "message": str(exc)}
+            return {
+                "host": host_name,
+                "status": "partial" if hook_result["status"] == "removed" else "error",
+                "message": f"hooks are {hook_result['status']}; Kimi MCP removal failed: {exc}",
+            }
         overall = "removed" if "removed" in {mcp["status"], hook_result["status"]} else "absent"
         return {
             "host": host_name,
@@ -315,13 +350,22 @@ def remove_host(
             "message": f"djobs MCP was not registered; hooks are {hook_result['status']}",
         }
     result = _run(_remove_command(host), runner=runner)
-    mcp_status = "removed" if result.returncode == 0 else "error"
+    if result.returncode == 0:
+        return {
+            "host": host_name,
+            "status": "removed",
+            "message": result.stderr.strip()
+            or result.stdout.strip()
+            or f"removed djobs MCP; hooks are {hook_result['status']}",
+        }
+    status = "partial" if hook_result["status"] == "removed" else "error"
     return {
         "host": host_name,
-        "status": mcp_status,
-        "message": result.stderr.strip()
-        or result.stdout.strip()
-        or f"removed djobs MCP; hooks are {hook_result['status']}",
+        "status": status,
+        "message": (
+            f"hooks are {hook_result['status']}; MCP removal failed: "
+            f"{result.stderr.strip() or result.stdout.strip() or 'unknown error'}"
+        ),
     }
 
 

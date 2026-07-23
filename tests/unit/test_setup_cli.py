@@ -53,6 +53,24 @@ def test_codex_setup_is_idempotent_and_installs_passive_adapter(tmp_path: Path) 
     assert "Stop" not in config["hooks"]
 
 
+def test_mcp_failure_does_not_discard_working_passive_adapter(tmp_path: Path) -> None:
+    runner = FakeRunner([1, 1])
+    result = configure_host(
+        "codex",
+        db=tmp_path / "shared.db",
+        runner=runner,
+        which=_which,
+        server=["djobs-mcp"],
+        home=tmp_path,
+    )
+
+    assert result["status"] == "partial"
+    assert result["mcp"]["status"] == "error"
+    assert result["hooks"]["status"] == "configured"
+    assert str(result["command"]).startswith("codex mcp add")
+    assert (tmp_path / ".codex" / "hooks.json").exists()
+
+
 def test_gemini_command_uses_user_scope_and_shared_database(tmp_path: Path) -> None:
     command = setup_command("gemini", tmp_path / "shared.db", ["djobs-mcp"])
     assert command[:3] == ["gemini", "mcp", "add"]

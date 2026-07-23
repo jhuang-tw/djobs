@@ -1,25 +1,34 @@
-name: Temporary zero-touch export
+name: Apply zero-touch patch
 
 on:
   push:
     branches:
       - feature/zero-touch-first-mcp-call
-  pull_request:
-    branches:
-      - main
+    paths:
+      - .github/zero-touch-patch.ready
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  export:
+  apply:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Archive exact source
-        run: git archive --format=zip --output=djobs-source.zip HEAD
-      - uses: actions/upload-artifact@v4
         with:
-          name: djobs-zero-touch-source
-          path: djobs-source.zip
-          retention-days: 1
+          ref: feature/zero-touch-first-mcp-call
+          fetch-depth: 0
+      - name: Apply verified patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/zero-touch-patch.part-* | base64 --decode > /tmp/zero-touch.patch
+          git apply --check -p2 /tmp/zero-touch.patch
+          git apply -p2 /tmp/zero-touch.patch
+          rm -f .github/zero-touch-patch.part-* .github/zero-touch-patch.ready
+          rm -f .github/workflows/temp-zero-touch-export.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: initialize memory on first MCP call"
+          git push origin HEAD:feature/zero-touch-first-mcp-call

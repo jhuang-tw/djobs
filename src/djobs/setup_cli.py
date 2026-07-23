@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -19,6 +20,9 @@ from djobs.workspace import shared_db_path
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 Which = Callable[[str], str | None]
 _CLIENTS = ("codex", "claude", "gemini", "kimi")
+_GEMINI_DJOBS_LINE_RE = re.compile(
+    r"(?im)^\s*(?:[✓✗●○*+-]\s*)?djobs(?:\s|:)"
+)
 
 
 @dataclass(frozen=True)
@@ -114,7 +118,7 @@ def _run(
 def _exists(host: Host, *, runner: Runner = subprocess.run) -> bool:
     if host.name == "gemini":
         result = _run([host.executable, "mcp", "list"], runner=runner)
-        return result.returncode == 0 and "djobs" in result.stdout.lower()
+        return result.returncode == 0 and bool(_GEMINI_DJOBS_LINE_RE.search(result.stdout))
     result = _run([host.executable, "mcp", "get", "djobs"], runner=runner)
     return result.returncode == 0
 
@@ -188,14 +192,15 @@ def _remove_kimi_mcp(*, home: Path | None) -> dict[str, object]:
     servers.pop("djobs", None)
     if not servers:
         document.pop("mcpServers", None)
-    path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    content = json.dumps(document, ensure_ascii=False, indent=2) + "\n"
+    path.write_text(content, encoding="utf-8")
     return {"status": "removed", "path": str(path)}
 
 
 def _kimi_mcp_installed(*, home: Path | None) -> bool:
     try:
         document = _load_json_object(_kimi_mcp_path(home))
-    except ValueError:
+    except (OSError, ValueError):
         return False
     servers = document.get("mcpServers")
     return isinstance(servers, dict) and isinstance(servers.get("djobs"), dict)
@@ -225,7 +230,8 @@ def _mcp_setup(
             remove = _run(_remove_command(host), runner=runner)
             if remove.returncode != 0:
                 message = remove.stderr.strip() or remove.stdout.strip()
-                return "error", "existing djobs MCP was left unchanged", message or "remove failed"
+                error = message or "remove failed"
+                return "error", "existing djobs MCP was left unchanged", error
             registered = False
         if registered:
             return "unchanged", "djobs MCP is already registered", None
@@ -236,7 +242,7 @@ def _mcp_setup(
             message = result.stderr.strip() or result.stdout.strip() or "registration failed"
             return "error", "djobs MCP registration failed", message
         return "configured", "registered the shared local djobs MCP", None
-    except ValueError as exc:
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
         return "error", "djobs MCP configuration needs review", str(exc)
 
 
@@ -258,7 +264,7 @@ def configure_host(
     if host is None:
         return {
             "host": host_name,
-            "status": "manual",
+            "status": "unavailable",
             "command": _quoted(command) if command else "",
             "message": f"{host_name} CLI was not found; no client configuration was changed",
         }
@@ -284,14 +290,14 @@ def configure_host(
             mode="smart",
             force=repair,
         )
-    except ValueError as exc:
+    except (OSError, ValueError) as exc:
         hook_error = str(exc)
 
     hook_status = str(hook_result["status"]) if hook_result is not None else "error"
     errors = [item for item in (mcp_error, hook_error) if item]
     configured = "configured" in {mcp_status, hook_status}
     if errors:
-        overall = "partial" if mcp_status != "error" or hook_status != "error" else "manual"
+        overall = "partial" if mcp_status != "error" or hook_status != "error" else "error"
     else:
         overall = "configured" if configured else "unchanged"
 
@@ -313,6 +319,13 @@ def configure_host(
     }
 
 
+def _remove_hooks_safely(host_name: str, home: Path | None) -> dict[str, object]:
+    try:
+        return remove_host_hooks(host_name, home=home)
+    except (OSError, ValueError) as exc:
+        return {"host": host_name, "status": "error", "error": str(exc)}
+
+
 def remove_host(
     host_name: str,
     *,
@@ -320,52 +333,74 @@ def remove_host(
     which: Which = shutil.which,
     home: Path | None = None,
 ) -> dict[str, object]:
-    hook_result = remove_host_hooks(host_name, home=home)
+    hook_result = _remove_hooks_safely(host_name, home)
+    hook_status = str(hook_result["status"])
     host = _host(host_name, which=which)
+
     if host_name == "kimi":
         try:
             mcp = _remove_kimi_mcp(home=home)
-        except ValueError as exc:
-            return {
-                "host": host_name,
-                "status": "partial" if hook_result["status"] == "removed" else "error",
-                "message": f"hooks are {hook_result['status']}; Kimi MCP removal failed: {exc}",
-            }
-        overall = "removed" if "removed" in {mcp["status"], hook_result["status"]} else "absent"
+            mcp_status = str(mcp["status"])
+            mcp_error = None
+        except (OSError, ValueError) as exc:
+            mcp_status = "error"
+            mcp_error = str(exc)
+        removed = "removed" in {mcp_status, hook_status}
+        failed = "error" in {mcp_status, hook_status}
+        status = "partial" if removed and failed else "error" if failed else "removed" if removed else "absent"
+        error_note = f"; error: {mcp_error or hook_result.get('error')}" if failed else ""
         return {
             "host": host_name,
-            "status": overall,
-            "message": f"Kimi MCP is {mcp['status']}; hooks are {hook_result['status']}",
+            "status": status,
+            "message": f"Kimi MCP is {mcp_status}; hooks are {hook_status}{error_note}",
         }
+
     if host is None:
         return {
             "host": host_name,
-            "status": hook_result["status"],
-            "message": f"host CLI was not found; hooks are {hook_result['status']}",
+            "status": hook_status if hook_status != "absent" else "unavailable",
+            "message": f"host CLI was not found; hooks are {hook_status}",
         }
-    if not _exists(host, runner=runner):
+
+    try:
+        registered = _exists(host, runner=runner)
+    except (OSError, subprocess.SubprocessError) as exc:
+        status = "partial" if hook_status == "removed" else "error"
         return {
             "host": host_name,
-            "status": hook_result["status"],
-            "message": f"djobs MCP was not registered; hooks are {hook_result['status']}",
+            "status": status,
+            "message": f"hooks are {hook_status}; MCP detection failed: {exc}",
         }
-    result = _run(_remove_command(host), runner=runner)
+    if not registered:
+        return {
+            "host": host_name,
+            "status": hook_status,
+            "message": f"djobs MCP was not registered; hooks are {hook_status}",
+        }
+
+    try:
+        result = _run(_remove_command(host), runner=runner)
+    except (OSError, subprocess.SubprocessError) as exc:
+        status = "partial" if hook_status == "removed" else "error"
+        return {
+            "host": host_name,
+            "status": status,
+            "message": f"hooks are {hook_status}; MCP removal failed: {exc}",
+        }
     if result.returncode == 0:
         return {
             "host": host_name,
             "status": "removed",
             "message": result.stderr.strip()
             or result.stdout.strip()
-            or f"removed djobs MCP; hooks are {hook_result['status']}",
+            or f"removed djobs MCP; hooks are {hook_status}",
         }
-    status = "partial" if hook_result["status"] == "removed" else "error"
+    status = "partial" if hook_status == "removed" else "error"
+    message = result.stderr.strip() or result.stdout.strip() or "unknown error"
     return {
         "host": host_name,
         "status": status,
-        "message": (
-            f"hooks are {hook_result['status']}; MCP removal failed: "
-            f"{result.stderr.strip() or result.stdout.strip() or 'unknown error'}"
-        ),
+        "message": f"hooks are {hook_status}; MCP removal failed: {message}",
     }
 
 
@@ -379,10 +414,15 @@ def doctor_results(
     for name in _CLIENTS:
         host = _host(name, which=which)
         hook = host_hook_doctor(name, home=home)
-        if name == "kimi":
-            registered = _kimi_mcp_installed(home=home)
-        else:
-            registered = _exists(host, runner=runner) if host is not None else False
+        error: str | None = None
+        try:
+            if name == "kimi":
+                registered = _kimi_mcp_installed(home=home)
+            else:
+                registered = _exists(host, runner=runner) if host is not None else False
+        except (OSError, subprocess.SubprocessError) as exc:
+            registered = False
+            error = str(exc)
         results.append(
             {
                 "host": name,
@@ -390,6 +430,7 @@ def doctor_results(
                 "registered": registered,
                 "hooks": hook["installed"],
                 "hook_path": hook["path"],
+                "error": error,
             }
         )
     database = shared_db_path().expanduser()
@@ -413,7 +454,8 @@ def print_setup_doctor() -> None:
         state = "registered" if item["registered"] else "not registered"
         available = "available" if item["available"] else "CLI not found"
         hooks = "adapter installed" if item["hooks"] else "adapter missing"
-        print(f"  {item['host']}: {available}, {state}, {hooks}")
+        error = f", check failed: {item['error']}" if item.get("error") else ""
+        print(f"  {item['host']}: {available}, {state}, {hooks}{error}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -422,13 +464,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("target", nargs="?", choices=[*_CLIENTS, "all"], default="all")
     args = parser.parse_args(argv)
     targets = list(_CLIENTS) if args.target == "all" else [args.target]
+    failed = False
 
     for target in targets:
         if args.action == "remove":
             result = remove_host(target)
         else:
             result = configure_host(target, repair=args.action == "repair")
-        print(f"{target}: {result['status']} — {result['message']}")
+        status = str(result["status"])
+        display_status = "skipped" if args.target == "all" and status == "unavailable" else status
+        print(f"{target}: {display_status} — {result['message']}")
         if result.get("command"):
             print(result["command"])
-    return 0
+        if status in {"partial", "error"} or (status == "unavailable" and args.target != "all"):
+            failed = True
+    return 1 if failed else 0

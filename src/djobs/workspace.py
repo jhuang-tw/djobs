@@ -84,10 +84,40 @@ def normalize_path(path: str | os.PathLike[str]) -> str:
     return raw
 
 
+def _mounted_windows_alias(normalized: str) -> str | None:
+    """Translate common WSL/MSYS spellings into one Windows identity key."""
+
+    parts = normalized.split("/")
+    if (
+        len(parts) >= 3
+        and parts[0] == ""
+        and parts[1].casefold() == "mnt"
+        and len(parts[2]) == 1
+        and parts[2].isalpha()
+    ):
+        suffix = "/".join(parts[3:])
+        return f"{parts[2].lower()}:/{suffix}".rstrip("/") or f"{parts[2].lower()}:/"
+
+    is_msys = bool(os.environ.get("MSYSTEM") or os.environ.get("CYGWIN"))
+    if (
+        is_msys
+        and len(parts) >= 2
+        and parts[0] == ""
+        and len(parts[1]) == 1
+        and parts[1].isalpha()
+    ):
+        suffix = "/".join(parts[2:])
+        return f"{parts[1].lower()}:/{suffix}".rstrip("/") or f"{parts[1].lower()}:/"
+    return None
+
+
 def path_key(path: str | os.PathLike[str]) -> str:
-    """Return the comparison key used for repository identity."""
+    """Return the cross-shell comparison key used for repository identity."""
 
     normalized = normalize_path(path)
+    alias = _mounted_windows_alias(normalized)
+    if alias is not None:
+        return alias.casefold()
     if len(normalized) >= 2 and normalized[1] == ":":
         return normalized.casefold()
     return normalized
@@ -169,21 +199,22 @@ def resolve_workspace(
         source = "server_cwd"
 
     canonical = normalize_path(root)
-    digest = hashlib.sha256(path_key(canonical).encode("utf-8")).hexdigest()[:24]
+    identity = path_key(canonical)
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
     workspace_id = f"repo:{digest}"
 
-    # Reads remain compatible with old clients that stored the request cwd (often
-    # a repository subdirectory) or the MCP server startup directory directly as
-    # correlation_id. New writes always use the deterministic workspace_id.
-    legacy_candidates = [canonical, *root_candidates, *(resolved_roots or [])]
+    # Reads remain compatible with old clients that stored request cwd, a Git
+    # subdirectory, or an alternate Windows/WSL/MSYS spelling directly.
+    legacy_candidates = [canonical, identity, *root_candidates, *(resolved_roots or [])]
     if cwd is not None and os.fspath(cwd).strip():
         legacy_candidates.append(normalize_path(os.fspath(cwd)))
     if server_cwd is not None and os.fspath(server_cwd).strip():
         legacy_candidates.append(normalize_path(os.fspath(server_cwd)))
 
-    compatible: set[str] = {workspace_id, canonical}
+    compatible: set[str] = {workspace_id, canonical, identity}
     for value in legacy_candidates:
         compatible.update(correlation_id_variants(value))
+        compatible.update(correlation_id_variants(path_key(value)))
     return Workspace(
         root=canonical,
         workspace_id=workspace_id,
@@ -207,7 +238,7 @@ def resolve_agent_session(
     agent_type: str | None = None,
     session_id: str | None = None,
 ) -> AgentSession:
-    """Infer Codex/Claude identity while allowing explicit host overrides."""
+    """Infer a safe client/session identity while allowing explicit overrides."""
 
     detected_type = (agent_type or os.environ.get("DJOBS_AGENT_TYPE") or "").strip().lower()
     detected_session = (session_id or os.environ.get("DJOBS_AGENT_SESSION_ID") or "").strip()

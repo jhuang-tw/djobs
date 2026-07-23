@@ -5,12 +5,12 @@ from pathlib import Path
 
 import pytest
 
-from djobs import handoff, lifecycle
+from djobs import handoff, lifecycle, observations
 from djobs.hook_entrypoint import _emit
 from djobs.observations import recent_observations
 from djobs.queue.service import QueueService
 from djobs.storage.sqlite import SQLiteJobRepository
-from djobs.workspace import resolve_workspace
+from djobs.workspace import resolve_agent_session, resolve_workspace
 
 
 def _git_repo(path: Path) -> Path:
@@ -63,6 +63,35 @@ def test_prompt_context_is_once_per_session_and_resets_on_resume(
     workspace = resolve_workspace(cwd=str(root))
     visible = recent_observations(repository, workspace, limit=20)
     assert all(item["event"] != "context_injected" for item in visible)
+
+
+def test_visible_observation_retention_does_not_evict_injection_marker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _git_repo(tmp_path / "project")
+    repository = SQLiteJobRepository.from_path(tmp_path / "shared.db")
+    workspace = resolve_workspace(cwd=str(root))
+    agent = resolve_agent_session(
+        workspace,
+        agent_type="kimi",
+        session_id="long-session",
+    )
+    monkeypatch.setattr(observations, "_MAX_OBSERVATIONS_PER_WORKSPACE", 3)
+
+    assert observations.claim_context_injection(repository, workspace, agent)
+    for index in range(10):
+        observations.record_observation(
+            repository,
+            workspace,
+            agent,
+            "tool_result",
+            f"event {index}",
+        )
+
+    assert not observations.claim_context_injection(repository, workspace, agent)
+    visible = observations.recent_observations(repository, workspace, limit=20)
+    assert len(visible) == 3
 
 
 def test_redaction_covers_prefixed_quoted_json_and_flag_credentials() -> None:

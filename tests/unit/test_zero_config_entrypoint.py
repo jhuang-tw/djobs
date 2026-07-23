@@ -20,6 +20,7 @@ def _args(target: Path) -> argparse.Namespace:
         python="/custom/python",
         portable=False,
         write_instructions=False,
+        instructions_target="all",
     )
 
 
@@ -40,6 +41,26 @@ def test_install_mcp_preserves_other_servers(tmp_path: Path) -> None:
     data = json.loads(target.read_text(encoding="utf-8"))
     assert data["servers"]["other"]["command"] == "other-mcp"
     assert data["inputs"] == [{"id": "keep-me"}]
+    assert data["servers"]["djobs"]["autoApprove"] == [
+        "sync_workspace",
+        "resume_delta",
+    ]
+
+
+def test_init_does_not_install_legacy_command_checkpoint_hooks(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    target = tmp_path / ".vscode" / "mcp.json"
+    args = _args(target)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "_resolve_instruction_targets", lambda _target: [])
+
+    entrypoint._cmd_init_passive(args, cli, lambda _args: None)
+
+    assert target.exists()
+    assert not (tmp_path / ".github" / "hooks" / "djobs.json").exists()
+    data = json.loads(target.read_text(encoding="utf-8"))
     assert data["servers"]["djobs"]["autoApprove"] == [
         "sync_workspace",
         "resume_delta",

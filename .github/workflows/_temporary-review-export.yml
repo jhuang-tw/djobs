@@ -17,98 +17,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Apply locally validated patch
+      - name: Report start
         env:
-          PATCH_GZ_B64: |
-            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
-            SvqBu4/feoPhsZ1EWDb0v1R7OXnoUgAA
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr comment 16 --body "HARDENING_APPLY_STARTED=${GITHUB_RUN_ID}"
+      - name: Apply locally validated patch
         run: |
-          python - <<'PYCODE'
-          import base64
-          import gzip
-          import os
-          from pathlib import Path
-          data = base64.b64decode(''.join(os.environ['PATCH_GZ_B64'].split()))
-          Path('/tmp/hardening.patch').write_bytes(gzip.decompress(data))
-          PYCODE
+          base64 --decode .github/hardening.patch.gz.b64 | gzip --decompress > /tmp/hardening.patch
           git apply --binary --whitespace=error-all /tmp/hardening.patch
-          rm -f src/djobs/__pycache__/__init__.cpython-313.pyc src/djobs/__pycache__/daemon.cpython-313.pyc src/djobs/core/__pycache__/__init__.cpython-313.pyc src/djobs/core/__pycache__/errors.cpython-313.pyc src/djobs/core/__pycache__/models.cpython-313.pyc src/djobs/core/__pycache__/retry.cpython-313.pyc src/djobs/core/__pycache__/states.cpython-313.pyc src/djobs/observability/__pycache__/__init__.cpython-313.pyc src/djobs/observability/__pycache__/inspect.cpython-313.pyc src/djobs/observability/__pycache__/metrics.cpython-313.pyc src/djobs/queue/__pycache__/__init__.cpython-313.pyc src/djobs/queue/__pycache__/service.cpython-313.pyc src/djobs/scheduler/__pycache__/__init__.cpython-313.pyc src/djobs/scheduler/__pycache__/scheduler.cpython-313.pyc src/djobs/storage/__pycache__/__init__.cpython-313.pyc src/djobs/storage/__pycache__/events.cpython-313.pyc src/djobs/storage/__pycache__/schema.cpython-313.pyc src/djobs/storage/__pycache__/sqlite.cpython-313.pyc src/djobs/worker/__pycache__/__init__.cpython-313.pyc src/djobs/worker/__pycache__/pool.cpython-313.pyc src/djobs/worker/__pycache__/registry.cpython-313.pyc src/djobs/worker/__pycache__/runner.cpython-313.pyc
+          rm -f .github/hardening.patch.gz.b64
+          rm -f src/djobs/__pycache__/__init__.cpython-313.pyc src/djobs/__pycache__/daemon.cpython-313.pyc
+          find src/djobs -type f -path '*/__pycache__/*.pyc' -delete
       - name: Commit reviewed hardening
         env:
           GH_TOKEN: ${{ github.token }}

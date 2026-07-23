@@ -206,8 +206,62 @@ def replace_once(path: Path, old: str, new: str) -> None:
         raise SystemExit(f"expected patch target was not found in {path}")
 
 
+def patch_runtime_compatibility() -> None:
+    replace_once(
+        Path("src/djobs/entrypoint.py"),
+        'database = str(Path(args.db).expanduser().resolve())',
+        'database = os.path.expanduser(str(args.db))',
+    )
+    replace_once(
+        Path("src/djobs/entrypoint.py"),
+        'except (OSError, json.JSONDecodeError):\n            if not args.force:\n                print(f"Cannot safely read {target}; use --force only after reviewing it.")\n                raise SystemExit(1)',
+        'except (OSError, json.JSONDecodeError):\n            if not args.force:\n                print(f"Cannot safely read {target}; use --force only after reviewing it.")\n                raise SystemExit(1) from None',
+    )
+    replace_once(
+        Path("src/djobs/hook_entrypoint.py"),
+        'import sys\nfrom typing import Any, Callable',
+        'import sys\nfrom collections.abc import Callable\nfrom typing import Any',
+    )
+    replace_once(
+        Path("src/djobs/host_hooks.py"),
+        'import sys\nfrom pathlib import Path\nfrom typing import Any, Sequence',
+        'import sys\nfrom collections.abc import Sequence\nfrom pathlib import Path\nfrom typing import Any',
+    )
+    replace_once(
+        Path("src/djobs/setup_cli.py"),
+        'import sys\nfrom dataclasses import dataclass\nfrom pathlib import Path\nfrom typing import Callable, Sequence',
+        'import sys\nfrom collections.abc import Callable, Sequence\nfrom dataclasses import dataclass\nfrom pathlib import Path',
+    )
+    replace_once(
+        Path("src/djobs/observations.py"),
+        'f"{info.st_mode}:{info.st_size}:{info.st_mtime_ns}".encode("utf-8")',
+        'f"{info.st_mode}:{info.st_size}:{info.st_mtime_ns}".encode()',
+    )
+    replace_once(
+        Path("src/djobs/workspace.py"),
+        'import uuid\nfrom dataclasses import dataclass',
+        'import uuid\nfrom contextlib import suppress\nfrom dataclasses import dataclass',
+    )
+    replace_once(
+        Path("src/djobs/workspace.py"),
+        '    try:\n        candidate = candidate.resolve(strict=False)\n    except OSError:\n        pass',
+        '    with suppress(OSError):\n        candidate = candidate.resolve(strict=False)',
+    )
+    replace_once(
+        Path("src/djobs/workspace.py"),
+        '        suffix = identity[3:]\n        aliases.add(f"/mnt/{drive}/{suffix}".rstrip("/") if suffix else f"/mnt/{drive}")\n        aliases.add(f"/{drive}/{suffix}".rstrip("/") if suffix else f"/{drive}")',
+        '        suffix = normalized[3:] if _is_windows_path(normalized) else identity[3:]\n        aliases.add(f"/mnt/{drive}/{suffix}".rstrip("/") if suffix else f"/mnt/{drive}")\n        aliases.add(f"/{drive}/{suffix}".rstrip("/") if suffix else f"/{drive}")',
+    )
+    replace_once(
+        Path("README.md"),
+        '- no hosted service, remote database, cloud queue, or account is required.',
+        '- no hosted service, remote database, cloud queue, or account is required.\n- Python 3.10+ is supported.',
+    )
+
+
 def main() -> None:
     replace_once(Path("src/djobs/handoff.py"), OLD_BOUNDED, NEW_BOUNDED)
+    patch_runtime_compatibility()
 
     changelog = Path("CHANGELOG.md")
     text = changelog.read_text(encoding="utf-8")
@@ -222,8 +276,10 @@ def main() -> None:
         raise SystemExit("could not replace the Unreleased changelog section")
     changelog.write_text(updated, encoding="utf-8")
 
-    test_path = Path("tests/unit/test_handoff_budget_priority.py")
-    test_path.write_text(TEST_CONTENT, encoding="utf-8")
+    Path("tests/unit/test_handoff_budget_priority.py").write_text(
+        TEST_CONTENT,
+        encoding="utf-8",
+    )
 
 
 if __name__ == "__main__":

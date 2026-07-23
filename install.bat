@@ -10,7 +10,7 @@ REM
 REM   install.bat user       USER setup: install djobs as a global tool (pipx,
 REM                          or pip --user fallback) so any project can use it.
 REM                          No .venv, no dev tools. Use this if you just want
-REM                          crash-proof task memory for your AI agent.
+REM                          local repository memory and handoff for your coding agent.
 REM
 REM Both are safe to re-run anytime; they only do what's missing.
 REM ============================================================================
@@ -100,10 +100,11 @@ echo === djobs setup (user / global tool) =======================
 echo.
 where pipx >nul 2>&1
 if not errorlevel 1 (
-    echo [..]   installing djobs globally via pipx
-    pipx install djobs
+    echo [..]   installing or upgrading djobs globally via pipx
+    pipx upgrade djobs >nul 2>&1
+    if errorlevel 1 pipx install djobs
     if errorlevel 1 goto :fail
-    echo [OK]   djobs installed (pipx). Run 'djobs install-mcp' in any project.
+    echo [OK]   djobs installed (pipx). Run 'djobs setup' to configure Copilot.
     goto :user_done
 )
 echo [WARN] pipx not found - falling back to a user-level pip install.
@@ -123,14 +124,14 @@ if not defined PY (
 echo [..]   installing djobs via pip --user
 %PY% -m pip install --user --upgrade djobs
 if errorlevel 1 goto :fail
-echo [OK]   djobs installed (pip --user). Run 'djobs install-mcp' in any project.
+echo [OK]   djobs installed (pip --user). Run 'djobs setup' to configure Copilot.
 
 :user_done
 echo.
 echo === setup complete =========================================
 echo.
 echo Next steps:
-echo   - Wire a project:   cd your-project ^&^& djobs install-mcp
+echo   - Configure Copilot: djobs setup
 echo   - Check the setup:  djobs doctor
 echo.
 goto :eof

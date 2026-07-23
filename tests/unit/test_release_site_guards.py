@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import djobs
@@ -147,3 +148,26 @@ def test_python_runtime_floor_is_310() -> None:
     assert 'python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]' in workflow
     assert "Python 3.10+" in readme
     assert "supports Python 3.10 through 3.14" in contributing
+
+
+def test_repository_does_not_track_generated_python_artifacts() -> None:
+    tracked = subprocess.run(
+        ["git", "ls-files"],
+        cwd=_REPO,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.splitlines()
+    generated = [path for path in tracked if path.endswith(".pyc") or "__pycache__" in path]
+    assert generated == []
+
+
+def test_ci_validates_installable_artifacts_and_extension() -> None:
+    workflow = (_REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
+    assert "python -m build" in workflow
+    assert "python -m twine check" in workflow
+    assert "scripts/smoke_install.py" in workflow
+    assert "windows-latest" in workflow
+    assert "macos-latest" in workflow
+    assert "npm run compile" in workflow

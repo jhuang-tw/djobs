@@ -171,11 +171,17 @@ def _cmd_init_passive(
 def main() -> None:
     """Run the CLI, routing setup and normalized observation events first."""
 
+    if len(sys.argv) == 2 and sys.argv[1] in {"--version", "-V"}:
+        from djobs import __version__
+
+        print(f"djobs {__version__}")
+        return
+
     if len(sys.argv) > 1 and sys.argv[1] in {"setup", "repair", "remove"}:
         from djobs.setup_cli import main as run_setup_cli
 
         action = sys.argv[1]
-        raise SystemExit(run_setup_cli([action, *sys.argv[2:]]))
+        raise SystemExit(run_setup_cli(sys.argv[2:], action=action))
 
     if len(sys.argv) > 1 and sys.argv[1] == "hook":
         # Legacy explicit command-checkpoint hook interface. It is not installed

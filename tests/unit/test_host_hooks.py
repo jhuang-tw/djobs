@@ -4,14 +4,24 @@ import json
 import sys
 from pathlib import Path
 
-from djobs.host_hooks import host_hook_doctor, install_host_hooks, remove_host_hooks
+from djobs.host_hooks import (
+    _command,
+    host_hook_doctor,
+    install_host_hooks,
+    remove_host_hooks,
+)
 
 
 def test_codex_adapter_is_passive_and_uses_windows_override(tmp_path: Path) -> None:
     result = install_host_hooks("codex", tmp_path / "shared.db", home=tmp_path)
     config = json.loads(Path(result["path"]).read_text(encoding="utf-8"))
 
-    assert set(config["hooks"]) >= {"SessionStart", "PostToolUse", "PreCompact"}
+    assert set(config["hooks"]) >= {
+        "SessionStart",
+        "PostToolUse",
+        "PreCompact",
+        "SessionEnd",
+    }
     assert "UserPromptSubmit" not in config["hooks"]
     assert "Stop" not in config["hooks"]
     handler = config["hooks"]["SessionStart"][-1]["hooks"][0]
@@ -49,13 +59,26 @@ def test_claude_adapter_merge_is_idempotent_and_preserves_settings(tmp_path: Pat
     assert handler["args"][0:3] == ["-m", "djobs.hook_entrypoint", "session-end"]
 
 
-def test_gemini_adapter_uses_native_event_names(tmp_path: Path) -> None:
+def test_gemini_adapter_uses_native_events_without_invalid_lifecycle_matchers(
+    tmp_path: Path,
+) -> None:
     result = install_host_hooks("gemini", tmp_path / "shared.db", home=tmp_path)
     saved = json.loads(Path(result["path"]).read_text(encoding="utf-8"))
     assert set(saved["hooks"]) >= {"SessionStart", "AfterTool", "PreCompress", "SessionEnd"}
+    for event in ("SessionStart", "PreCompress", "SessionEnd"):
+        assert "matcher" not in saved["hooks"][event][0]
     handler = saved["hooks"]["AfterTool"][0]["hooks"][0]
     assert handler["timeout"] == 15000
     assert "--client gemini" in handler["command"]
+
+
+def test_platform_command_quoting_supports_windows_paths_with_spaces() -> None:
+    argv = [r"C:\Program Files\Python\python.exe", "-m", "djobs.hook_entrypoint"]
+    windows = _command(argv, windows=True)
+    posix = _command(argv, windows=False)
+
+    assert windows.startswith('"C:\\Program Files\\Python\\python.exe"')
+    assert posix.startswith("'C:\\Program Files\\Python\\python.exe'")
 
 
 def test_kimi_toml_adapter_is_idempotent_and_preserves_existing_config(tmp_path: Path) -> None:

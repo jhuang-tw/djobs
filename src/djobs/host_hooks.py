@@ -1,4 +1,4 @@
-"""Install thin lifecycle adapters without making the core client-specific."""
+"""Install host-specific lifecycle adapters around the client-neutral core."""
 
 from __future__ import annotations
 
@@ -25,7 +25,14 @@ _JSON_EVENTS = (
     "AfterTool",
     "SessionEnd",
 )
-_SUPPORTED = ("codex", "claude", "gemini", "kimi")
+_COPILOT_EVENTS = (
+    "SessionStart",
+    "PostToolUse",
+    "PostToolUseFailure",
+    "PreCompact",
+    "SessionEnd",
+)
+_SUPPORTED = ("copilot", "codex", "claude", "gemini", "kimi")
 
 
 def _command(argv: Sequence[str], *, windows: bool | None = None) -> str:
@@ -88,6 +95,56 @@ def _json_handler(event: str, client: str, database: Path, mode: str) -> dict[st
     }
 
 
+def _copilot_handler(
+    event: str,
+    database: Path,
+    mode: str,
+    *,
+    matcher: str | None = None,
+) -> dict[str, Any]:
+    """Return one Copilot CLI/VS Code compatible command hook."""
+
+    argv = _hook_argv(event, "copilot", database, mode)
+    handler: dict[str, Any] = {
+        "type": "command",
+        "bash": _command(argv, windows=False),
+        "powershell": _command(argv, windows=True),
+        "timeoutSec": 15,
+    }
+    if matcher:
+        handler["matcher"] = matcher
+    return handler
+
+
+def _copilot_document(database: Path, mode: str) -> dict[str, Any]:
+    """Use PascalCase events so Copilot sends VS Code-compatible snake_case payloads."""
+
+    return {
+        "version": 1,
+        "hooks": {
+            "SessionStart": [_copilot_handler("session-start", database, mode)],
+            "PostToolUse": [
+                _copilot_handler(
+                    "post",
+                    database,
+                    mode,
+                    matcher="bash|edit|create_file|replace_string_in_file|apply_patch|write_file",
+                )
+            ],
+            "PostToolUseFailure": [
+                _copilot_handler(
+                    "post-failure",
+                    database,
+                    mode,
+                    matcher="bash|edit|create_file|replace_string_in_file|apply_patch|write_file",
+                )
+            ],
+            "PreCompact": [_copilot_handler("pre-compact", database, mode)],
+            "SessionEnd": [_copilot_handler("session-end", database, mode)],
+        },
+    }
+
+
 def _specs(client: str) -> tuple[tuple[str, str, str | None], ...]:
     """Map native hook events to the normalized djobs event protocol."""
 
@@ -107,8 +164,6 @@ def _specs(client: str) -> tuple[tuple[str, str, str | None], ...]:
             ("SessionEnd", "session-end", None),
         )
     if client == "gemini":
-        # Gemini lifecycle matchers are exact strings rather than regex
-        # alternations. Omitting them matches every documented lifecycle reason.
         return (
             ("SessionStart", "session-start", None),
             ("AfterTool", "post", "run_shell_command|write_file|replace|write_.*"),
@@ -116,8 +171,6 @@ def _specs(client: str) -> tuple[tuple[str, str, str | None], ...]:
             ("SessionEnd", "session-end", None),
         )
     if client == "kimi":
-        # Kimi only guarantees prompt-context injection from UserPromptSubmit.
-        # SessionStart resets the once-per-session marker without writing stdout.
         return (
             ("SessionStart", "session-prepare", "startup|resume"),
             ("UserPromptSubmit", "prompt-context", None),
@@ -134,10 +187,10 @@ def managed_hooks(
     database: Path,
     mode: str = "smart",
 ) -> dict[str, list[dict[str, Any]]]:
-    """Return host-native passive observation hooks for JSON-configured clients."""
+    """Return host-native passive observation hooks for nested JSON clients."""
 
-    if client == "kimi":
-        raise ValueError("Kimi hooks use TOML; call install_host_hooks")
+    if client in {"copilot", "kimi"}:
+        raise ValueError(f"{client} uses a dedicated hook format; call install_host_hooks")
     desired: dict[str, list[dict[str, Any]]] = {}
     for native_event, normalized_event, matcher in _specs(client):
         group: dict[str, Any] = {
@@ -151,6 +204,8 @@ def managed_hooks(
 
 def hook_path(client: str, home: Path | None = None) -> Path:
     root = home or Path.home()
+    if client == "copilot":
+        return root / ".copilot" / "hooks" / "djobs.json"
     if client == "codex":
         return root / ".codex" / "hooks.json"
     if client == "claude":
@@ -197,6 +252,31 @@ def _load_json(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"refusing to modify non-object JSON at {path}")
     return value
+
+
+def _install_copilot_hooks(
+    database: Path,
+    *,
+    home: Path | None,
+    mode: str,
+) -> dict[str, Any]:
+    path = hook_path("copilot", home)
+    desired = _copilot_document(database, mode)
+    if path.exists():
+        current = _load_json(path)
+        if not _contains_managed(current):
+            raise ValueError(f"refusing to replace unmanaged Copilot hook file at {path}")
+        before = json.dumps(current, ensure_ascii=False, sort_keys=True)
+    else:
+        before = ""
+    after = json.dumps(desired, ensure_ascii=False, sort_keys=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if before != after:
+        path.write_text(json.dumps(desired, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        status = "configured"
+    else:
+        status = "unchanged"
+    return {"host": "copilot", "status": status, "path": str(path)}
 
 
 def _install_json_hooks(
@@ -303,9 +383,11 @@ def install_host_hooks(
 ) -> dict[str, Any]:
     """Merge only djobs-managed adapters, preserving unrelated configuration."""
 
-    del force  # Repair replaces managed entries but never bypasses config safety.
+    del force
     if host not in _SUPPORTED:
         raise ValueError(f"unsupported client adapter: {host}")
+    if host == "copilot":
+        return _install_copilot_hooks(database, home=home, mode=mode)
     if host == "kimi":
         return _install_kimi_hooks(database, home=home, mode=mode)
     return _install_json_hooks(host, database, home=home, mode=mode)
@@ -315,6 +397,12 @@ def remove_host_hooks(host: str, *, home: Path | None = None) -> dict[str, Any]:
     path = hook_path(host, home)
     if not path.exists():
         return {"host": host, "status": "absent", "path": str(path)}
+    if host == "copilot":
+        document = _load_json(path)
+        if not _contains_managed(document):
+            return {"host": host, "status": "absent", "path": str(path)}
+        path.unlink()
+        return {"host": host, "status": "removed", "path": str(path)}
     if host == "kimi":
         original = path.read_text(encoding="utf-8")
         content, changed = _strip_kimi_block(original)
@@ -349,7 +437,16 @@ def host_hook_doctor(host: str, *, home: Path | None = None) -> dict[str, Any]:
     if not path.exists():
         return {"host": host, "installed": False, "path": str(path)}
     try:
-        if host == "kimi":
+        if host == "copilot":
+            document = _load_json(path)
+            hooks = document.get("hooks", {})
+            installed = (
+                document.get("version") == 1
+                and isinstance(hooks, dict)
+                and set(_COPILOT_EVENTS).issubset(hooks)
+                and _contains_managed(document)
+            )
+        elif host == "kimi":
             text = path.read_text(encoding="utf-8")
             installed = _KIMI_BEGIN in text and _KIMI_END in text and _MANAGED_TOKEN in text
         else:

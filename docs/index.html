@@ -88,14 +88,14 @@
         <a class="button" href="https://marketplace.visualstudio.com/items?itemName=jhuang-tw.djobs">Install extension</a>
       </div>
     </div>
-    <div class="terminal"><span class="muted">$</span> pipx install djobs<br><span class="muted">$</span> djobs setup<br><span class="muted">$</span> djobs doctor<br><br>local SQLite + passive hooks<br>four compact MCP tools</div>
+    <div class="terminal">install djobs MCP<br>open your repository<br>start coding<br><br>first MCP call → local memory ready<br>no setup command required</div>
   </div>
 </header>
 <main>
   <section>
     <h2>Passive context, explicit ownership.</h2>
     <div class="grid">
-      <article class="card"><h3>Passive observations</h3><p>Session, tool-result, compaction, session-end, and Git working-tree changes are recorded locally without creating tasks.</p></article>
+      <article class="card"><h3>Zero-touch memory</h3><p>The first MCP tool call creates local memory and installs the detected host adapter automatically. No per-project setup command is required.</p></article>
       <article class="card"><h3>Explicit handoff</h3><p><code>checkpoint()</code> deliberately claims work, while <code>handoff()</code> explicitly releases or completes it with bounded evidence.</p></article>
       <article class="card"><h3>Four compact tools</h3><p><code>sync_workspace</code>, <code>checkpoint</code>, <code>handoff</code>, and <code>resume_delta</code> keep ordinary agent context small.</p></article>
       <article class="card"><h3>Local compatibility</h3><p>Copilot is the default local host, with optional adapters for Codex, Claude Code, Gemini CLI, Kimi Code, and custom agents.</p></article>

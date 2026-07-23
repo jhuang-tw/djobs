@@ -8,7 +8,8 @@
         "djobs.coding_mcp"
       ],
       "env": {
-        "PYTHONPATH": "${workspaceFolder}/src"
+        "PYTHONPATH": "${workspaceFolder}/src",
+        "DJOBS_AGENT_TYPE": "copilot"
       },
       "autoApprove": [
         "resume_delta",

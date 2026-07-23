@@ -7,16 +7,17 @@
 The extension is intentionally headless. It does not add an Activity Bar icon, task
 sidebar, polling loop, background dashboard, remote service, or cloud database.
 
-## Setup
+## Zero-touch start
 
-1. Install the extension.
-2. Run **djobs: Set up / Repair djobs** from the Command Palette.
-3. Start a new Copilot or VS Code Agent session.
+When the local djobs engine is already available, install the extension and start using
+Copilot or VS Code Agent normally. The first djobs MCP tool call creates local memory and
+silently installs the passive Copilot lifecycle adapter. There is no per-project setup
+command.
 
-Setup installs or upgrades the local Python package, registers the compact MCP server
-through VS Code's native provider, and installs the passive Copilot lifecycle adapter.
-The adapter records session, tool-result, compaction, and session-end observations in
-local SQLite. It does not turn prompts or commands into tasks.
+The **djobs: Set up / Repair djobs** command remains a fallback when the Python package is
+missing, an old MCP launch path needs repair, or diagnostics report a damaged installation.
+The adapter records session, tool-result, compaction, and session-end observations in local
+SQLite. It does not turn prompts or commands into tasks.
 
 ## Four compact tools
 

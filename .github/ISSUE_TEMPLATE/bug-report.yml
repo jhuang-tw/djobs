@@ -25,7 +25,7 @@ body:
     attributes:
       label: Environment
       description: OS, Python version, djobs version, and installation method
-      placeholder: "Windows 11, Python 3.13, djobs 0.14.1, pipx"
+      placeholder: "Windows 11, Python 3.13, djobs 0.15.0, pipx"
     validations:
       required: true
   - type: textarea

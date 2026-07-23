@@ -15,7 +15,28 @@ GitHub Copilot CLI and VS Code Agent are the default integration host because on
 
 The core remains client-neutral. Codex, Claude Code, Gemini CLI, Kimi Code, and custom agents may use optional local adapters, the same MCP server, or the Git sidecar.
 
-## Quick start
+## Zero-touch start
+
+Add or install **djobs** as an MCP server in the coding host you already use. That is the
+only required user action.
+
+On the first call to `sync_workspace`, `checkpoint`, or `handoff`, djobs automatically:
+
+- creates the shared local SQLite memory at `~/.djobs/global.db` when needed;
+- identifies the current Git repository and records its first bounded snapshot;
+- detects Copilot, Codex, Claude Code, Gemini CLI, or Kimi Code when the host exposes its
+  identity;
+- installs or repairs only that host's passive local lifecycle adapter;
+- preserves unrelated MCP servers, hooks, and settings;
+- continues the coding request even if initialization cannot be completed.
+
+There is no per-project command and no setup wizard. Opening another repository automatically
+uses a separate repository identity inside the same local database. A host that cannot be
+identified still gets repository-scoped MCP memory; djobs simply avoids guessing which hook
+configuration to modify.
+
+The CLI remains available only for manual installation, diagnostics, or repair in headless
+environments:
 
 ```powershell
 pipx install djobs
@@ -23,39 +44,15 @@ djobs setup
 djobs doctor
 ```
 
-With no target, `djobs setup` configures **local GitHub Copilot only**:
-
-- registers the compact djobs MCP with Copilot CLI;
-- exposes only `sync_workspace`, `checkpoint`, `handoff`, and `resume_delta`;
-- writes passive local hooks to `~/.copilot/hooks/djobs.json`;
-- lets Copilot CLI and VS Code Agent share that hook file;
-- preserves unrelated MCP servers and hook files.
-
-Restart an already-running Copilot client after setup. Opening the same local Git repository then gives Copilot a compact view of:
-
-- unfinished work and current owners;
-- failed and recently completed evidence;
-- recent tool observations;
-- actual local Git working-tree changes.
-
-Nothing is claimed merely because a session started, a prompt was submitted, a tool ran, or a turn ended.
+Those commands are not part of the normal Vibe Coding flow after the MCP is installed.
 
 ### VS Code extension
 
-The headless VS Code extension follows the same model. **djobs: Set up / Repair djobs**:
-
-- installs or upgrades the local Python package;
-- registers the four-tool MCP server through VS Code's native provider;
-- installs the passive Copilot lifecycle adapter;
-- does not install the legacy smart command-checkpoint hook;
-- does not add a task sidebar, polling loop, or cloud service.
-
-To upgrade a command-line installation later:
-
-```powershell
-pipx upgrade djobs
-djobs repair
-```
+The headless VS Code extension follows the same model. Its native MCP launch identifies itself
+as Copilot, so the first tool call silently installs the passive Copilot lifecycle adapter. The
+**djobs: Set up / Repair djobs** command remains as a fallback when the Python package itself is
+missing or an older launch path needs repair. The extension still adds no task sidebar, polling
+loop, or cloud service.
 
 ## Local Copilot-first architecture
 

@@ -1,4 +1,4 @@
-"""One-time MCP plus passive-observation setup for major coding-agent clients."""
+"""One-time MCP plus passive-observation setup for coding-agent hosts."""
 
 from __future__ import annotations
 
@@ -19,8 +19,9 @@ from djobs.workspace import shared_db_path
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 Which = Callable[[str], str | None]
-_CLIENTS = ("codex", "claude", "gemini", "kimi")
+_CLIENTS = ("copilot", "codex", "claude", "gemini", "kimi")
 _GEMINI_DJOBS_LINE_RE = re.compile(r"(?im)^\s*(?:[✓✗●○*+-]\s*)?djobs(?:\s|:)")
+_COPILOT_TOOLS = "sync_workspace,checkpoint,handoff,resume_delta"
 
 
 @dataclass(frozen=True)
@@ -48,10 +49,25 @@ def _quoted(command: Sequence[str]) -> str:
 
 
 def setup_command(host: str, db: Path, server: Sequence[str] | None = None) -> list[str]:
-    """Build a copyable user-scope MCP registration command where one exists."""
+    """Build a copyable user-scope MCP registration command."""
 
     server_command = list(server or _server_command())
     database = db.expanduser().resolve()
+    if host == "copilot":
+        return [
+            "copilot",
+            "mcp",
+            "add",
+            "djobs",
+            "--env",
+            f"DJOBS_DB={database}",
+            "--env",
+            "DJOBS_AGENT_TYPE=copilot",
+            "--tools",
+            _COPILOT_TOOLS,
+            "--",
+            *server_command,
+        ]
     if host == "codex":
         return [
             "codex",
@@ -66,7 +82,6 @@ def setup_command(host: str, db: Path, server: Sequence[str] | None = None) -> l
             *server_command,
         ]
     if host == "claude":
-        # Claude requires every option before the server name.
         return [
             "claude",
             "mcp",
@@ -172,8 +187,7 @@ def _install_kimi_mcp(
     after = json.dumps(document, ensure_ascii=False, sort_keys=True)
     path.parent.mkdir(parents=True, exist_ok=True)
     if before != after or not path.exists():
-        content = json.dumps(document, ensure_ascii=False, indent=2) + "\n"
-        path.write_text(content, encoding="utf-8")
+        path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         status = "configured"
     else:
         status = "unchanged"
@@ -191,8 +205,7 @@ def _remove_kimi_mcp(*, home: Path | None) -> dict[str, object]:
     servers.pop("djobs", None)
     if not servers:
         document.pop("mcpServers", None)
-    content = json.dumps(document, ensure_ascii=False, indent=2) + "\n"
-    path.write_text(content, encoding="utf-8")
+    path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return {"status": "removed", "path": str(path)}
 
 
@@ -203,6 +216,12 @@ def _kimi_mcp_installed(*, home: Path | None) -> bool:
         return False
     servers = document.get("mcpServers")
     return isinstance(servers, dict) and isinstance(servers.get("djobs"), dict)
+
+
+def _error_text(exc: BaseException) -> str:
+    if isinstance(exc, subprocess.TimeoutExpired):
+        return f"command timed out after {exc.timeout} seconds"
+    return str(exc)
 
 
 def _mcp_setup(
@@ -229,8 +248,7 @@ def _mcp_setup(
             remove = _run(_remove_command(host), runner=runner)
             if remove.returncode != 0:
                 message = remove.stderr.strip() or remove.stdout.strip()
-                error = message or "remove failed"
-                return "error", "existing djobs MCP was left unchanged", error
+                return "error", "existing djobs MCP was left unchanged", message or "remove failed"
             registered = False
         if registered:
             return "unchanged", "djobs MCP is already registered", None
@@ -242,7 +260,7 @@ def _mcp_setup(
             return "error", "djobs MCP registration failed", message
         return "configured", "registered the shared local djobs MCP", None
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
-        return "error", "djobs MCP configuration needs review", str(exc)
+        return "error", "djobs MCP configuration needs review", _error_text(exc)
 
 
 def configure_host(
@@ -255,7 +273,7 @@ def configure_host(
     server: Sequence[str] | None = None,
     home: Path | None = None,
 ) -> dict[str, object]:
-    """Configure MCP and passive hooks independently, preserving partial success."""
+    """Configure one host's MCP and passive hooks independently."""
 
     database = db or shared_db_path()
     host = _host(host_name, which=which)
@@ -300,12 +318,18 @@ def configure_host(
     else:
         overall = "configured" if configured else "unchanged"
 
-    trust_note = " Open /hooks once to review and trust it." if host_name == "codex" else ""
     hook_message = (
         f"passive observation adapter {hook_status} at {hook_result['path']}"
         if hook_result is not None
         else f"passive observation adapter failed: {hook_error}"
     )
+    notes: list[str] = []
+    if host_name == "codex":
+        notes.append("Open /hooks once to review and trust it")
+    if host_name == "copilot":
+        notes.append("This one adapter is shared by Copilot CLI and VS Code Agent")
+        notes.append("Copilot cloud agent needs a remote or Git-backed djobs backend")
+    suffix = f" {'; '.join(notes)}." if notes else ""
     error_note = f" Errors: {'; '.join(errors)}." if errors else ""
     return {
         "host": host_name,
@@ -314,7 +338,7 @@ def configure_host(
         "mcp": {"status": mcp_status, "error": mcp_error},
         "hooks": hook_result
         or {"host": host_name, "status": "error", "error": hook_error},
-        "message": f"{mcp_message}; {hook_message}.{error_note}{trust_note}",
+        "message": f"{mcp_message}; {hook_message}.{error_note}{suffix}",
     }
 
 
@@ -346,14 +370,15 @@ def remove_host(
             mcp_error = str(exc)
         removed = "removed" in {mcp_status, hook_status}
         failed = "error" in {mcp_status, hook_status}
-        if removed and failed:
-            status = "partial"
-        elif failed:
-            status = "error"
-        elif removed:
-            status = "removed"
-        else:
-            status = "absent"
+        status = (
+            "partial"
+            if removed and failed
+            else "error"
+            if failed
+            else "removed"
+            if removed
+            else "absent"
+        )
         error_note = f"; error: {mcp_error or hook_result.get('error')}" if failed else ""
         return {
             "host": host_name,
@@ -375,7 +400,7 @@ def remove_host(
         return {
             "host": host_name,
             "status": status,
-            "message": f"hooks are {hook_status}; MCP detection failed: {exc}",
+            "message": f"hooks are {hook_status}; MCP detection failed: {_error_text(exc)}",
         }
     if not registered:
         return {
@@ -391,7 +416,7 @@ def remove_host(
         return {
             "host": host_name,
             "status": status,
-            "message": f"hooks are {hook_status}; MCP removal failed: {exc}",
+            "message": f"hooks are {hook_status}; MCP removal failed: {_error_text(exc)}",
         }
     if result.returncode == 0:
         return {
@@ -428,7 +453,7 @@ def doctor_results(
                 registered = _exists(host, runner=runner) if host is not None else False
         except (OSError, subprocess.SubprocessError) as exc:
             registered = False
-            error = str(exc)
+            error = _error_text(exc)
         results.append(
             {
                 "host": name,
@@ -452,7 +477,7 @@ def doctor_results(
 
 
 def print_setup_doctor() -> None:
-    print("\nCross-agent setup:")
+    print("\nAgent setup:")
     for item in doctor_results():
         if item["host"] == "shared-db":
             print(f"  shared-db: {item['path']}")
@@ -467,7 +492,7 @@ def print_setup_doctor() -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="djobs setup")
     parser.add_argument("action", choices=["setup", "repair", "remove"])
-    parser.add_argument("target", nargs="?", choices=[*_CLIENTS, "all"], default="all")
+    parser.add_argument("target", nargs="?", choices=[*_CLIENTS, "all"], default="copilot")
     args = parser.parse_args(argv)
     targets = list(_CLIENTS) if args.target == "all" else [args.target]
     failed = False
@@ -478,10 +503,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             result = configure_host(target, repair=args.action == "repair")
         status = str(result["status"])
-        if args.target == "all" and status == "unavailable":
-            display_status = "skipped"
-        else:
-            display_status = status
+        display_status = "skipped" if args.target == "all" and status == "unavailable" else status
         print(f"{target}: {display_status} — {result['message']}")
         if result.get("command"):
             print(result["command"])

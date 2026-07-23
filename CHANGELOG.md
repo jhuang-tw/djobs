@@ -14,6 +14,16 @@ public interfaces may still change between minor versions. Entries below use
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-07-24
+
+### Changed
+- `[core]` Aligned top-level CLI help and setup subcommand usage with the current local repository-memory product model, including a standard `djobs --version` check.
+- `[release]` Added permanent wheel/sdist validation, clean-wheel installation smoke tests on Windows, macOS, and Linux, and a permanent VS Code TypeScript build gate.
+- `[docs]` Updated the Windows user installer to the current `djobs setup` flow and added a structured, privacy-conscious bug report form for first external users.
+
+### Removed
+- `[release]` Removed tracked Python bytecode and an obsolete one-off release verification record.
+
 ## [0.14.0] - 2026-07-23
 
 ### Added

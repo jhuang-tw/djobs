@@ -1,0 +1,48 @@
+name: Bug report
+description: Report an installation, setup, recovery, or handoff problem
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for testing djobs. Please remove secrets, tokens, usernames, and private repository paths before submitting logs.
+  - type: dropdown
+    id: host
+    attributes:
+      label: Coding-agent host
+      options:
+        - GitHub Copilot CLI / VS Code Agent
+        - Codex
+        - Claude Code
+        - Gemini CLI
+        - Kimi Code
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python version, djobs version, and installation method
+      placeholder: "Windows 11, Python 3.13, djobs 0.14.1, pipx"
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Include the command, expected behavior, and actual behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Sanitized diagnostics
+      description: Paste `djobs doctor` output after removing private paths or identifiers.
+      render: text
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: List the shortest steps that reproduce the problem.

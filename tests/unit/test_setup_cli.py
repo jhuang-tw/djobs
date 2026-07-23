@@ -217,3 +217,28 @@ def test_remove_kimi_preserves_unrelated_mcp_and_config(tmp_path: Path) -> None:
     text = config_path.read_text(encoding="utf-8")
     assert 'theme = "dark"' in text
     assert "djobs managed observation hooks" not in text
+
+
+def test_top_level_action_mode_has_nonduplicated_help(capsys) -> None:
+    try:
+        setup_cli.main(["--help"], action="setup")
+    except SystemExit as exc:
+        assert exc.code == 0
+
+    help_text = capsys.readouterr().out
+    assert "usage: djobs setup" in help_text
+    assert "djobs setup setup" not in help_text
+
+
+def test_top_level_action_mode_keeps_default_target(monkeypatch) -> None:
+    configured: list[tuple[str, bool]] = []
+
+    def fake_configure(target: str, *, repair: bool = False):
+        configured.append((target, repair))
+        return {"status": "configured", "message": "ok"}
+
+    monkeypatch.setattr(setup_cli, "configure_host", fake_configure)
+
+    assert setup_cli.main([], action="setup") == 0
+    assert setup_cli.main(["codex"], action="repair") == 0
+    assert configured == [("copilot", False), ("codex", True)]

@@ -1617,7 +1617,16 @@ def main(argv: list[str] | None = None) -> None:
 
     parser = argparse.ArgumentParser(
         prog="djobs",
-        description="Distributed job system CLI",
+        description="Local repository memory and explicit handoff for coding agents.",
+        epilog=(
+            "Common setup commands:\n"
+            "  djobs setup [copilot|codex|claude|gemini|kimi|all]\n"
+            "  djobs repair [target]\n"
+            "  djobs remove [target]\n"
+            "  djobs doctor\n"
+            "  djobs --version"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     subparsers = parser.add_subparsers(dest="subcommand")
 

@@ -524,19 +524,35 @@ def print_setup_doctor() -> None:
         print(f"  {item['host']}: {available}, {state}, {hooks}{error}")
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="djobs setup")
-    parser.add_argument("action", choices=["setup", "repair", "remove"])
+def main(argv: list[str] | None = None, *, action: str | None = None) -> int:
+    """Run one user-level setup action.
+
+    ``action`` is supplied by the top-level ``djobs`` entry point so help text reads
+    ``djobs setup [target]`` instead of the confusing historical
+    ``djobs setup setup [target]``. Passing the action in ``argv`` remains supported
+    for direct callers and older integrations.
+    """
+
+    if action is not None and action not in {"setup", "repair", "remove"}:
+        raise ValueError(f"unsupported setup action: {action}")
+
+    parser = argparse.ArgumentParser(
+        prog=f"djobs {action}" if action else "djobs setup",
+        description="Configure local MCP registration and passive lifecycle adapters.",
+    )
+    if action is None:
+        parser.add_argument("action", choices=["setup", "repair", "remove"])
     parser.add_argument("target", nargs="?", choices=[*_CLIENTS, "all"], default="copilot")
     args = parser.parse_args(argv)
+    selected_action = action or args.action
     targets = list(_CLIENTS) if args.target == "all" else [args.target]
     failed = False
 
     for target in targets:
-        if args.action == "remove":
+        if selected_action == "remove":
             result = remove_host(target)
         else:
-            result = configure_host(target, repair=args.action == "repair")
+            result = configure_host(target, repair=selected_action == "repair")
         status = str(result["status"])
         display_status = "skipped" if args.target == "all" and status == "unavailable" else status
         print(f"{target}: {display_status} — {result['message']}")

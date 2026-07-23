@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  commit-diagnostics:
+  finalize:
     runs-on: ubuntu-latest
     env:
       TARGET_BRANCH: ${{ github.event.pull_request.head.ref }}
@@ -35,27 +35,12 @@ jobs:
       - run: python -m ruff check src tests
       - run: pytest -q --tb=short tests/unit/test_release_surfaces.py tests/unit/test_release_site_guards.py tests/unit/test_copilot_setup.py
       - run: git diff --check
-      - name: Create commit and capture push result
-        shell: bash
+      - name: Commit validated non-workflow release files
         run: |
-          mkdir -p diagnostics
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -- .github/workflows/publish.yml
-          git rm tools/_prepare_release_014.py tools/_fix_prepare_release_014.py
+          git rm -f tools/_prepare_release_014.py tools/_fix_prepare_release_014.py
           git add -A
-          git status --short | tee diagnostics/status-before-commit.txt
-          set +e
-          git commit -m "release: prepare 0.14.0" 2>&1 | tee diagnostics/commit.log
-          commit_status=${PIPESTATUS[0]}
-          git rev-parse HEAD | tee diagnostics/commit-sha.txt
-          git status --short | tee diagnostics/status-after-commit.txt
-          git push origin HEAD:${TARGET_BRANCH} 2>&1 | tee diagnostics/push.log
-          push_status=${PIPESTATUS[0]}
-          printf 'commit=%s\npush=%s\n' "$commit_status" "$push_status" | tee diagnostics/result.txt
-          exit 0
-      - uses: actions/upload-artifact@v4
-        with:
-          name: release-014-commit-diagnostics
-          path: diagnostics
-          if-no-files-found: error
+          git commit -m "release: prepare 0.14.0"
+          git push origin HEAD:${TARGET_BRANCH}

@@ -264,8 +264,11 @@ def prepare_prompt_context(payload: dict[str, Any], *, agent_type: str) -> dict[
 
 
 def prompt_context(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]:
-    """Return read-only context once for a client session's first user prompt."""
+    """Return non-empty read-only context once for a client's current session."""
 
+    context = session_start(payload, agent_type=agent_type)
+    if not context:
+        return {}
     try:
         workspace, agent, _queue, repo = _resolve(
             roots=None,
@@ -277,7 +280,7 @@ def prompt_context(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any
             return {}
     except Exception:
         return {}
-    return session_start(payload, agent_type=agent_type)
+    return context
 
 
 def post_tool_use(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]:

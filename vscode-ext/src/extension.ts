@@ -99,8 +99,8 @@ async function runDiagnostics(
     const hooksReady = await client.hooksInstalled();
     output.appendLine(
       hooksReady
-        ? '  [OK  ] automatic coding hooks: installed'
-        : '  [FAIL] automatic coding hooks: missing; run "djobs: Set up / Repair djobs"',
+        ? '  [OK  ] passive Copilot hooks: installed'
+        : '  [FAIL] passive Copilot hooks: missing; run "djobs: Set up / Repair djobs"',
     );
     allOk = allOk && hooksReady;
 
@@ -131,18 +131,18 @@ async function runDjobsSetup(
       async (progress) => {
         const installed = await client.isPackageInstalled();
         if (!installed) {
-          progress.report({ message: 'Installing the coding checkpoint engine...' });
+          progress.report({ message: 'Installing the local agent memory engine...' });
           await client.installPackage();
         } else {
           const installedVersion = await client.installedVersion();
           const extensionVersion = String(context.extension.packageJSON.version ?? '');
           if (installedVersion && extensionVersion && installedVersion !== extensionVersion) {
-            progress.report({ message: 'Updating the coding checkpoint engine...' });
+            progress.report({ message: 'Updating the local agent memory engine...' });
             await client.updatePackage();
           }
         }
 
-        progress.report({ message: 'Installing smart coding hooks...' });
+        progress.report({ message: 'Installing passive Copilot hooks...' });
         await client.installHooks();
 
         if (nativeMcp) {
@@ -162,7 +162,7 @@ async function runDjobsSetup(
 
     mcpDidChange.fire();
     vscode.window.showInformationMessage(
-      'djobs is ready. Smart command checkpoints and session recovery are active; no sidebar is added.',
+      'djobs is ready. Passive local observations and explicit handoff are active; no sidebar is added.',
     );
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
@@ -204,7 +204,7 @@ async function runPauseCommand(client: DjobsClient, pause: boolean): Promise<voi
     if (pause) {
       await client.pause();
       vscode.window.showInformationMessage(
-        'djobs paused. Automatic checkpoint rewriting and recovery are disabled; no state was deleted.',
+        'djobs paused. Passive observation and recovery are disabled; no state was deleted.',
       );
     } else {
       await client.unpause();

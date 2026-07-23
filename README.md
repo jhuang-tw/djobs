@@ -40,6 +40,23 @@ Restart an already-running Copilot client after setup. Opening the same local Gi
 
 Nothing is claimed merely because a session started, a prompt was submitted, a tool ran, or a turn ended.
 
+### VS Code extension
+
+The headless VS Code extension follows the same model. **djobs: Set up / Repair djobs**:
+
+- installs or upgrades the local Python package;
+- registers the four-tool MCP server through VS Code's native provider;
+- installs the passive Copilot lifecycle adapter;
+- does not install the legacy smart command-checkpoint hook;
+- does not add a task sidebar, polling loop, or cloud service.
+
+To upgrade a command-line installation later:
+
+```powershell
+pipx upgrade djobs
+djobs repair
+```
+
 ## Local Copilot-first architecture
 
 ```text

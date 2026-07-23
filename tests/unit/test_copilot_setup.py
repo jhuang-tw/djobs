@@ -122,3 +122,19 @@ def test_setup_defaults_to_copilot(monkeypatch) -> None:
     monkeypatch.setattr(setup_cli, "configure_host", fake)
     assert setup_cli.main(["setup"]) == 0
     assert called == ["copilot"]
+
+
+def test_copilot_setup_without_cli_still_installs_vscode_adapter(tmp_path: Path) -> None:
+    result = configure_host(
+        "copilot",
+        db=tmp_path / "shared.db",
+        which=lambda _name: None,
+        server=["djobs-mcp"],
+        home=tmp_path,
+    )
+
+    assert result["status"] == "configured"
+    assert result["mcp"]["status"] == "unavailable"
+    assert result["hooks"]["status"] == "configured"
+    assert (tmp_path / ".copilot" / "hooks" / "djobs.json").exists()
+    assert "VS Code Agent" in str(result["message"])

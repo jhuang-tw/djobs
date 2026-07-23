@@ -13,7 +13,7 @@ type DjobsInstaller =
 export class DjobsClient {
   constructor(private readonly workspaceRoot: string) {}
 
-  /** Pause djobs so agents stop resuming/enqueuing durable work (reversible). */
+  /** Pause djobs operations without deleting local state (reversible). */
   async pause(): Promise<void> {
     await this.run(['pause', '--db', this.resolvedDbPath()]);
   }
@@ -23,22 +23,35 @@ export class DjobsClient {
     await this.run(['unpause', '--db', this.resolvedDbPath()]);
   }
 
-  /** Install deterministic smart-mode coding hooks for this workspace. */
+  /** Install the passive local Copilot lifecycle adapter. */
   async installHooks(): Promise<void> {
-    const args = ['hook', 'install', '--mode', 'smart', '--force'];
-    if (this.isGlobalQueue()) {
-      args.push('--global');
-    } else {
-      args.push('--db', this.resolvedDbPath());
-    }
-    await this.run(args);
+    await this.run(['setup', 'copilot']);
   }
 
-  /** Check whether automatic coding hooks are installed and valid. */
+  /** Check whether the passive Copilot hook document is installed and valid. */
   async hooksInstalled(): Promise<boolean> {
     try {
-      await this.run(['hook', 'doctor']);
-      return true;
+      const hookPath = path.join(os.homedir(), '.copilot', 'hooks', 'djobs.json');
+      if (!fs.existsSync(hookPath)) {
+        return false;
+      }
+      const parsed = JSON.parse(fs.readFileSync(hookPath, 'utf8')) as {
+        version?: number;
+        hooks?: Record<string, unknown>;
+      };
+      const hooks = parsed.hooks;
+      if (parsed.version !== 1 || !hooks) {
+        return false;
+      }
+      const required = [
+        'SessionStart',
+        'PostToolUse',
+        'PostToolUseFailure',
+        'PreCompact',
+        'SessionEnd',
+      ];
+      return required.every((event) => Object.prototype.hasOwnProperty.call(hooks, event))
+        && JSON.stringify(parsed).includes('djobs.hook_entrypoint');
     } catch {
       return false;
     }
@@ -94,7 +107,7 @@ export class DjobsClient {
    * server: prefer an explicit interpreter, then a project `.venv`, then the
    * `djobs-mcp` console script on PATH, then a bare `python`. `DJOBS_DB` is
    * always pinned to the absolute queue path used by hooks, so the agent's
-   * writes and the sidebar's reads share one database regardless of cwd.
+   * hooks and MCP reads share one database regardless of cwd.
    */
   mcpServerLaunch(): { command: string; args: string[]; env: Record<string, string>; cwd: string } {
     const configured = vscode.workspace.getConfiguration('djobs').get<string>('pythonPath')?.trim();
@@ -333,8 +346,8 @@ export class DjobsClient {
   }
 
   private isRequiresPythonError(detail: string): boolean {
-    return /Requires-Python\s*>=\s*3\.11/i.test(detail)
-      || /requires Python\s*>=\s*3\.11/i.test(detail)
+    return /Requires-Python\s*>=\s*3\.10/i.test(detail)
+      || /requires Python\s*>=\s*3\.10/i.test(detail)
       || /too old for djobs/i.test(detail)
       || /requires a different python/i.test(detail);
   }

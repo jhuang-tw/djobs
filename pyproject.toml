@@ -5,11 +5,11 @@ build-backend = "hatchling.build"
 [project]
 name = "djobs"
 dynamic = ["version"]
-description = "Crash-proof checkpoints and resumable task memory for AI coding agents."
+description = "Local repository memory, passive observations, and explicit handoff for coding agents."
 requires-python = ">=3.10"
 license = "MIT"
 readme = "README.md"
-keywords = ["ai-agent", "coding-agent", "agent-checkpoint", "agent-memory", "crash-recovery", "context-recovery", "resumable-workflow", "token-savings", "mcp", "model-context-protocol", "copilot", "claude-code", "codex", "cursor", "cline", "gemini", "multi-agent", "workflow-state", "sqlite"]
+keywords = ["ai-agent", "coding-agent", "local-agent-memory", "repository-memory", "cross-agent-handoff", "passive-hooks", "context-recovery", "resumable-workflow", "mcp", "model-context-protocol", "copilot", "claude-code", "codex", "gemini", "kimi-code", "multi-agent", "workflow-state", "sqlite"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",

@@ -281,11 +281,46 @@ def configure_host(
     host = _host(host_name, which=which)
     command = setup_command(host_name, database, server)
     if host is None:
+        if host_name != "copilot":
+            return {
+                "host": host_name,
+                "status": "unavailable",
+                "command": _quoted(command) if command else "",
+                "message": f"{host_name} CLI was not found; no client configuration was changed",
+            }
+        try:
+            passive_hook_result = install_host_hooks(
+                host_name,
+                database,
+                home=home,
+                mode="smart",
+                force=repair,
+            )
+        except (OSError, ValueError) as exc:
+            return {
+                "host": host_name,
+                "status": "error",
+                "command": _quoted(command) if command else "",
+                "mcp": {"status": "unavailable", "error": None},
+                "hooks": {"host": host_name, "status": "error", "error": str(exc)},
+                "message": (
+                    "Copilot CLI was not found and the passive observation adapter "
+                    f"could not be installed: {exc}"
+                ),
+            }
+        hook_status = str(passive_hook_result["status"])
+        overall = "configured" if hook_status == "configured" else "unchanged"
         return {
             "host": host_name,
-            "status": "unavailable",
+            "status": overall,
             "command": _quoted(command) if command else "",
-            "message": f"{host_name} CLI was not found; no client configuration was changed",
+            "mcp": {"status": "unavailable", "error": None},
+            "hooks": passive_hook_result,
+            "message": (
+                "Copilot CLI was not found, so CLI MCP registration was skipped; "
+                f"passive observation adapter {hook_status} at {passive_hook_result['path']}. "
+                "VS Code Agent can use the extension's native MCP registration"
+            ),
         }
 
     mcp_status, mcp_message, mcp_error = _mcp_setup(
@@ -329,8 +364,7 @@ def configure_host(
     if host_name == "codex":
         notes.append("Open /hooks once to review and trust it")
     if host_name == "copilot":
-        notes.append("This one adapter is shared by Copilot CLI and VS Code Agent")
-        notes.append("Copilot cloud agent needs a remote or Git-backed djobs backend")
+        notes.append("This one local adapter is shared by Copilot CLI and VS Code Agent")
     suffix = f" {'; '.join(notes)}." if notes else ""
     error_note = f" Errors: {'; '.join(errors)}." if errors else ""
     return {

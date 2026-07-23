@@ -13,28 +13,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  tests:
-    name: pytest (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.ref }}
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-      - run: python tools/_prepare_release_014.py
-      - run: python -m pip install -e ".[dev]"
-      - run: pytest -q --tb=short
-
-  quality:
+  diagnose:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -51,80 +30,37 @@ jobs:
       - run: python tools/_prepare_release_014.py
       - run: python -m pip install -e ".[dev,pg]"
       - run: python -m pip install --upgrade build twine
-      - run: python -m ruff format src tests
-      - run: python -m ruff check src tests
-      - run: python -m ruff format --check src tests
-      - run: mypy
-      - run: python -m build
-      - run: python -m twine check dist/*
-      - run: git diff --check
-      - name: Validate VS Code extension
-        working-directory: vscode-ext
+      - name: Capture all gate output
+        shell: bash
         run: |
-          npm ci
-          npx tsc -p ./ --noEmit
-          npm run compile
-
-  postgres:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: djobs
-          POSTGRES_PASSWORD: djobs
-          POSTGRES_DB: djobs
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U djobs"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    env:
-      DJOBS_TEST_PG_DSN: postgresql://djobs:djobs@localhost:5432/djobs
-      DJOBS_REQUIRE_PG: "1"
-    steps:
-      - uses: actions/checkout@v4
+          mkdir -p diagnostics
+          set +e
+          pytest -q --tb=short 2>&1 | tee diagnostics/pytest.log
+          pytest_status=${PIPESTATUS[0]}
+          python -m ruff format src tests 2>&1 | tee diagnostics/ruff-format.log
+          format_status=${PIPESTATUS[0]}
+          python -m ruff check src tests 2>&1 | tee diagnostics/ruff-check.log
+          ruff_status=${PIPESTATUS[0]}
+          mypy 2>&1 | tee diagnostics/mypy.log
+          mypy_status=${PIPESTATUS[0]}
+          python -m build 2>&1 | tee diagnostics/build.log
+          build_status=${PIPESTATUS[0]}
+          python -m twine check dist/* 2>&1 | tee diagnostics/twine.log
+          twine_status=${PIPESTATUS[0]}
+          (cd vscode-ext && npm ci && npx tsc -p ./ --noEmit && npm run compile) 2>&1 | tee diagnostics/vscode.log
+          vscode_status=${PIPESTATUS[0]}
+          git diff --check 2>&1 | tee diagnostics/diff-check.log
+          diff_status=${PIPESTATUS[0]}
+          printf 'pytest=%s\nformat=%s\nruff=%s\nmypy=%s\nbuild=%s\ntwine=%s\nvscode=%s\ndiff=%s\n' \
+            "$pytest_status" "$format_status" "$ruff_status" "$mypy_status" \
+            "$build_status" "$twine_status" "$vscode_status" "$diff_status" \
+            | tee diagnostics/status.txt
+          if (( pytest_status || format_status || ruff_status || mypy_status || build_status || twine_status || vscode_status || diff_status )); then
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-      - run: python tools/_prepare_release_014.py
-      - run: python -m pip install -e ".[dev,pg]"
-      - run: pytest -q --tb=short tests/integration/test_repository_contract.py
-
-  finalize:
-    needs: [tests, quality, postgres]
-    runs-on: ubuntu-latest
-    env:
-      TARGET_BRANCH: ${{ github.event.pull_request.head.ref }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.ref }}
-          fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-      - run: python tools/_prepare_release_014.py
-      - run: python -m pip install -e ".[dev]"
-      - run: python -m ruff format src tests
-      - run: python -m ruff check src tests
-      - run: pytest -q --tb=short tests/unit/test_release_surfaces.py tests/unit/test_copilot_setup.py
-      - run: git diff --check
-      - name: Commit validated release preparation and remove temporary files
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm tools/_prepare_release_014.py .github/workflows/release-prep-014.yml
-          git add -A
-          git commit -m "release: prepare 0.14.0"
-          git push origin HEAD:${TARGET_BRANCH}
+          name: release-014-diagnostics
+          path: diagnostics
+          if-no-files-found: error

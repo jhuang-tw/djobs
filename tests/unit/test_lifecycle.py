@@ -98,13 +98,26 @@ def test_hooks_observe_but_never_create_claim_or_release_tasks(
         },
         agent_type="gemini",
     )
-    count = repository._connection.execute(
-        "SELECT COUNT(*) FROM agent_observations WHERE correlation_id = ?",
-        (workspace.workspace_id,),
-    ).fetchone()[0]
-    assert count >= 2
+    event_counts = {
+        row["event_type"]: row["count"]
+        for row in repository._connection.execute(
+            "SELECT event_type, COUNT(*) AS count FROM agent_observations GROUP BY event_type"
+        ).fetchall()
+    }
+    assert event_counts.get("tool_result") == 1
+    assert event_counts.get("repository_change", 0) == 0
     task = repository.get_job(task_id)
     assert task is not None and task.leased_by == original_owner
+
+    recovered = lifecycle.session_start(
+        {"cwd": str(root), "session_id": "future-session"},
+        agent_type="future-agent",
+    )
+    assert "repository_change" in recovered["additionalContext"]
+    repository_changes = repository._connection.execute(
+        "SELECT COUNT(*) FROM agent_observations WHERE event_type = 'repository_change'"
+    ).fetchone()[0]
+    assert repository_changes == 1
 
     lifecycle.stop({"cwd": str(root)}, agent_type="codex")
     lifecycle.session_end(

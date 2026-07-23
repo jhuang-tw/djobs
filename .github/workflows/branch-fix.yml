@@ -1,20 +1,19 @@
 name: Final local handoff validation
 
 on:
-  push:
+  pull_request:
     branches:
-      - feature/zero-config-cross-agent-handoff
+      - main
 
 permissions:
   contents: write
 
 concurrency:
-  group: final-local-handoff-${{ github.ref }}
+  group: final-local-handoff-${{ github.event.pull_request.head.ref }}
   cancel-in-progress: true
 
 jobs:
   tests:
-    if: ${{ !contains(github.event.head_commit.message, '[branch-fix complete]') }}
     name: pytest (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
@@ -23,6 +22,8 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -31,10 +32,11 @@ jobs:
       - run: pytest -q --tb=short
 
   quality:
-    if: ${{ !contains(github.event.head_commit.message, '[branch-fix complete]') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -58,7 +60,6 @@ jobs:
           npm run compile
 
   postgres:
-    if: ${{ !contains(github.event.head_commit.message, '[branch-fix complete]') }}
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -79,6 +80,8 @@ jobs:
       DJOBS_REQUIRE_PG: "1"
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -87,12 +90,14 @@ jobs:
       - run: pytest -q --tb=short tests/integration/test_repository_contract.py
 
   finalize:
-    if: ${{ !contains(github.event.head_commit.message, '[branch-fix complete]') }}
     needs: [tests, quality, postgres]
     runs-on: ubuntu-latest
+    env:
+      TARGET_BRANCH: ${{ github.event.pull_request.head.ref }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
@@ -103,7 +108,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm tools/_branch_fix.py .github/workflows/branch-fix.yml
+          git rm tools/_branch_fix.py tools/_branch_fix_trigger.txt .github/workflows/branch-fix.yml
           git add src/djobs/handoff.py CHANGELOG.md tests/unit/test_handoff_budget_priority.py
           git commit -m "[branch-fix complete] fix: finish local handoff hardening"
-          git push origin HEAD:${GITHUB_REF_NAME}
+          git push origin HEAD:${TARGET_BRANCH}

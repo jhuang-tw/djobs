@@ -81,7 +81,9 @@ def test_platform_command_quoting_supports_windows_paths_with_spaces() -> None:
     assert posix.startswith("'C:\\Program Files\\Python\\python.exe'")
 
 
-def test_kimi_toml_adapter_is_idempotent_and_preserves_existing_config(tmp_path: Path) -> None:
+def test_kimi_toml_adapter_injects_once_without_observation_stdout_noise(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / ".kimi-code" / "config.toml"
     path.parent.mkdir(parents=True)
     path.write_text('default_model = "kimi"\n', encoding="utf-8")
@@ -94,9 +96,13 @@ def test_kimi_toml_adapter_is_idempotent_and_preserves_existing_config(tmp_path:
     assert second["status"] == "unchanged"
     assert path.read_text(encoding="utf-8") == content
     assert 'default_model = "kimi"' in content
-    assert content.count("[[hooks]]") == 5
+    assert content.count("[[hooks]]") == 6
     assert 'event = "SessionStart"' in content
-    assert "--client kimi" in content
+    assert 'event = "UserPromptSubmit"' in content
+    assert "session-prepare" in content and "--output silent" in content
+    assert "prompt-context" in content and "--output plain" in content
+    prompt_section = content.split('event = "UserPromptSubmit"', 1)[1].split("[[hooks]]", 1)[0]
+    assert "matcher =" not in prompt_section
 
 
 def test_remove_only_managed_adapter_entries(tmp_path: Path) -> None:

@@ -19,12 +19,25 @@ def _payload() -> dict[str, Any]:
     return value
 
 
+def _emit(result: dict[str, Any], mode: str) -> None:
+    if mode == "silent":
+        return
+    if mode == "plain":
+        text = result.get("additionalContext")
+        if isinstance(text, str) and text:
+            sys.stdout.write(text)
+        return
+    print(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m djobs.hook_entrypoint")
     parser.add_argument(
         "event",
         choices=[
             "session-start",
+            "session-prepare",
+            "prompt-context",
             "post",
             "post-failure",
             "pre-compact",
@@ -40,6 +53,12 @@ def main(argv: list[str] | None = None) -> int:
     identity.add_argument("--host", help="Deprecated alias retained for old hook files")
     parser.add_argument("--db")
     parser.add_argument("--mode", choices=["off", "smart", "all"], default="smart")
+    parser.add_argument(
+        "--output",
+        choices=["json", "plain", "silent"],
+        default="json",
+        help="Adapter-specific stdout format",
+    )
     args = parser.parse_args(argv)
 
     client = str(args.client or args.host).strip().lower()
@@ -55,6 +74,8 @@ def main(argv: list[str] | None = None) -> int:
 
         handlers: dict[str, Callable[..., dict[str, Any]]] = {
             "session-start": lifecycle.session_start,
+            "session-prepare": lifecycle.prepare_prompt_context,
+            "prompt-context": lifecycle.prompt_context,
             "post": lifecycle.post_tool_use,
             "post-failure": lifecycle.post_tool_failure,
             "pre-compact": lifecycle.pre_compact,
@@ -67,7 +88,7 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:
         result = {}
 
-    print(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
+    _emit(result, args.output)
     return 0
 
 

@@ -13,7 +13,13 @@ from datetime import timedelta
 from typing import Any
 
 from djobs.handoff import _recover, _resolve, sync_workspace
-from djobs.observations import capture_repository_snapshot, clean, record_observation
+from djobs.observations import (
+    capture_repository_snapshot,
+    claim_context_injection,
+    clean,
+    record_observation,
+    reset_context_injection,
+)
 
 _CODING_TYPES = ("coding-session", "coding-checkpoint")
 _LEASE_SECONDS = 600
@@ -23,12 +29,12 @@ _SECRET_NAME = (
     r"(?:api[_-]?key|access[_-]?token|token|password|passwd|secret|authorization)"
 )
 _QUOTED_SECRET_RE = re.compile(
-    rf"(?i)(?P<name>{_SECRET_NAME})\s*[:=]\s*(?P<quote>['\"])"
-    r"(?P<value>.*?)(?P=quote)"
+    rf"(?i)(?P<prefix>['\"]?)(?P<name>{_SECRET_NAME})(?P=prefix)"
+    r"(?P<separator>\s*[:=]\s*|\s+)(?P<quote>['\"])(?P<value>.*?)(?P=quote)"
 )
 _UNQUOTED_SECRET_RE = re.compile(
-    rf"(?i)(?P<name>{_SECRET_NAME})(?P<separator>\s*[:=]\s*|\s+)"
-    r"(?P<value>[^\s,;]+)"
+    rf"(?i)(?P<prefix>['\"]?)(?P<name>{_SECRET_NAME})(?P=prefix)"
+    r"(?P<separator>\s*[:=]\s*|\s+)(?P<value>[^\s,;]+)"
 )
 _BEARER_RE = re.compile(r"(?i)(\bbearer\s+)[A-Za-z0-9._~+/=-]+")
 _URL_CREDENTIAL_RE = re.compile(r"(://[^:/\s]+:)[^@\s]+@")
@@ -37,8 +43,14 @@ _URL_CREDENTIAL_RE = re.compile(r"(://[^:/\s]+:)[^@\s]+@")
 def _redact(value: Any) -> str:
     text = str(value or "")
     text = _BEARER_RE.sub(r"\1<redacted>", text)
-    text = _QUOTED_SECRET_RE.sub(r"\g<name>=<redacted>", text)
-    text = _UNQUOTED_SECRET_RE.sub(r"\g<name>\g<separator><redacted>", text)
+    text = _QUOTED_SECRET_RE.sub(
+        r"\g<prefix>\g<name>\g<prefix>\g<separator>\g<quote><redacted>\g<quote>",
+        text,
+    )
+    text = _UNQUOTED_SECRET_RE.sub(
+        r"\g<prefix>\g<name>\g<prefix>\g<separator><redacted>",
+        text,
+    )
     return _URL_CREDENTIAL_RE.sub(r"\1<redacted>@", text)
 
 
@@ -217,6 +229,40 @@ def session_start(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]
         return _hook_context("SessionStart", "\n".join(lines))
     except Exception:
         return {}
+
+
+def prepare_prompt_context(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]:
+    """Reset once-per-session prompt injection for clients lacking startup injection."""
+
+    try:
+        workspace, agent, _queue, repo = _resolve(
+            roots=None,
+            cwd=_cwd(payload),
+            agent_type=agent_type,
+            session_id=_session_id(payload),
+        )
+        reset_context_injection(repo, workspace, agent)
+        capture_repository_snapshot(repo, workspace, agent)
+    except Exception:
+        pass
+    return {}
+
+
+def prompt_context(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]:
+    """Return read-only context once for a client session's first user prompt."""
+
+    try:
+        workspace, agent, _queue, repo = _resolve(
+            roots=None,
+            cwd=_cwd(payload),
+            agent_type=agent_type,
+            session_id=_session_id(payload),
+        )
+        if not claim_context_injection(repo, workspace, agent):
+            return {}
+    except Exception:
+        return {}
+    return session_start(payload, agent_type=agent_type)
 
 
 def post_tool_use(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]:

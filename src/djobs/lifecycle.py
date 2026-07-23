@@ -18,9 +18,17 @@ from djobs.observations import capture_repository_snapshot, clean, record_observ
 _CODING_TYPES = ("coding-session", "coding-checkpoint")
 _LEASE_SECONDS = 600
 _MAX_EVIDENCE = 500
-_SECRET_ASSIGNMENT_RE = re.compile(
-    r"(?i)\b(api[_-]?key|access[_-]?token|token|password|passwd|secret|authorization)"
-    r"(\s*[:=]\s*|\s+)([^\s,;]+)"
+_SECRET_NAME = (
+    r"(?:--)?[A-Za-z0-9_-]*"
+    r"(?:api[_-]?key|access[_-]?token|token|password|passwd|secret|authorization)"
+)
+_QUOTED_SECRET_RE = re.compile(
+    rf"(?i)(?P<name>{_SECRET_NAME})\s*[:=]\s*(?P<quote>['\"])"
+    r"(?P<value>.*?)(?P=quote)"
+)
+_UNQUOTED_SECRET_RE = re.compile(
+    rf"(?i)(?P<name>{_SECRET_NAME})(?P<separator>\s*[:=]\s*|\s+)"
+    r"(?P<value>[^\s,;]+)"
 )
 _BEARER_RE = re.compile(r"(?i)(\bbearer\s+)[A-Za-z0-9._~+/=-]+")
 _URL_CREDENTIAL_RE = re.compile(r"(://[^:/\s]+:)[^@\s]+@")
@@ -29,7 +37,8 @@ _URL_CREDENTIAL_RE = re.compile(r"(://[^:/\s]+:)[^@\s]+@")
 def _redact(value: Any) -> str:
     text = str(value or "")
     text = _BEARER_RE.sub(r"\1<redacted>", text)
-    text = _SECRET_ASSIGNMENT_RE.sub(r"\1\2<redacted>", text)
+    text = _QUOTED_SECRET_RE.sub(r"\g<name>=<redacted>", text)
+    text = _UNQUOTED_SECRET_RE.sub(r"\g<name>\g<separator><redacted>", text)
     return _URL_CREDENTIAL_RE.sub(r"\1<redacted>@", text)
 
 

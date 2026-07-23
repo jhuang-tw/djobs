@@ -1,4 +1,4 @@
-"""Console entry point with zero-config MCP setup and automatic agent hooks."""
+"""Console entry point with client-neutral MCP setup and observation adapters."""
 
 from __future__ import annotations
 
@@ -97,14 +97,12 @@ def _cmd_install_mcp_high_level(args: argparse.Namespace, cli: Any) -> None:
         cli._write_instructions_to(Path(cli._INSTRUCTION_TARGETS["copilot"]))
 
 
-def _cmd_init_with_hooks(
+def _cmd_init_passive(
     args: argparse.Namespace,
     cli: Any,
     original_doctor: Any,
 ) -> None:
-    """Run normal onboarding plus deterministic lifecycle hooks."""
-
-    from djobs.auto_hook import install_hooks, print_hook_doctor
+    """Keep project onboarding consistent with passive observation semantics."""
 
     mcp_target = Path(args.output)
     if mcp_target.exists() and not args.force:
@@ -122,34 +120,24 @@ def _cmd_init_with_hooks(
             portable=args.portable,
             write_instructions=False,
         )
-        cli._cmd_install_mcp(mcp_args)
+        _cmd_install_mcp_high_level(mcp_args, cli)
 
     for target in cli._resolve_instruction_targets(args.instructions_target):
         cli._write_instructions_to(target)
 
-    hook_db = cli._global_db() if args.use_global else getattr(args, "db", None)
-    install_hooks(
-        Path.cwd(),
-        mode="smart",
-        force=args.force,
-        db_path=hook_db,
-    )
-
     print()
     original_doctor(argparse.Namespace(as_json=False))
-    print_hook_doctor(Path.cwd())
     print(
-        "\ndjobs is initialized with automatic hooks.\n\n"
+        "\ndjobs is initialized with passive repository memory.\n\n"
         "Next steps:\n"
-        "1. Restart VS Code / your agent host so it reloads MCP and hook configuration.\n"
-        "2. Start a new agent session; unfinished checkpoints are injected automatically.\n"
-        "3. Meaningful Bash/PowerShell commands are rewritten before execution and "
-        "checkpointed automatically."
+        "1. Restart VS Code / your agent host so it reloads MCP configuration.\n"
+        "2. Run 'djobs setup all' once for supported user-level lifecycle adapters.\n"
+        "3. Use checkpoint() only when deliberately taking ownership of tracked work."
     )
 
 
 def main() -> None:
-    """Run the CLI, routing setup and hook events before normal argparse handling."""
+    """Run the CLI, routing setup and normalized observation events first."""
 
     if len(sys.argv) > 1 and sys.argv[1] in {"setup", "repair", "remove"}:
         from djobs.setup_cli import main as run_setup_cli
@@ -158,6 +146,8 @@ def main() -> None:
         raise SystemExit(run_setup_cli([action, *sys.argv[2:]]))
 
     if len(sys.argv) > 1 and sys.argv[1] == "hook":
+        # Legacy explicit command-checkpoint hook interface. It is not installed
+        # by normal setup/init and remains only for backward compatibility.
         from djobs.auto_hook import main as run_hook_cli
 
         raise SystemExit(run_hook_cli(sys.argv[2:]))
@@ -178,7 +168,6 @@ def main() -> None:
         raise SystemExit(run_gain_cli(sys.argv[2:]))
 
     from djobs import cli
-    from djobs.auto_hook import print_hook_doctor
     from djobs.setup_cli import print_setup_doctor
 
     original_mcp = cli._cmd_mcp
@@ -187,22 +176,21 @@ def main() -> None:
     original_install_mcp = cli._cmd_install_mcp
     original_instructions_body = cli._DJOBS_INSTRUCTIONS_BODY
 
-    def doctor_with_hooks(args: argparse.Namespace) -> None:
+    def doctor_with_adapters(args: argparse.Namespace) -> None:
         original_doctor(args)
         if not getattr(args, "as_json", False):
-            print_hook_doctor(Path.cwd())
             print_setup_doctor()
 
-    def init_with_hooks(args: argparse.Namespace) -> None:
-        _cmd_init_with_hooks(args, cli, original_doctor)
+    def init_passive(args: argparse.Namespace) -> None:
+        _cmd_init_passive(args, cli, original_doctor)
 
     def install_mcp_high_level(args: argparse.Namespace) -> None:
         _cmd_install_mcp_high_level(args, cli)
 
     cli._DJOBS_INSTRUCTIONS_BODY = _ZERO_CONFIG_INSTRUCTIONS_BODY
     cli._cmd_mcp = _cmd_mcp_context_efficient
-    cli._cmd_init = init_with_hooks
-    cli._cmd_doctor = doctor_with_hooks
+    cli._cmd_init = init_passive
+    cli._cmd_doctor = doctor_with_adapters
     cli._cmd_install_mcp = install_mcp_high_level
     try:
         cli.main()

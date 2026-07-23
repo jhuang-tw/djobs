@@ -222,8 +222,10 @@ def update_extension_runtime() -> None:
     )
     replace_once(
         "vscode-ext/src/djobsClient.ts",
-        r"/Requires-Python\s*>=\s*3\.11/i.test(detail)\n      || /requires Python\s*>=\s*3\.11/i.test(detail)",
-        r"/Requires-Python\s*>=\s*3\.10/i.test(detail)\n      || /requires Python\s*>=\s*3\.10/i.test(detail)",
+        "/Requires-Python\\s*>=\\s*3\\.11/i.test(detail)\n"
+        "      || /requires Python\\s*>=\\s*3\\.11/i.test(detail)",
+        "/Requires-Python\\s*>=\\s*3\\.10/i.test(detail)\n"
+        "      || /requires Python\\s*>=\\s*3\\.10/i.test(detail)",
     )
 
     replacements = {

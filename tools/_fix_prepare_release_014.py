@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 PATH = Path(__file__).with_name("_prepare_release_014.py")
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def replace_once(text: str, old: str, new: str) -> str:
@@ -41,6 +42,25 @@ def main() -> None:
         '    combined = "\\\\n".join(\n        (ROOT / path).read_text(encoding="utf-8").lower()\n        for path in current_surfaces\n    )\n',
     )
     PATH.write_text(text, encoding="utf-8")
+
+    guard_path = ROOT / "tests" / "unit" / "test_release_site_guards.py"
+    guard = guard_path.read_text(encoding="utf-8")
+    guard = replace_once(
+        guard,
+        '''    assert package["displayName"] == "djobs — Coding Checkpoints"
+    positioning = f"{package['displayName']} {package['description']}".lower()
+    assert "coding" in positioning
+    assert "checkpoint" in positioning
+    assert "context" in positioning
+''',
+        '''    assert package["displayName"] == "djobs — Local Agent Memory"
+    positioning = f"{package['displayName']} {package['description']}".lower()
+    assert "local" in positioning
+    assert "memory" in positioning
+    assert "handoff" in positioning
+''',
+    )
+    guard_path.write_text(guard, encoding="utf-8")
 
 
 if __name__ == "__main__":

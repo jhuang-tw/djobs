@@ -67,6 +67,36 @@ def test_init_does_not_install_legacy_command_checkpoint_hooks(
     ]
 
 
+def test_init_removes_only_recognized_legacy_managed_hook(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    legacy = tmp_path / ".github" / "hooks" / "djobs.json"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "hooks": {
+                    "sessionStart": [{"bash": "djobs hook session-start"}],
+                    "preToolUse": [{"bash": "djobs hook pre"}],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert entrypoint._remove_legacy_project_hook()
+    assert not legacy.exists()
+
+    unrelated = tmp_path / ".github" / "hooks" / "djobs.json"
+    unrelated.parent.mkdir(parents=True, exist_ok=True)
+    unrelated.write_text('{"version": 1, "hooks": {"sessionStart": []}}', encoding="utf-8")
+    assert not entrypoint._remove_legacy_project_hook()
+    assert unrelated.exists()
+
+
 def test_zero_config_instructions_keep_observation_and_ownership_separate() -> None:
     body = entrypoint._ZERO_CONFIG_INSTRUCTIONS_BODY
 

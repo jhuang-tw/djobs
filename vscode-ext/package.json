@@ -2,7 +2,7 @@
   "name": "djobs",
   "displayName": "djobs — Local Agent Memory",
   "description": "Local repository memory, passive observations, and explicit handoff for coding agents.",
-  "version": "0.14.1",
+  "version": "0.15.0",
   "publisher": "jhuang-tw",
   "license": "MIT",
   "icon": "media/icon-128.png",

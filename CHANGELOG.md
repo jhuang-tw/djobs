@@ -14,6 +14,17 @@ public interfaces may still change between minor versions. Entries below use
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-07-24
+
+### Added
+- `[core]` Added fail-open zero-touch bootstrap on the first high-level MCP tool call. djobs now creates shared local memory, detects the calling host from MCP client metadata or environment markers, and installs only that host's passive lifecycle adapter without requiring `djobs setup`.
+- `[core]` Propagated the detected host identity into repository sync, checkpoint, and handoff so registry-installed MCP clients retain correct local agent identity without extra configuration.
+- `[release]` Extended the installed-wheel smoke test to verify first-call database creation and passive hook installation before any setup command is run.
+
+### Changed
+- `[ext]` The VS Code native MCP launch now declares the Copilot host identity so zero-touch bootstrap works on its first tool call.
+- `[docs]` Reframed CLI setup and doctor commands as optional manual repair tools rather than required onboarding steps.
+
 ## [0.14.1] - 2026-07-24
 
 ### Changed

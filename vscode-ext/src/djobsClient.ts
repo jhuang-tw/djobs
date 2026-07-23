@@ -134,7 +134,12 @@ export class DjobsClient {
         }
       }
     }
-    return { command, args, env: { DJOBS_DB: this.resolvedDbPath() }, cwd: this.workspaceRoot };
+    return {
+      command,
+      args,
+      env: { DJOBS_DB: this.resolvedDbPath(), DJOBS_AGENT_TYPE: 'copilot' },
+      cwd: this.workspaceRoot,
+    };
   }
 
   /** Absolute queue path used by hooks and the MCP server. */

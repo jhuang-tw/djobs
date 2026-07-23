@@ -25,11 +25,16 @@ _MAX_METADATA = 1000
 _MAX_OBSERVATIONS_PER_WORKSPACE = 1000
 _HASH_CHUNK_SIZE = 64 * 1024
 _MAX_UNTRACKED_HASH_BYTES = 1024 * 1024
+_CONTEXT_INJECTED_EVENT = "context_injected"
 
 
 def clean(value: Any, limit: int) -> str:
     text = " ".join(str(value or "").replace("\x00", "").split())
     return text if len(text) <= limit else text[: limit - 1].rstrip() + "…"
+
+
+def _session_hash(agent: Any) -> str:
+    return hashlib.sha256(agent.session_id.encode("utf-8")).hexdigest()[:16]
 
 
 def _metadata_json(metadata: dict[str, Any] | None) -> str:
@@ -57,6 +62,27 @@ def ensure_schema(repo: Any) -> None:
         repo._connection.commit()
 
 
+def _prune_observations(cursor: Any, workspace_id: str) -> None:
+    cursor.execute(
+        """
+        DELETE FROM agent_observations
+        WHERE correlation_id = ?
+          AND id NOT IN (
+              SELECT id
+              FROM agent_observations
+              WHERE correlation_id = ?
+              ORDER BY created_at DESC, id DESC
+              LIMIT ?
+          )
+        """,
+        (
+            workspace_id,
+            workspace_id,
+            _MAX_OBSERVATIONS_PER_WORKSPACE,
+        ),
+    )
+
+
 def _insert_observation(
     cursor: Any,
     workspace: Any,
@@ -79,7 +105,7 @@ def _insert_observation(
             uuid.uuid4().hex,
             workspace.workspace_id,
             agent.agent_type,
-            hashlib.sha256(agent.session_id.encode("utf-8")).hexdigest()[:16],
+            _session_hash(agent),
             clean(event_type, 80),
             clean(tool_name, 80) or None,
             clean(summary, _MAX_SUMMARY),
@@ -87,24 +113,7 @@ def _insert_observation(
             created_at or datetime.now(timezone.utc).isoformat(),
         ),
     )
-    cursor.execute(
-        """
-        DELETE FROM agent_observations
-        WHERE correlation_id = ?
-          AND id NOT IN (
-              SELECT id
-              FROM agent_observations
-              WHERE correlation_id = ?
-              ORDER BY created_at DESC, id DESC
-              LIMIT ?
-          )
-        """,
-        (
-            workspace.workspace_id,
-            workspace.workspace_id,
-            _MAX_OBSERVATIONS_PER_WORKSPACE,
-        ),
-    )
+    _prune_observations(cursor, workspace.workspace_id)
 
 
 def record_observation(
@@ -137,6 +146,73 @@ def record_observation(
             raise
 
 
+def reset_context_injection(repo: Any, workspace: Any, agent: Any) -> None:
+    """Allow one fresh prompt-context injection after a session start/resume."""
+
+    ensure_schema(repo)
+    with repo._lock:
+        repo._connection.execute(
+            """
+            DELETE FROM agent_observations
+            WHERE correlation_id = ?
+              AND agent_type = ?
+              AND session_id_hash = ?
+              AND event_type = ?
+            """,
+            (
+                workspace.workspace_id,
+                agent.agent_type,
+                _session_hash(agent),
+                _CONTEXT_INJECTED_EVENT,
+            ),
+        )
+        repo._connection.commit()
+
+
+def claim_context_injection(repo: Any, workspace: Any, agent: Any) -> bool:
+    """Atomically claim one context injection for this client session."""
+
+    ensure_schema(repo)
+    now = datetime.now(timezone.utc).isoformat()
+    with repo._lock:
+        cursor = repo._connection.cursor()
+        try:
+            cursor.execute("BEGIN IMMEDIATE")
+            existing = cursor.execute(
+                """
+                SELECT 1 FROM agent_observations
+                WHERE correlation_id = ?
+                  AND agent_type = ?
+                  AND session_id_hash = ?
+                  AND event_type = ?
+                LIMIT 1
+                """,
+                (
+                    workspace.workspace_id,
+                    agent.agent_type,
+                    _session_hash(agent),
+                    _CONTEXT_INJECTED_EVENT,
+                ),
+            ).fetchone()
+            if existing is not None:
+                repo._connection.commit()
+                return False
+            _insert_observation(
+                cursor,
+                workspace,
+                agent,
+                _CONTEXT_INJECTED_EVENT,
+                "Read-only repository context was injected once for this session.",
+                metadata={"internal": True, "stored_as_data": True},
+                created_at=now,
+            )
+            repo._connection.commit()
+            return True
+        except Exception:
+            repo._connection.rollback()
+            raise
+
+
 def recent_observations(repo: Any, workspace: Any, limit: int = 6) -> list[dict[str, Any]]:
     ensure_schema(repo)
     placeholders = ",".join("?" for _ in workspace.correlation_ids)
@@ -146,10 +222,15 @@ def recent_observations(repo: Any, workspace: Any, limit: int = 6) -> list[dict[
             SELECT agent_type, event_type, tool_name, summary, created_at
             FROM agent_observations
             WHERE correlation_id IN ({placeholders})
+              AND event_type != ?
             ORDER BY created_at DESC, id DESC
             LIMIT ?
             """,
-            (*workspace.correlation_ids, max(1, min(limit, 20))),
+            (
+                *workspace.correlation_ids,
+                _CONTEXT_INJECTED_EVENT,
+                max(1, min(limit, 20)),
+            ),
         ).fetchall()
     return [
         {
@@ -262,19 +343,39 @@ def _git_state(root: str) -> tuple[str, str, bool] | None:
     digest.update(head_bytes)
     digest.update(b"\x00")
     digest.update(status.stdout)
-    tracked_ok = _hash_command(
-        digest,
-        ["git", "-C", root, "diff", "--no-ext-diff", "--binary", "--no-color"],
-    )
-    staged_ok = _hash_command(
-        digest,
-        ["git", "-C", root, "diff", "--cached", "--no-ext-diff", "--binary", "--no-color"],
-    )
-    untracked_ok = _hash_untracked(digest, root)
-    if not (tracked_ok and staged_ok and untracked_ok):
-        return None
-
     lines = [line for line in status_text.splitlines() if line.strip()]
+    if lines:
+        tracked_ok = _hash_command(
+            digest,
+            [
+                "git",
+                "-C",
+                root,
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--binary",
+                "--no-color",
+            ],
+        )
+        staged_ok = _hash_command(
+            digest,
+            [
+                "git",
+                "-C",
+                root,
+                "diff",
+                "--cached",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--binary",
+                "--no-color",
+            ],
+        )
+        untracked_ok = _hash_untracked(digest, root)
+        if not (tracked_ok and staged_ok and untracked_ok):
+            return None
+
     if not lines:
         summary = f"HEAD {head_text[:12]}; working tree clean"
     else:

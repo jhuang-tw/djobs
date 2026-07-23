@@ -96,7 +96,7 @@ def _mounted_windows_alias(normalized: str) -> str | None:
         and parts[2].isalpha()
     ):
         suffix = "/".join(parts[3:])
-        return f"{parts[2].lower()}:/{suffix}".rstrip("/") or f"{parts[2].lower()}:/"
+        return f"{parts[2].lower()}:/{suffix}" if suffix else f"{parts[2].lower()}:/"
 
     is_msys = bool(os.environ.get("MSYSTEM") or os.environ.get("CYGWIN"))
     if (
@@ -107,7 +107,7 @@ def _mounted_windows_alias(normalized: str) -> str | None:
         and parts[1].isalpha()
     ):
         suffix = "/".join(parts[2:])
-        return f"{parts[1].lower()}:/{suffix}".rstrip("/") or f"{parts[1].lower()}:/"
+        return f"{parts[1].lower()}:/{suffix}" if suffix else f"{parts[1].lower()}:/"
     return None
 
 

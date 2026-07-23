@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, feature/zero-config-cross-agent-handoff]
+    branches: [main]
   pull_request:
     branches: [main]
 

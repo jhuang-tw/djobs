@@ -29,18 +29,21 @@ _SUPPORTED = ("codex", "claude", "gemini", "kimi")
 
 
 def _command(argv: Sequence[str], *, windows: bool | None = None) -> str:
-    """Quote one hook command for the target shell.
-
-    JSON/TOML hook formats store a command string. Use native Windows quoting
-    when installing on Windows; POSIX shlex quoting is only correct on POSIX.
-    """
+    """Quote one hook command for the target shell."""
 
     use_windows = os.name == "nt" if windows is None else windows
     return subprocess.list2cmdline(list(argv)) if use_windows else shlex.join(list(argv))
 
 
-def _hook_argv(event: str, client: str, database: Path, mode: str) -> list[str]:
-    return [
+def _hook_argv(
+    event: str,
+    client: str,
+    database: Path,
+    mode: str,
+    *,
+    output: str = "json",
+) -> list[str]:
+    argv = [
         sys.executable,
         "-m",
         "djobs.hook_entrypoint",
@@ -52,6 +55,9 @@ def _hook_argv(event: str, client: str, database: Path, mode: str) -> list[str]:
         "--mode",
         mode,
     ]
+    if output != "json":
+        argv.extend(["--output", output])
+    return argv
 
 
 def _json_handler(event: str, client: str, database: Path, mode: str) -> dict[str, Any]:
@@ -102,8 +108,7 @@ def _specs(client: str) -> tuple[tuple[str, str, str | None], ...]:
         )
     if client == "gemini":
         # Gemini lifecycle matchers are exact strings rather than regex
-        # alternations. Omitting them intentionally matches every documented
-        # startup/compression/end reason.
+        # alternations. Omitting them matches every documented lifecycle reason.
         return (
             ("SessionStart", "session-start", None),
             ("AfterTool", "post", "run_shell_command|write_file|replace|write_.*"),
@@ -111,8 +116,11 @@ def _specs(client: str) -> tuple[tuple[str, str, str | None], ...]:
             ("SessionEnd", "session-end", None),
         )
     if client == "kimi":
+        # Kimi only guarantees prompt-context injection from UserPromptSubmit.
+        # SessionStart resets the once-per-session marker without writing stdout.
         return (
-            ("SessionStart", "session-start", "startup|resume"),
+            ("SessionStart", "session-prepare", "startup|resume"),
+            ("UserPromptSubmit", "prompt-context", None),
             ("PostToolUse", "post", "Bash|Write|Edit|apply_patch"),
             ("PostToolUseFailure", "post-failure", "Bash|Write|Edit|apply_patch"),
             ("PreCompact", "pre-compact", "manual|auto"),
@@ -230,12 +238,15 @@ def _install_json_hooks(
 def _kimi_block(database: Path, mode: str) -> str:
     lines = [_KIMI_BEGIN]
     for native_event, normalized_event, matcher in _specs("kimi"):
-        command = _command(_hook_argv(normalized_event, "kimi", database, mode))
+        output = "plain" if normalized_event == "prompt-context" else "silent"
+        command = _command(
+            _hook_argv(normalized_event, "kimi", database, mode, output=output)
+        )
+        lines.extend(["[[hooks]]", f"event = {json.dumps(native_event)}"])
+        if matcher is not None:
+            lines.append(f"matcher = {json.dumps(matcher)}")
         lines.extend(
             [
-                "[[hooks]]",
-                f"event = {json.dumps(native_event)}",
-                f"matcher = {json.dumps(matcher or '')}",
                 f"command = {json.dumps(command)}",
                 "timeout = 15",
                 "",

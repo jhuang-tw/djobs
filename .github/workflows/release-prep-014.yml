@@ -6,44 +6,59 @@ on:
       - main
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: prepare-014-${{ github.event.pull_request.head.ref }}
   cancel-in-progress: true
 
 jobs:
-  export:
+  finalize:
     runs-on: ubuntu-latest
+    env:
+      TARGET_BRANCH: ${{ github.event.pull_request.head.ref }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+      - id: state
+        shell: bash
+        run: |
+          if [[ -f tools/_prepare_release_014.py && -f tools/_fix_prepare_release_014.py ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/setup-node@v4
+        if: steps.state.outputs.run == 'true'
         with:
           node-version: "22"
       - uses: actions/setup-python@v5
+        if: steps.state.outputs.run == 'true'
         with:
           python-version: "3.13"
-      - run: python tools/_fix_prepare_release_014.py
-      - run: python tools/_prepare_release_014.py
-      - run: python -m pip install -e ".[dev]"
-      - run: python -m ruff format src tests
-      - run: python -m ruff check src tests
-      - run: pytest -q --tb=short tests/unit/test_release_surfaces.py tests/unit/test_release_site_guards.py tests/unit/test_copilot_setup.py
-      - run: git diff --check
-      - name: Build final file archive
-        shell: bash
+      - if: steps.state.outputs.run == 'true'
+        run: python tools/_fix_prepare_release_014.py
+      - if: steps.state.outputs.run == 'true'
+        run: python tools/_prepare_release_014.py
+      - if: steps.state.outputs.run == 'true'
+        run: python -m pip install -e ".[dev]"
+      - if: steps.state.outputs.run == 'true'
+        run: python -m ruff format src tests
+      - if: steps.state.outputs.run == 'true'
+        run: python -m ruff check src tests
+      - if: steps.state.outputs.run == 'true'
+        run: pytest -q --tb=short tests/unit/test_release_surfaces.py tests/unit/test_release_site_guards.py tests/unit/test_copilot_setup.py
+      - if: steps.state.outputs.run == 'true'
+        run: git diff --check
+      - name: Commit validated non-workflow release files
+        if: steps.state.outputs.run == 'true'
         run: |
-          mkdir -p release-output
-          {
-            git diff --name-only --diff-filter=ACMRT
-            git ls-files --others --exclude-standard
-          } | sort -u | grep -v -E '^(tools/_prepare_release_014.py|tools/_fix_prepare_release_014.py|\.github/workflows/release-prep-014.yml)$' > release-output/files.txt
-          tar -czf release-output/release-files.tar.gz -T release-output/files.txt
-          git diff --stat > release-output/diff-stat.txt
-      - uses: actions/upload-artifact@v4
-        with:
-          name: release-014-final-tree
-          path: release-output
-          if-no-files-found: error
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -- .github/workflows/publish.yml
+          git rm tools/_prepare_release_014.py tools/_fix_prepare_release_014.py
+          git add -A
+          git commit -m "release: prepare 0.14.0"
+          git push origin HEAD:${TARGET_BRANCH}

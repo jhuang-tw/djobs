@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import djobs.setup_cli as setup_cli
 from djobs.setup_cli import configure_host, remove_host, setup_command
 
 
@@ -21,6 +22,11 @@ class FakeRunner:
         else:
             code, stdout = response, ""
         return subprocess.CompletedProcess(command, code, stdout=stdout, stderr="")
+
+
+class TimeoutRunner:
+    def __call__(self, command: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(command, 20)
 
 
 def _which(name: str) -> str:
@@ -71,6 +77,22 @@ def test_mcp_failure_does_not_discard_working_passive_adapter(tmp_path: Path) ->
     assert (tmp_path / ".codex" / "hooks.json").exists()
 
 
+def test_cli_timeout_is_reported_as_partial_without_traceback(tmp_path: Path) -> None:
+    result = configure_host(
+        "codex",
+        db=tmp_path / "shared.db",
+        runner=TimeoutRunner(),
+        which=_which,
+        server=["djobs-mcp"],
+        home=tmp_path,
+    )
+
+    assert result["status"] == "partial"
+    assert result["mcp"]["status"] == "error"
+    assert "timed out" in str(result["mcp"]["error"])
+    assert result["hooks"]["status"] == "configured"
+
+
 def test_gemini_command_uses_user_scope_and_shared_database(tmp_path: Path) -> None:
     command = setup_command("gemini", tmp_path / "shared.db", ["djobs-mcp"])
     assert command[:3] == ["gemini", "mcp", "add"]
@@ -79,19 +101,32 @@ def test_gemini_command_uses_user_scope_and_shared_database(tmp_path: Path) -> N
     assert "DJOBS_AGENT_TYPE=gemini" in command
 
 
-def test_gemini_setup_detects_existing_registration_from_list(tmp_path: Path) -> None:
-    runner = FakeRunner([(0, "✓ djobs: command: djobs-mcp")])
+def test_gemini_setup_detects_only_exact_registration_name(tmp_path: Path) -> None:
+    existing = FakeRunner([(0, "✓ djobs: command: djobs-mcp")])
     result = configure_host(
         "gemini",
         db=tmp_path / "shared.db",
-        runner=runner,
+        runner=existing,
         which=_which,
         server=["djobs-mcp"],
         home=tmp_path,
     )
     assert result["status"] == "configured"
-    assert runner.commands == [["/tools/gemini", "mcp", "list"]]
-    assert (tmp_path / ".gemini" / "settings.json").exists()
+    assert existing.commands == [["/tools/gemini", "mcp", "list"]]
+
+    false_positive = FakeRunner([(0, "✓ my-djobs-proxy: command: proxy"), 0])
+    second_home = tmp_path / "other-home"
+    result = configure_host(
+        "gemini",
+        db=tmp_path / "shared.db",
+        runner=false_positive,
+        which=_which,
+        server=["djobs-mcp"],
+        home=second_home,
+    )
+    assert result["status"] == "configured"
+    assert len(false_positive.commands) == 2
+    assert false_positive.commands[1][1:4] == ["mcp", "add", "--scope"]
 
 
 def test_kimi_setup_merges_mcp_and_toml_without_cli_mcp_subcommand(tmp_path: Path) -> None:
@@ -124,9 +159,28 @@ def test_unavailable_client_does_not_change_config(tmp_path: Path) -> None:
         server=["python", "-m", "djobs.coding_mcp"],
         home=tmp_path,
     )
-    assert result["status"] == "manual"
+    assert result["status"] == "unavailable"
     assert str(result["command"]).startswith("gemini mcp add")
     assert not (tmp_path / ".gemini" / "settings.json").exists()
+
+
+def test_setup_all_skips_unavailable_but_explicit_target_fails(monkeypatch) -> None:
+    unavailable = {
+        "status": "unavailable",
+        "message": "CLI not found",
+        "command": "copy me",
+    }
+    monkeypatch.setattr(setup_cli, "configure_host", lambda *_args, **_kwargs: unavailable)
+
+    assert setup_cli.main(["setup", "all"]) == 0
+    assert setup_cli.main(["setup", "gemini"]) == 1
+
+
+def test_partial_setup_returns_nonzero(monkeypatch) -> None:
+    partial = {"status": "partial", "message": "MCP failed", "command": "repair"}
+    monkeypatch.setattr(setup_cli, "configure_host", lambda *_args, **_kwargs: partial)
+
+    assert setup_cli.main(["setup", "codex"]) == 1
 
 
 def test_remove_kimi_preserves_unrelated_mcp_and_config(tmp_path: Path) -> None:

@@ -12,7 +12,7 @@ import re
 from datetime import timedelta
 from typing import Any
 
-from djobs.handoff import _recover, _resolve, sync_workspace
+from djobs.handoff import _resolve, sync_workspace
 from djobs.observations import (
     capture_repository_snapshot,
     claim_context_injection,
@@ -163,7 +163,6 @@ def _observe_tool(payload: dict[str, Any], *, agent_type: str, failed: bool) -> 
             agent_type=agent_type,
             session_id=_session_id(payload),
         )
-        _recover(queue, repo)
         actual_failed = failed or _response_failed(payload)
         tool_name = _tool_name(payload)
         label = _tool_input_label(payload)
@@ -188,9 +187,9 @@ def _observe_tool(payload: dict[str, Any], *, agent_type: str, failed: bool) -> 
                 "stored_as_data": True,
             },
         )
-        capture_repository_snapshot(repo, workspace, agent)
-        # Only an already explicit claim is heartbeated. No observation hook may
-        # acquire ownership or change an unowned task's state.
+        # Keep an explicit lease alive, but do not scan the whole Git tree after
+        # every tool. Session boundaries, sync_workspace(), and the sidecar record
+        # repository ground truth without multiplying large-repository diff cost.
         for row in _owned_rows(repo, workspace, agent.agent_id):
             queue.heartbeat(str(row["id"]), agent.agent_id, timedelta(seconds=_LEASE_SECONDS))
     except Exception:

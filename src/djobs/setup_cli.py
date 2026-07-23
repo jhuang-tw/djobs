@@ -20,9 +20,7 @@ from djobs.workspace import shared_db_path
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 Which = Callable[[str], str | None]
 _CLIENTS = ("codex", "claude", "gemini", "kimi")
-_GEMINI_DJOBS_LINE_RE = re.compile(
-    r"(?im)^\s*(?:[✓✗●○*+-]\s*)?djobs(?:\s|:)"
-)
+_GEMINI_DJOBS_LINE_RE = re.compile(r"(?im)^\s*(?:[✓✗●○*+-]\s*)?djobs(?:\s|:)")
 
 
 @dataclass(frozen=True)
@@ -68,17 +66,18 @@ def setup_command(host: str, db: Path, server: Sequence[str] | None = None) -> l
             *server_command,
         ]
     if host == "claude":
+        # Claude requires every option before the server name.
         return [
             "claude",
             "mcp",
             "add",
-            "djobs",
             "--scope",
             "user",
             "--env",
             f"DJOBS_DB={database}",
             "--env",
             "DJOBS_AGENT_TYPE=claude",
+            "djobs",
             "--",
             *server_command,
         ]
@@ -347,7 +346,14 @@ def remove_host(
             mcp_error = str(exc)
         removed = "removed" in {mcp_status, hook_status}
         failed = "error" in {mcp_status, hook_status}
-        status = "partial" if removed and failed else "error" if failed else "removed" if removed else "absent"
+        if removed and failed:
+            status = "partial"
+        elif failed:
+            status = "error"
+        elif removed:
+            status = "removed"
+        else:
+            status = "absent"
         error_note = f"; error: {mcp_error or hook_result.get('error')}" if failed else ""
         return {
             "host": host_name,
@@ -472,10 +478,15 @@ def main(argv: list[str] | None = None) -> int:
         else:
             result = configure_host(target, repair=args.action == "repair")
         status = str(result["status"])
-        display_status = "skipped" if args.target == "all" and status == "unavailable" else status
+        if args.target == "all" and status == "unavailable":
+            display_status = "skipped"
+        else:
+            display_status = status
         print(f"{target}: {display_status} — {result['message']}")
         if result.get("command"):
             print(result["command"])
-        if status in {"partial", "error"} or (status == "unavailable" and args.target != "all"):
+        if status in {"partial", "error"} or (
+            status == "unavailable" and args.target != "all"
+        ):
             failed = True
     return 1 if failed else 0

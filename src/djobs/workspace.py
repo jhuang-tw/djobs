@@ -123,6 +123,29 @@ def path_key(path: str | os.PathLike[str]) -> str:
     return normalized
 
 
+def _workspace_id(identity: str) -> str:
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+    return f"repo:{digest}"
+
+
+def _cross_shell_aliases(path: str | os.PathLike[str]) -> set[str]:
+    """Return path spellings used by native Windows, WSL, and Git Bash.
+
+    These aliases are used only for identity compatibility and reads. The actual
+    workspace root remains the native path so Git commands run in the right OS.
+    """
+
+    normalized = normalize_path(path)
+    aliases = {normalized, path_key(normalized)}
+    identity = path_key(normalized)
+    if len(identity) >= 3 and identity[1:3] == ":/" and identity[0].isalpha():
+        drive = identity[0].lower()
+        suffix = identity[3:]
+        aliases.add(f"/mnt/{drive}/{suffix}".rstrip("/") if suffix else f"/mnt/{drive}")
+        aliases.add(f"/{drive}/{suffix}".rstrip("/") if suffix else f"/{drive}")
+    return aliases
+
+
 def _is_windows_path(path: str) -> bool:
     return len(path) >= 2 and path[1] == ":" and PureWindowsPath(path).drive != ""
 
@@ -200,21 +223,26 @@ def resolve_workspace(
 
     canonical = normalize_path(root)
     identity = path_key(canonical)
-    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
-    workspace_id = f"repo:{digest}"
+    workspace_id = _workspace_id(identity)
 
     # Reads remain compatible with old clients that stored request cwd, a Git
-    # subdirectory, or an alternate Windows/WSL/MSYS spelling directly.
+    # subdirectory, alternate shell spellings, or the old deterministic hash.
     legacy_candidates = [canonical, identity, *root_candidates, *(resolved_roots or [])]
     if cwd is not None and os.fspath(cwd).strip():
         legacy_candidates.append(normalize_path(os.fspath(cwd)))
     if server_cwd is not None and os.fspath(server_cwd).strip():
         legacy_candidates.append(normalize_path(os.fspath(server_cwd)))
 
-    compatible: set[str] = {workspace_id, canonical, identity}
+    aliases: set[str] = set()
     for value in legacy_candidates:
-        compatible.update(correlation_id_variants(value))
-        compatible.update(correlation_id_variants(path_key(value)))
+        aliases.update(_cross_shell_aliases(value))
+
+    compatible: set[str] = {workspace_id, canonical, identity}
+    for alias in aliases:
+        compatible.update(correlation_id_variants(alias))
+        # Before cross-shell normalization, deterministic IDs were derived from
+        # each native spelling. Retain those hashes so upgrades do not hide work.
+        compatible.add(_workspace_id(alias.casefold() if _is_windows_path(alias) else alias))
     return Workspace(
         root=canonical,
         workspace_id=workspace_id,

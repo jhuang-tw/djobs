@@ -25,12 +25,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("root", nargs="?", default=".")
     parser.add_argument("--client", default="filesystem-sidecar")
     parser.add_argument("--watch", action="store_true")
-    parser.add_argument("--interval", type=float, default=2.0)
+    parser.add_argument("--interval", type=float, default=5.0)
     args = parser.parse_args(argv)
     if not args.watch:
         observe_once(args.root, client=args.client)
         return 0
-    interval = max(0.5, min(args.interval, 60.0))
+    interval = max(1.0, min(args.interval, 60.0))
     try:
         while True:
             observe_once(args.root, client=args.client)

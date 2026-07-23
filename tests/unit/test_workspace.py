@@ -40,6 +40,21 @@ def test_windows_path_normalization_is_tolerant() -> None:
     assert path_key(r"C:\Work\Repo") == path_key("c:/Work/Repo/")
 
 
+def test_wsl_and_windows_paths_share_repository_identity() -> None:
+    windows = resolve_workspace(cwd=r"C:\Work\Repo")
+    wsl = resolve_workspace(cwd="/mnt/c/Work/Repo")
+
+    assert path_key(wsl.root) == path_key(windows.root)
+    assert wsl.workspace_id == windows.workspace_id
+    assert "c:/work/repo" in wsl.correlation_ids
+
+
+def test_git_bash_drive_path_uses_windows_identity(monkeypatch) -> None:
+    monkeypatch.setenv("MSYSTEM", "MINGW64")
+
+    assert path_key("/c/Work/Repo") == path_key(r"C:\Work\Repo")
+
+
 def test_workspace_keeps_legacy_subdirectory_correlation_variant(tmp_path: Path) -> None:
     root = _git_repo(tmp_path / "repo")
     child = root / "src" / "feature"

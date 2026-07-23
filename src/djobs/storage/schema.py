@@ -25,6 +25,59 @@ import sqlite3
 from typing import Any
 
 # ---------------------------------------------------------------------------
+# Shared observation schema. These tables are intentionally separate from jobs:
+# recording repository/tool/session evidence must never change task ownership.
+# ---------------------------------------------------------------------------
+
+SQLITE_OBSERVATION_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS agent_observations (
+    id TEXT PRIMARY KEY,
+    correlation_id TEXT NOT NULL,
+    agent_type TEXT NOT NULL,
+    session_id_hash TEXT NULL,
+    event_type TEXT NOT NULL,
+    tool_name TEXT NULL,
+    summary TEXT NOT NULL,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_observations_scope_created
+ON agent_observations (correlation_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS repository_snapshots (
+    workspace_id TEXT PRIMARY KEY,
+    digest TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+"""
+
+POSTGRES_OBSERVATION_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS agent_observations (
+    id TEXT PRIMARY KEY,
+    correlation_id TEXT NOT NULL,
+    agent_type TEXT NOT NULL,
+    session_id_hash TEXT NULL,
+    event_type TEXT NOT NULL,
+    tool_name TEXT NULL,
+    summary TEXT NOT NULL,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_observations_scope_created
+ON agent_observations (correlation_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS repository_snapshots (
+    workspace_id TEXT PRIMARY KEY,
+    digest TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+"""
+
+# ---------------------------------------------------------------------------
 # SQLite — text-typed timestamps (ISO-8601 strings).
 # ---------------------------------------------------------------------------
 
@@ -166,7 +219,7 @@ CREATE TABLE IF NOT EXISTS agents (
 
 CREATE INDEX IF NOT EXISTS idx_agents_status
 ON agents (status, last_heartbeat_at);
-"""
+""" + SQLITE_OBSERVATION_SCHEMA_SQL
 
 # ---------------------------------------------------------------------------
 # PostgreSQL — native TIMESTAMPTZ columns.
@@ -250,7 +303,7 @@ CREATE TABLE IF NOT EXISTS agents (
 
 CREATE INDEX IF NOT EXISTS idx_agents_status
 ON agents (status, last_heartbeat_at);
-"""
+""" + POSTGRES_OBSERVATION_SCHEMA_SQL
 
 # ---------------------------------------------------------------------------
 # Column migrations for pre-existing databases.
@@ -270,6 +323,7 @@ JOBS_COLUMN_MIGRATIONS: list[tuple[str, str]] = [
 
 def apply_sqlite_column_migrations(connection: sqlite3.Connection) -> None:
     """Add post-initial columns to a pre-existing SQLite ``jobs`` table."""
+
     existing = {row["name"] for row in connection.execute("PRAGMA table_info(jobs)").fetchall()}
     for column, definition in JOBS_COLUMN_MIGRATIONS:
         if column not in existing:
@@ -278,5 +332,6 @@ def apply_sqlite_column_migrations(connection: sqlite3.Connection) -> None:
 
 def apply_postgres_column_migrations(cursor: Any) -> None:
     """Add post-initial columns to a pre-existing PostgreSQL ``jobs`` table."""
+
     for _column, definition in JOBS_COLUMN_MIGRATIONS:
         cursor.execute(f"ALTER TABLE jobs ADD COLUMN IF NOT EXISTS {definition}")

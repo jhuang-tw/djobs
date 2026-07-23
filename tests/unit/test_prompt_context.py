@@ -65,6 +65,30 @@ def test_prompt_context_is_once_per_session_and_resets_on_resume(
     assert all(item["event"] != "context_injected" for item in visible)
 
 
+def test_empty_sync_does_not_consume_the_once_per_session_injection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _git_repo(tmp_path / "project")
+    (root / "tracked.txt").write_text("changed\n", encoding="utf-8")
+    database = tmp_path / "shared.db"
+    repository = SQLiteJobRepository.from_path(database)
+    queue = QueueService(repository)
+    monkeypatch.setattr(handoff, "configure", lambda _path: queue)
+    monkeypatch.setenv("DJOBS_DB", str(database))
+    payload = {"cwd": str(root), "session_id": "retry-session"}
+    lifecycle.prepare_prompt_context(payload, agent_type="kimi")
+
+    original = lifecycle.session_start
+    monkeypatch.setattr(lifecycle, "session_start", lambda *_args, **_kwargs: {})
+    assert lifecycle.prompt_context(payload, agent_type="kimi") == {}
+
+    monkeypatch.setattr(lifecycle, "session_start", original)
+    retried = lifecycle.prompt_context(payload, agent_type="kimi")
+    assert "repository_change" in retried["additionalContext"]
+    assert lifecycle.prompt_context(payload, agent_type="kimi") == {}
+
+
 def test_visible_observation_retention_does_not_evict_injection_marker(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

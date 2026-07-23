@@ -1,0 +1,32 @@
+name: Temporary first-memory export
+
+on:
+  push:
+    branches:
+      - fix/zero-touch-first-memory
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Archive exact source
+        run: git archive --format=zip --output=djobs-first-memory-source.zip HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: djobs-first-memory-source
+          path: djobs-first-memory-source.zip
+          retention-days: 1
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: 16,
+              body: `FIRST_MEMORY_EXPORT_RUN=${context.runId}`
+            })

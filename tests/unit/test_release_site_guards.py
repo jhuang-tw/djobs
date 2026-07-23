@@ -90,11 +90,11 @@ def test_changelog_current_section_has_release_notes() -> None:
 def test_marketplace_metadata_matches_product_positioning() -> None:
     package = json.loads(_EXT_PACKAGE.read_text(encoding="utf-8"))
     assert package["version"] == djobs.__version__
-    assert package["displayName"] == "djobs — Coding Checkpoints"
+    assert package["displayName"] == "djobs — Local Agent Memory"
     positioning = f"{package['displayName']} {package['description']}".lower()
-    assert "coding" in positioning
-    assert "checkpoint" in positioning
-    assert "context" in positioning
+    assert "local" in positioning
+    assert "memory" in positioning
+    assert "handoff" in positioning
     assert "Machine Learning" in package["categories"]
     assert 1 <= len(package["keywords"]) <= 30
     assert package["homepage"] == "https://jhuang-tw.github.io/djobs/"

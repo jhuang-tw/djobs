@@ -96,6 +96,13 @@ jobs:
           if extension.get('version') != version:
               raise SystemExit('vscode-ext/package.json does not match the release version')
 
+          extension_lock = json.loads(git_show('vscode-ext/package-lock.json'))
+          if extension_lock.get('version') != version:
+              raise SystemExit('vscode-ext/package-lock.json does not match the release version')
+          root_package = extension_lock.get('packages', {}).get('', {})
+          if root_package.get('version') != version:
+              raise SystemExit('vscode-ext package-lock root package does not match the release version')
+
           changelog = git_show('CHANGELOG.md')
           if not re.search(rf'^## \[{re.escape(version)}\] - \d{{4}}-\d{{2}}-\d{{2}}$', changelog, re.MULTILINE):
               raise SystemExit('CHANGELOG.md has no dated section for the release version')
@@ -168,7 +175,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Install dependencies
         run: npm ci

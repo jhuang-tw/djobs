@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>djobs — Crash-proof checkpoints for AI coding agents</title>
-  <meta name="description" content="djobs provides crash-proof checkpoints, resumable task memory, automatic command hooks, and visible context-savings analytics for AI coding agents.">
-  <meta name="keywords" content="AI coding agent, agent checkpoint, agent memory, crash recovery, context recovery, token savings, MCP, GitHub Copilot, Claude Code, Codex, Cursor, Cline, Gemini">
+  <title>djobs — Local repository memory for coding agents</title>
+  <meta name="description" content="djobs provides local repository memory, passive observations, compact MCP context, and explicit handoff for coding agents.">
+  <meta name="keywords" content="AI coding agent, local agent memory, repository memory, cross-agent handoff, passive hooks, MCP, GitHub Copilot, Claude Code, Codex, Gemini, Kimi Code">
   <meta name="author" content="jhuang-tw">
   <meta name="robots" content="index, follow, max-image-preview:large">
   <meta name="theme-color" content="#272a3a">
@@ -15,14 +15,14 @@
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="djobs">
   <meta property="og:url" content="https://jhuang-tw.github.io/djobs/">
-  <meta property="og:title" content="djobs — Crash-proof checkpoints for AI coding agents">
-  <meta property="og:description" content="Resume long coding work after crashes or context loss, and see the estimated context savings with djobs gain.">
+  <meta property="og:title" content="djobs — Local repository memory for coding agents">
+  <meta property="og:description" content="Share compact local state across coding agents without turning every prompt or command into a task.">
   <meta property="og:image" content="https://raw.githubusercontent.com/jhuang-tw/djobs/main/vscode-ext/media/banner.png">
-  <meta property="og:image:alt" content="djobs agent checkpoints">
+  <meta property="og:image:alt" content="djobs local agent memory">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="djobs — Crash-proof checkpoints for AI coding agents">
-  <meta name="twitter:description" content="Automatic command checkpoints, resumable MCP workflows, and visible context-savings analytics.">
+  <meta name="twitter:title" content="djobs — Local repository memory for coding agents">
+  <meta name="twitter:description" content="Passive local observations, explicit ownership, and four compact MCP tools.">
   <meta name="twitter:image" content="https://raw.githubusercontent.com/jhuang-tw/djobs/main/vscode-ext/media/banner.png">
 
   <script type="application/ld+json">
@@ -30,7 +30,7 @@
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
     "name": "djobs",
-    "description": "Crash-proof checkpoints and resumable task memory for AI coding agents.",
+    "description": "Local repository memory, passive observations, and explicit handoff for coding agents.",
     "applicationCategory": "DeveloperApplication",
     "operatingSystem": "Windows, macOS, Linux",
     "url": "https://jhuang-tw.github.io/djobs/",
@@ -54,7 +54,7 @@
     .hero { padding:72px 0 50px; display:grid; grid-template-columns:1.2fr .8fr; gap:44px; align-items:center; }
     h1 { font-size:clamp(2.6rem,7vw,5.5rem); line-height:1; letter-spacing:-.055em; margin:0 0 24px; }
     h2 { font-size:clamp(1.7rem,4vw,2.5rem); letter-spacing:-.03em; margin:0 0 18px; }
-    .lead { font-size:1.2rem; color:var(--muted); max-width:720px; }
+    .lead { font-size:1.2rem; color:var(--muted); max-width:760px; }
     .actions { display:flex; gap:12px; flex-wrap:wrap; margin-top:28px; }
     .button { display:inline-block; padding:12px 18px; border-radius:10px; text-decoration:none; font-weight:700; border:1px solid var(--dark); }
     .primary { color:#fff; background:var(--dark); }
@@ -81,33 +81,33 @@
   </nav>
   <div class="hero">
     <div>
-      <h1>Finish the work after the context is gone.</h1>
-      <p class="lead">djobs gives AI coding agents crash-proof checkpoints, resumable task memory, deterministic command hooks, and an explainable view of estimated context saved.</p>
+      <h1>Continue the work without re-reading the chat.</h1>
+      <p class="lead">djobs gives local coding agents compact repository memory, passive lifecycle observations, and explicit task handoff without a hosted service.</p>
       <div class="actions">
         <a class="button primary" href="https://github.com/jhuang-tw/djobs">View on GitHub</a>
         <a class="button" href="https://marketplace.visualstudio.com/items?itemName=jhuang-tw.djobs">Install extension</a>
       </div>
     </div>
-    <div class="terminal"><span class="muted">$</span> pipx install djobs<br><span class="muted">$</span> djobs init<br><br><span class="muted">$</span> djobs gain<br>24h / 30d / all-time estimates<br>automatic hooks + durable workflows</div>
+    <div class="terminal"><span class="muted">$</span> pipx install djobs<br><span class="muted">$</span> djobs setup<br><span class="muted">$</span> djobs doctor<br><br>local SQLite + passive hooks<br>four compact MCP tools</div>
   </div>
 </header>
 <main>
   <section>
-    <h2>Two recovery layers, one local state file.</h2>
+    <h2>Passive context, explicit ownership.</h2>
     <div class="grid">
-      <article class="card"><h3>Automatic command checkpoints</h3><p>Compatible hosts rewrite meaningful tests, builds, linters, and compound terminal commands through a fail-open wrapper before execution.</p></article>
-      <article class="card"><h3>Structured MCP workflows</h3><p>Batch tasks, evidence, bounded resume capsules, revision deltas, dependencies, and multi-agent claims handle semantic multi-file work.</p></article>
-      <article class="card"><h3>Session recovery</h3><p>Failed and interrupted checkpoints stay recoverable. Successful automatic checkpoints remain auditable without filling the active task list.</p></article>
-      <article class="card"><h3>Visible savings</h3><p><code>djobs gain</code> separates automatic and workflow estimates across 24 hours, 30 days, and all time, with graph, history, daily, and JSON views.</p></article>
+      <article class="card"><h3>Passive observations</h3><p>Session, tool-result, compaction, session-end, and Git working-tree changes are recorded locally without creating tasks.</p></article>
+      <article class="card"><h3>Explicit handoff</h3><p><code>checkpoint()</code> deliberately claims work, while <code>handoff()</code> explicitly releases or completes it with bounded evidence.</p></article>
+      <article class="card"><h3>Four compact tools</h3><p><code>sync_workspace</code>, <code>checkpoint</code>, <code>handoff</code>, and <code>resume_delta</code> keep ordinary agent context small.</p></article>
+      <article class="card"><h3>Local compatibility</h3><p>Copilot is the default local host, with optional adapters for Codex, Claude Code, Gemini CLI, Kimi Code, and custom agents.</p></article>
     </div>
   </section>
   <section>
     <h2>Local by default, conservative by design.</h2>
-    <p class="lead">SQLite requires no broker or hosted service. Hooks preserve the original exit code and fail open. Write approvals stay conservative, the extension performs no task polling, and <code>djobs pause</code> disables automation without deleting state.</p>
+    <p class="lead">State stays in SQLite on the user's machine. Adapters fail open, unrelated settings are preserved, observations are treated as untrusted data, and no cloud account or remote queue is required.</p>
   </section>
   <section>
-    <h2>Compatibility without inflated claims.</h2>
-    <p class="lead">Automatic hooks, native MCP registration, setup, and diagnostics are implemented and tested with GitHub Copilot in VS Code. Other MCP-capable agents can use durable workflow tools; automatic behavior depends on each host's hook protocol and still needs broader real-world validation.</p>
+    <h2>One repository identity across local shells.</h2>
+    <p class="lead">Git roots, Windows paths, WSL mounts, and common Git Bash spellings resolve to compatible local identities, so agents can continue the same work without duplicating ownership.</p>
   </section>
 </main>
 <footer>MIT licensed. Source, documentation, compatibility details, and issue tracking live in the GitHub repository.</footer>

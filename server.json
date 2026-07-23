@@ -1,9 +1,9 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
   "name": "io.github.jhuang-tw/djobs",
-  "title": "djobs \u2014 Agent Checkpoints",
-  "description": "Minimal coding checkpoints and bounded context recovery for AI coding agents.",
-  "version": "0.13.0",
+  "title": "djobs — Local Agent Memory",
+  "description": "Local repository memory, passive observations, and explicit handoff for coding agents.",
+  "version": "0.14.0",
   "repository": {
     "url": "https://github.com/jhuang-tw/djobs",
     "source": "github"
@@ -14,7 +14,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "djobs",
-      "version": "0.13.0",
+      "version": "0.14.0",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"
@@ -28,7 +28,7 @@
       "environmentVariables": [
         {
           "name": "DJOBS_DB",
-          "description": "Absolute path to the SQLite queue database. Defaults to djobs_mcp.db in the working directory when unset. Point multiple clients at one path to share a queue.",
+          "description": "Path to the local SQLite database. One-time setup normally uses ~/.djobs/global.db; standalone MCP launches default to djobs_mcp.db when unset.",
           "isRequired": false
         }
       ]

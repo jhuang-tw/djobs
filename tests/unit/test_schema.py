@@ -16,10 +16,11 @@ from djobs.storage.sqlite import SCHEMA_SQL, SQLiteJobRepository, initialize_sch
 
 def _columns(ddl: str, table: str) -> set[str]:
     """Extract column names from a ``CREATE TABLE <table> ( ... )`` block."""
-    m = re.search(rf"CREATE TABLE IF NOT EXISTS {table}\s*\((.*?)\n\);", ddl, re.DOTALL)
-    assert m, f"no CREATE TABLE for {table}"
+
+    match = re.search(rf"CREATE TABLE IF NOT EXISTS {table}\s*\((.*?)\n\);", ddl, re.DOTALL)
+    assert match, f"no CREATE TABLE for {table}"
     cols: set[str] = set()
-    for line in m.group(1).splitlines():
+    for line in match.group(1).splitlines():
         line = line.strip()
         if not line or line.startswith("FOREIGN KEY"):
             continue
@@ -33,10 +34,28 @@ def test_sqlite_reexports_authoritative_schema() -> None:
 
 
 def test_both_backends_declare_same_logical_columns() -> None:
-    for table in ("jobs", "job_events", "context_revisions", "agents"):
+    for table in (
+        "jobs",
+        "job_events",
+        "context_revisions",
+        "agents",
+        "agent_observations",
+        "repository_snapshots",
+    ):
         sqlite_cols = _columns(schema.SQLITE_SCHEMA_SQL, table)
         pg_cols = _columns(schema.POSTGRES_SCHEMA_SQL, table)
         assert sqlite_cols == pg_cols, f"column drift in {table}: {sqlite_cols ^ pg_cols}"
+
+
+def test_observation_schema_is_part_of_fresh_database(tmp_path) -> None:
+    repo = SQLiteJobRepository.from_path(tmp_path / "jobs.db")
+    tables = {
+        row["name"]
+        for row in repo._connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    }
+    assert {"agent_observations", "repository_snapshots"}.issubset(tables)
 
 
 def test_migration_columns_present_in_current_schema() -> None:
@@ -49,6 +68,7 @@ def test_migration_columns_present_in_current_schema() -> None:
 
 def test_column_migration_upgrades_old_database(tmp_path) -> None:
     """A DB created without the newer columns gets them back-filled."""
+
     db_path = tmp_path / "old.db"
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row

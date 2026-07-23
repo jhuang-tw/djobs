@@ -7,14 +7,7 @@ import json
 
 from djobs import coding_mcp, delta_mcp
 
-_MINIMAL = {
-    "resume_delta",
-    "enqueue_batch",
-    "complete_batch",
-    "check_task",
-    "fail_task",
-    "work_receipt",
-}
+_MINIMAL = {"sync_workspace", "checkpoint", "handoff", "resume_delta"}
 _ADVANCED = {
     "claim_task",
     "heartbeat_task",
@@ -45,13 +38,13 @@ def _schema_chars(server) -> int:
     return len(json.dumps(payload, sort_keys=True, separators=(",", ":")))
 
 
-def test_default_registry_is_exactly_the_six_coding_tools() -> None:
+def test_default_registry_is_exactly_the_high_level_coding_tools() -> None:
     assert _names(coding_mcp._server) == _MINIMAL
 
 
-def test_advanced_queue_schemas_are_opt_in() -> None:
+def test_advanced_queue_schemas_and_legacy_tools_are_opt_in() -> None:
     full = _names(delta_mcp._server)
-    assert _MINIMAL - {"work_receipt"} <= full
+    assert "resume_delta" in full
     assert full >= _ADVANCED
     assert _ADVANCED.isdisjoint(_names(coding_mcp._server))
 

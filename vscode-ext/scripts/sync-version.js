@@ -1,12 +1,13 @@
 #!/usr/bin/env node
-// Sync the extension version from the single source of truth:
-// ../src/djobs/__init__.py (__version__). Run before compile/package.
+// Synchronize every published version from src/djobs/__init__.py.
 const fs = require('fs');
 const path = require('path');
 
-const initPath = path.join(__dirname, '..', '..', 'src', 'djobs', '__init__.py');
-const pkgPath = path.join(__dirname, '..', 'package.json');
-const serverJsonPath = path.join(__dirname, '..', '..', 'server.json');
+const root = path.join(__dirname, '..', '..');
+const initPath = path.join(root, 'src', 'djobs', '__init__.py');
+const pkgPath = path.join(root, 'vscode-ext', 'package.json');
+const lockPath = path.join(root, 'vscode-ext', 'package-lock.json');
+const serverPath = path.join(root, 'server.json');
 
 const initSrc = fs.readFileSync(initPath, 'utf8');
 const match = initSrc.match(/__version__\s*=\s*["']([^"']+)["']/);
@@ -16,35 +17,55 @@ if (!match) {
 }
 const version = match[1];
 
-const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+function loadJson(file) {
+  return JSON.parse(fs.readFileSync(file, 'utf8'));
+}
+
+function saveJson(file, value) {
+  fs.writeFileSync(file, JSON.stringify(value, null, 2) + '\n', 'utf8');
+}
+
+const pkg = loadJson(pkgPath);
 if (pkg.version !== version) {
   pkg.version = version;
-  fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
+  saveJson(pkgPath, pkg);
   console.log(`Synced extension version -> ${version}`);
 } else {
   console.log(`Extension version already ${version}`);
 }
 
-// Keep the MCP Registry manifest (server.json) version in lockstep too, so the
-// single source of truth stays src/djobs/__init__.py. The registry requires the
-// server.json version to match the published PyPI package version.
-if (fs.existsSync(serverJsonPath)) {
-  const server = JSON.parse(fs.readFileSync(serverJsonPath, 'utf8'));
-  let changed = false;
-  if (server.version !== version) {
-    server.version = version;
-    changed = true;
+const lock = loadJson(lockPath);
+let lockChanged = false;
+if (lock.version !== version) {
+  lock.version = version;
+  lockChanged = true;
+}
+if (lock.packages && lock.packages[''] && lock.packages[''].version !== version) {
+  lock.packages[''].version = version;
+  lockChanged = true;
+}
+if (lockChanged) {
+  saveJson(lockPath, lock);
+  console.log(`Synced extension lock version -> ${version}`);
+} else {
+  console.log(`Extension lock version already ${version}`);
+}
+
+const server = loadJson(serverPath);
+let serverChanged = false;
+if (server.version !== version) {
+  server.version = version;
+  serverChanged = true;
+}
+for (const publishedPackage of server.packages || []) {
+  if (publishedPackage.version !== version) {
+    publishedPackage.version = version;
+    serverChanged = true;
   }
-  for (const p of server.packages || []) {
-    if (p.version !== version) {
-      p.version = version;
-      changed = true;
-    }
-  }
-  if (changed) {
-    fs.writeFileSync(serverJsonPath, JSON.stringify(server, null, 2) + '\n', 'utf8');
-    console.log(`Synced server.json version -> ${version}`);
-  } else {
-    console.log(`server.json version already ${version}`);
-  }
+}
+if (serverChanged) {
+  saveJson(serverPath, server);
+  console.log(`Synced server.json version -> ${version}`);
+} else {
+  console.log(`server.json version already ${version}`);
 }

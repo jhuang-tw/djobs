@@ -7,8 +7,9 @@ import os
 import shlex
 import subprocess
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 _MANAGED_TOKEN = "djobs.hook_entrypoint"
 _KIMI_BEGIN = "# >>> djobs managed observation hooks >>>"
@@ -319,9 +320,7 @@ def _kimi_block(database: Path, mode: str) -> str:
     lines = [_KIMI_BEGIN]
     for native_event, normalized_event, matcher in _specs("kimi"):
         output = "plain" if normalized_event == "prompt-context" else "silent"
-        command = _command(
-            _hook_argv(normalized_event, "kimi", database, mode, output=output)
-        )
+        command = _command(_hook_argv(normalized_event, "kimi", database, mode, output=output))
         lines.extend(["[[hooks]]", f"event = {json.dumps(native_event)}"])
         if matcher is not None:
             lines.append(f"matcher = {json.dumps(matcher)}")

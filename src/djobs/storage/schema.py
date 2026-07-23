@@ -81,7 +81,8 @@ CREATE TABLE IF NOT EXISTS repository_snapshots (
 # SQLite — text-typed timestamps (ISO-8601 strings).
 # ---------------------------------------------------------------------------
 
-SQLITE_SCHEMA_SQL = """
+SQLITE_SCHEMA_SQL = (
+    """
 CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY,
     type TEXT NOT NULL,
@@ -219,13 +220,16 @@ CREATE TABLE IF NOT EXISTS agents (
 
 CREATE INDEX IF NOT EXISTS idx_agents_status
 ON agents (status, last_heartbeat_at);
-""" + SQLITE_OBSERVATION_SCHEMA_SQL
+"""
+    + SQLITE_OBSERVATION_SCHEMA_SQL
+)
 
 # ---------------------------------------------------------------------------
 # PostgreSQL — native TIMESTAMPTZ columns.
 # ---------------------------------------------------------------------------
 
-POSTGRES_SCHEMA_SQL = """
+POSTGRES_SCHEMA_SQL = (
+    """
 CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY,
     type TEXT NOT NULL,
@@ -303,7 +307,9 @@ CREATE TABLE IF NOT EXISTS agents (
 
 CREATE INDEX IF NOT EXISTS idx_agents_status
 ON agents (status, last_heartbeat_at);
-""" + POSTGRES_OBSERVATION_SCHEMA_SQL
+"""
+    + POSTGRES_OBSERVATION_SCHEMA_SQL
+)
 
 # ---------------------------------------------------------------------------
 # Column migrations for pre-existing databases.

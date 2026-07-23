@@ -124,7 +124,7 @@ def test_redaction_covers_prefixed_quoted_json_and_flag_credentials() -> None:
         "GITHUB_TOKEN='ghp quoted secret' "
         'AWS_SECRET_ACCESS_KEY="aws secret value" '
         "--password 'cli secret' "
-        'https://user:url-secret@example.test Authorization: Bearer bearer-secret '
+        "https://user:url-secret@example.test Authorization: Bearer bearer-secret "
         '{"client_secret":"json secret"}'
     )
 

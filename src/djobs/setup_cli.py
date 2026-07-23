@@ -10,9 +10,9 @@ import shlex
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Sequence
 
 from djobs.host_hooks import host_hook_doctor, install_host_hooks, remove_host_hooks
 from djobs.workspace import shared_db_path
@@ -187,7 +187,9 @@ def _install_kimi_mcp(
     after = json.dumps(document, ensure_ascii=False, sort_keys=True)
     path.parent.mkdir(parents=True, exist_ok=True)
     if before != after or not path.exists():
-        path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        path.write_text(
+            json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
         status = "configured"
     else:
         status = "unchanged"
@@ -336,8 +338,7 @@ def configure_host(
         "status": overall,
         "command": _quoted(command) if mcp_error and command else "",
         "mcp": {"status": mcp_status, "error": mcp_error},
-        "hooks": hook_result
-        or {"host": host_name, "status": "error", "error": hook_error},
+        "hooks": hook_result or {"host": host_name, "status": "error", "error": hook_error},
         "message": f"{mcp_message}; {hook_message}.{error_note}{suffix}",
     }
 
@@ -507,8 +508,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{target}: {display_status} — {result['message']}")
         if result.get("command"):
             print(result["command"])
-        if status in {"partial", "error"} or (
-            status == "unavailable" and args.target != "all"
-        ):
+        if status in {"partial", "error"} or (status == "unavailable" and args.target != "all"):
             failed = True
     return 1 if failed else 0

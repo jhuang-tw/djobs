@@ -6,6 +6,7 @@ import hashlib
 import os
 import subprocess
 import uuid
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 from typing import Any
@@ -140,7 +141,7 @@ def _cross_shell_aliases(path: str | os.PathLike[str]) -> set[str]:
     identity = path_key(normalized)
     if len(identity) >= 3 and identity[1:3] == ":/" and identity[0].isalpha():
         drive = identity[0].lower()
-        suffix = identity[3:]
+        suffix = normalized[3:] if _is_windows_path(normalized) else identity[3:]
         aliases.add(f"/mnt/{drive}/{suffix}".rstrip("/") if suffix else f"/mnt/{drive}")
         aliases.add(f"/{drive}/{suffix}".rstrip("/") if suffix else f"/{drive}")
     return aliases
@@ -156,10 +157,8 @@ def _git_root(path: str) -> str:
         return normalized
 
     candidate = Path(path).expanduser()
-    try:
+    with suppress(OSError):
         candidate = candidate.resolve(strict=False)
-    except OSError:
-        pass
     if candidate.is_file():
         candidate = candidate.parent
 

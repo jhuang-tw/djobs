@@ -32,7 +32,7 @@ def _cmd_mcp_context_efficient(args: argparse.Namespace) -> None:
     from djobs.mcp_server import configure
 
     if getattr(args, "db", None):
-        database = str(Path(args.db).expanduser().resolve())
+        database = os.path.expanduser(str(args.db))
         os.environ["DJOBS_DB"] = database
         configure(database)
 
@@ -70,7 +70,7 @@ def _cmd_install_mcp_high_level(args: argparse.Namespace, cli: Any) -> None:
         except (OSError, json.JSONDecodeError):
             if not args.force:
                 print(f"Cannot safely read {target}; use --force only after reviewing it.")
-                raise SystemExit(1)
+                raise SystemExit(1) from None
         if "djobs" in existing.get("servers", {}) and not args.force:
             print(f"djobs is already configured in {target}")
             print("Use --force to replace only the djobs entry, or --print to inspect output.")
@@ -80,8 +80,7 @@ def _cmd_install_mcp_high_level(args: argparse.Namespace, cli: Any) -> None:
     if not isinstance(servers, dict):
         if servers is not None and not args.force:
             print(
-                f"Cannot safely update the servers object in {target}; "
-                "use --force after review."
+                f"Cannot safely update the servers object in {target}; use --force after review."
             )
             raise SystemExit(1)
         servers = {}

@@ -15,16 +15,22 @@ public interfaces may still change between minor versions. Entries below use
 ## [Unreleased]
 
 ### Added
-- `[core]` **Zero-config cross-agent handoff.** Added repository resolution from MCP roots, request cwd, Git root, and server cwd; shared Codex/Claude sessions; high-level `sync_workspace`, `checkpoint`, and `handoff` tools; atomic claims; expiring leases; bounded evidence; and repository isolation.
-- `[core]` **One-time host setup.** Added idempotent `djobs setup codex|claude|all`, `repair`, `remove`, and `doctor` support around one shared local SQLite database without replacing unrelated MCP servers.
+- `[core]` **Local cross-agent handoff.** Added repository resolution from MCP roots, request cwd, Git root, and server cwd; shared local sessions; high-level `sync_workspace`, `checkpoint`, and `handoff` tools; atomic claims; expiring leases; bounded evidence; and repository isolation.
+- `[core]` **Copilot-first local setup.** Added idempotent `djobs setup`, `repair`, `remove`, and `doctor` support. The default target is local GitHub Copilot CLI and VS Code Agent; explicit local adapters remain available for Codex, Claude Code, Gemini CLI, and Kimi Code.
+- `[core]` **Passive local observations.** Added bounded tool, session, compaction, and Git working-tree observations without automatically creating, claiming, completing, or releasing tasks.
 
 ### Changed
 - `[core]` **Compact default MCP.** The default coding MCP exposes `sync_workspace`, `checkpoint`, `handoff`, and backward-compatible `resume_delta`; lower-level queue tools remain on `djobs-mcp-full`.
-- `[docs]` Reworked the README around install-once Codex/Claude handoff while separating simulated host tests from real-host validation.
+- `[core]` **Explicit ownership lifecycle.** Session and tool hooks only restore context, record observations, and heartbeat work already claimed by that session. Task ownership changes only through explicit checkpoint, handoff, completion, or lease recovery operations.
+- `[core]` **All-local product boundary.** Hooks, MCP processes, observations, leases, and the default SQLite database remain on the user's machine. No hosted service, remote persistence backend, or cloud synchronization layer is introduced.
+
+### Fixed
+- `[core]` **Task-preserving token budgets.** Sync output now drops observations, duplicate owner views, and historical evidence before compacting the primary active task.
+- `[core]` **Host adapter compatibility.** Corrected lifecycle event mappings, command quoting, Kimi one-time prompt injection, Copilot's versioned hook document, safe idempotent setup/removal, and partial MCP-versus-hook setup reporting.
+- `[core]` **Durable observation storage.** Added schema parity, content-aware Git fingerprints, concurrent snapshot deduplication, bounded valid metadata, retention, and best-effort secret redaction.
 
 ### Compatibility
-- `[core]` Explicit `correlation_id`, `resume_delta`, full queue tools, and custom or per-repository databases remain supported; zero-config reads also search compatible legacy path spellings.
-
+- `[core]` Explicit `correlation_id`, `resume_delta`, full queue tools, and custom or per-repository databases remain supported; local reads also search compatible legacy Windows, WSL, Git Bash, and path spellings.
 ## [0.13.0] - 2026-07-22
 
 ### Changed

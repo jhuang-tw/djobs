@@ -9,6 +9,7 @@
 - state is stored in local SQLite;
 - Git observations are produced from the local working tree;
 - no hosted service, remote database, cloud queue, or account is required.
+- Python 3.10+ is supported.
 
 GitHub Copilot CLI and VS Code Agent are the default integration host because one local Copilot adapter can serve every model selected inside Copilot. GPT, Claude, Gemini, or another model running inside Copilot all use the same djobs MCP and hooks.
 

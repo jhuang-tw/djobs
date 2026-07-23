@@ -128,8 +128,10 @@ def _tool_input_label(payload: dict[str, Any]) -> str:
 
 
 def _response_excerpt(payload: dict[str, Any], *, failed: bool) -> str:
-    value = payload.get("error") if failed else payload.get(
-        "tool_response", payload.get("toolResponse", "")
+    value = (
+        payload.get("error")
+        if failed
+        else payload.get("tool_response", payload.get("toolResponse", ""))
     )
     if isinstance(value, dict):
         for key in ("stderr", "stdout", "error", "message", "output", "llmContent"):

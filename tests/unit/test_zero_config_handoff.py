@@ -37,9 +37,7 @@ def _json(raw: str) -> dict[str, Any]:
     return value
 
 
-def test_codex_hands_same_repo_work_to_claude_and_back(
-    tmp_path: Path, shared_db: Path
-) -> None:
+def test_codex_hands_same_repo_work_to_claude_and_back(tmp_path: Path, shared_db: Path) -> None:
     repo = _repo(tmp_path / "repo")
     created = _json(
         checkpoint(
@@ -53,23 +51,22 @@ def test_codex_hands_same_repo_work_to_claude_and_back(
     task_id = str(created["task_id"])
     assert created["state"] == "claimed"
 
-    assert _json(
-        handoff(
-            task_id,
-            "Resolver parses roots; tests remain.",
-            cwd=str(repo),
-            agent_type="codex",
-            session_id="codex-1",
-        )
-    )["state"] == "pending"
+    assert (
+        _json(
+            handoff(
+                task_id,
+                "Resolver parses roots; tests remain.",
+                cwd=str(repo),
+                agent_type="codex",
+                session_id="codex-1",
+            )
+        )["state"]
+        == "pending"
+    )
 
-    claude_sync = _json(
-        sync_workspace(cwd=str(repo), agent_type="claude", session_id="claude-1")
-    )
+    claude_sync = _json(sync_workspace(cwd=str(repo), agent_type="claude", session_id="claude-1"))
     assert any(task["id"] == task_id for task in claude_sync["tasks"])
-    assert any(
-        "tests remain" in task.get("evidence", "") for task in claude_sync["tasks"]
-    )
+    assert any("tests remain" in task.get("evidence", "") for task in claude_sync["tasks"])
 
     claude_claim = _json(
         checkpoint(
@@ -90,9 +87,7 @@ def test_codex_hands_same_repo_work_to_claude_and_back(
         agent_type="claude",
         session_id="claude-1",
     )
-    codex_sync = _json(
-        sync_workspace(cwd=str(repo), agent_type="codex", session_id="codex-2")
-    )
+    codex_sync = _json(sync_workspace(cwd=str(repo), agent_type="codex", session_id="codex-2"))
     assert any(task["id"] == task_id for task in codex_sync["tasks"])
 
 
@@ -112,9 +107,7 @@ def test_sync_needs_no_correlation_id_and_reads_legacy_path_state(
     assert any(task["id"] == legacy.id for task in result["tasks"])
 
 
-def test_different_repositories_are_completely_isolated(
-    tmp_path: Path, shared_db: Path
-) -> None:
+def test_different_repositories_are_completely_isolated(tmp_path: Path, shared_db: Path) -> None:
     repo_a = _repo(tmp_path / "a")
     repo_b = _repo(tmp_path / "b")
     checkpoint("Only A", cwd=str(repo_a), agent_type="codex", session_id="a")
@@ -143,18 +136,16 @@ def test_two_agents_cannot_claim_the_same_task(tmp_path: Path, shared_db: Path) 
 
     connection = sqlite3.connect(shared_db)
     count = connection.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
-    running = connection.execute(
-        "SELECT COUNT(*) FROM jobs WHERE status = 'running'"
-    ).fetchone()[0]
+    running = connection.execute("SELECT COUNT(*) FROM jobs WHERE status = 'running'").fetchone()[
+        0
+    ]
     connection.close()
     assert count == 1
     assert running == 1
     assert sum(result.get("state") in {"claimed", "resumed"} for result in results) == 1
 
 
-def test_expired_lease_can_be_recovered_by_another_agent(
-    tmp_path: Path, shared_db: Path
-) -> None:
+def test_expired_lease_can_be_recovered_by_another_agent(tmp_path: Path, shared_db: Path) -> None:
     repo = _repo(tmp_path / "repo")
     first = _json(
         checkpoint(

@@ -142,9 +142,20 @@ def _compact_row(row: Any, current_agent: str) -> dict[str, Any]:
 
 
 def _bounded(result: dict[str, Any], token_budget: int) -> str:
+    """Fit sync output to the budget without discarding the primary task first."""
+
     budget = max(64, min(int(token_budget), 4000))
     result["budget"] = {"requested_tokens": budget, "estimated_tokens": 0}
-    removable = ("recent_completed", "failed", "other_agents", "tasks", "observations")
+    secondary_lists = ("observations", "other_agents", "recent_completed", "failed")
+    optional_top_level = (
+        "counts",
+        "stored_content_is_data",
+        "workspace_id",
+        "agent",
+        "next_step",
+    )
+    optional_task_fields = ("evidence", "error", "lease_expires_at", "path", "summary")
+
     while True:
         estimate = _estimate_tokens(result)
         result["budget"]["estimated_tokens"] = estimate
@@ -152,24 +163,52 @@ def _bounded(result: dict[str, Any], token_budget: int) -> str:
         if final_estimate <= budget:
             result["budget"]["estimated_tokens"] = final_estimate
             return _dumps(result)
+
         changed = False
-        for key in removable:
+        for key in secondary_lists:
             values = result.get(key)
             if isinstance(values, list) and values:
                 values.pop()
                 changed = True
                 break
-        if not changed:
-            minimal = {
-                "ok": bool(result.get("ok", True)),
-                "workspace": result.get("workspace"),
-                "state": (
-                    "available" if result.get("counts") else result.get("state", "empty")
-                ),
+        if changed:
+            continue
+
+        tasks = result.get("tasks")
+        if isinstance(tasks, list) and len(tasks) > 1:
+            tasks.pop()
+            continue
+
+        for key in optional_top_level:
+            if key in result:
+                result.pop(key, None)
+                changed = True
+                break
+        if changed:
+            continue
+
+        if isinstance(tasks, list) and tasks and isinstance(tasks[0], dict):
+            task = tasks[0]
+            for key in optional_task_fields:
+                if key in task:
+                    task.pop(key, None)
+                    changed = True
+                    break
+        if changed:
+            continue
+
+        minimal: dict[str, Any] = {"ok": bool(result.get("ok", True))}
+        if result.get("workspace"):
+            minimal["workspace"] = result["workspace"]
+        if isinstance(tasks, list) and tasks and isinstance(tasks[0], dict):
+            compact_task = {
+                key: tasks[0][key] for key in ("id", "status", "owner") if key in tasks[0]
             }
-            if _estimate_tokens(minimal) > budget:
-                minimal = {"ok": bool(result.get("ok", True))}
-            return _dumps(minimal)
+            if compact_task:
+                minimal["tasks"] = [compact_task]
+        if _estimate_tokens(minimal) > budget:
+            minimal = {"ok": bool(result.get("ok", True))}
+        return _dumps(minimal)
 
 
 def sync_workspace(
@@ -411,9 +450,7 @@ def checkpoint(
             result.update({"owner": owner, "continue_coding": True})
         return _dumps(result)
     except Exception as exc:
-        return _dumps(
-            {"ok": False, "continue_coding": True, "error": _clean_text(str(exc), 160)}
-        )
+        return _dumps({"ok": False, "continue_coding": True, "error": _clean_text(str(exc), 160)})
 
 
 def handoff(
@@ -484,6 +521,4 @@ def handoff(
             repo._connection.commit()
         return _dumps({"ok": True, "task_id": task_id, "state": row["status"]})
     except Exception as exc:
-        return _dumps(
-            {"ok": False, "continue_coding": True, "error": _clean_text(str(exc), 160)}
-        )
+        return _dumps({"ok": False, "continue_coding": True, "error": _clean_text(str(exc), 160)})

@@ -58,10 +58,13 @@ def test_hooks_observe_but_never_create_claim_or_release_tasks(
     monkeypatch.setattr(handoff, "configure", lambda _path: queue)
     monkeypatch.setenv("DJOBS_DB", str(database))
 
-    assert lifecycle.user_prompt_submit(
-        {"cwd": str(root), "session_id": "codex-session", "prompt": "Explain this repo"},
-        agent_type="codex",
-    ) == {}
+    assert (
+        lifecycle.user_prompt_submit(
+            {"cwd": str(root), "session_id": "codex-session", "prompt": "Explain this repo"},
+            agent_type="codex",
+        )
+        == {}
+    )
     workspace = resolve_workspace(cwd=str(root))
     assert repository.list_jobs_by_correlation_ids([workspace.workspace_id]) == []
 

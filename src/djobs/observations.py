@@ -302,7 +302,7 @@ def _hash_file(digest: Any, path: Path) -> None:
         digest.update(b"missing")
         return
 
-    digest.update(f"{info.st_mode}:{info.st_size}:{info.st_mtime_ns}".encode("utf-8"))
+    digest.update(f"{info.st_mode}:{info.st_size}:{info.st_mtime_ns}".encode())
     if stat.S_ISLNK(info.st_mode):
         try:
             digest.update(os.readlink(path).encode("utf-8", errors="surrogateescape"))

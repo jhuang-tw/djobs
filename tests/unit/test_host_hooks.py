@@ -109,9 +109,7 @@ def test_remove_only_managed_adapter_entries(tmp_path: Path) -> None:
     install_host_hooks("gemini", tmp_path / "shared.db", home=tmp_path)
     path = tmp_path / ".gemini" / "settings.json"
     config = json.loads(path.read_text(encoding="utf-8"))
-    config["hooks"]["AfterTool"][0]["hooks"].insert(
-        0, {"type": "command", "command": "echo keep"}
-    )
+    config["hooks"]["AfterTool"][0]["hooks"].insert(0, {"type": "command", "command": "echo keep"})
     path.write_text(json.dumps(config), encoding="utf-8")
 
     result = remove_host_hooks("gemini", home=tmp_path)

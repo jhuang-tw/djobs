@@ -24,17 +24,27 @@ from djobs.observations import (
 _CODING_TYPES = ("coding-session", "coding-checkpoint")
 _LEASE_SECONDS = 600
 _MAX_EVIDENCE = 500
-_SECRET_NAME = (
-    r"(?:--)?[A-Za-z0-9_-]*"
-    r"(?:api[_-]?key|access[_-]?token|token|password|passwd|secret|authorization)"
+_SECRET_SUFFIX = (
+    r"(?:api[_-]?key|secret[_-]?access[_-]?key|access[_-]?key|"
+    r"access[_-]?token|auth[_-]?token|refresh[_-]?token|token|"
+    r"password|passwd|private[_-]?key|client[_-]?secret|secret|authorization)"
 )
-_QUOTED_SECRET_RE = re.compile(
-    rf"(?i)(?P<prefix>['\"]?)(?P<name>{_SECRET_NAME})(?P=prefix)"
-    r"(?P<separator>\s*[:=]\s*|\s+)(?P<quote>['\"])(?P<value>.*?)(?P=quote)"
+_SECRET_KEY = rf"[A-Za-z0-9_-]*{_SECRET_SUFFIX}"
+_ASSIGN_QUOTED_RE = re.compile(
+    rf"(?i)(?P<prefix>['\"]?)(?P<name>{_SECRET_KEY})(?P=prefix)"
+    r"(?P<separator>\s*[:=]\s*)(?P<quote>['\"])(?P<value>.*?)(?P=quote)"
 )
-_UNQUOTED_SECRET_RE = re.compile(
-    rf"(?i)(?P<prefix>['\"]?)(?P<name>{_SECRET_NAME})(?P=prefix)"
-    r"(?P<separator>\s*[:=]\s*|\s+)(?P<value>[^\s,;]+)"
+_ASSIGN_UNQUOTED_RE = re.compile(
+    rf"(?i)(?P<prefix>['\"]?)(?P<name>{_SECRET_KEY})(?P=prefix)"
+    r"(?P<separator>\s*[:=]\s*)(?P<value>[^'\"\s,;][^\s,;]*)"
+)
+_FLAG_QUOTED_RE = re.compile(
+    rf"(?i)(?P<name>--{_SECRET_KEY})(?P<separator>\s+)"
+    r"(?P<quote>['\"])(?P<value>.*?)(?P=quote)"
+)
+_FLAG_UNQUOTED_RE = re.compile(
+    rf"(?i)(?P<name>--{_SECRET_KEY})(?P<separator>\s+)"
+    r"(?P<value>[^'\"\s,;][^\s,;]*)"
 )
 _BEARER_RE = re.compile(r"(?i)(\bbearer\s+)[A-Za-z0-9._~+/=-]+")
 _URL_CREDENTIAL_RE = re.compile(r"(://[^:/\s]+:)[^@\s]+@")
@@ -42,16 +52,21 @@ _URL_CREDENTIAL_RE = re.compile(r"(://[^:/\s]+:)[^@\s]+@")
 
 def _redact(value: Any) -> str:
     text = str(value or "")
+    text = _URL_CREDENTIAL_RE.sub(r"\1<redacted>@", text)
     text = _BEARER_RE.sub(r"\1<redacted>", text)
-    text = _QUOTED_SECRET_RE.sub(
+    text = _ASSIGN_QUOTED_RE.sub(
         r"\g<prefix>\g<name>\g<prefix>\g<separator>\g<quote><redacted>\g<quote>",
         text,
     )
-    text = _UNQUOTED_SECRET_RE.sub(
+    text = _ASSIGN_UNQUOTED_RE.sub(
         r"\g<prefix>\g<name>\g<prefix>\g<separator><redacted>",
         text,
     )
-    return _URL_CREDENTIAL_RE.sub(r"\1<redacted>@", text)
+    text = _FLAG_QUOTED_RE.sub(
+        r"\g<name>\g<separator>\g<quote><redacted>\g<quote>",
+        text,
+    )
+    return _FLAG_UNQUOTED_RE.sub(r"\g<name>\g<separator><redacted>", text)
 
 
 def _cwd(payload: dict[str, Any]) -> str | None:

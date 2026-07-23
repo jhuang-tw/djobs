@@ -23,6 +23,7 @@ from djobs.storage.schema import SQLITE_OBSERVATION_SCHEMA_SQL
 _MAX_SUMMARY = 500
 _MAX_METADATA = 1000
 _MAX_OBSERVATIONS_PER_WORKSPACE = 1000
+_MAX_CONTEXT_MARKERS_PER_WORKSPACE = 256
 _HASH_CHUNK_SIZE = 64 * 1024
 _MAX_UNTRACKED_HASH_BYTES = 1024 * 1024
 _CONTEXT_INJECTED_EVENT = "context_injected"
@@ -63,22 +64,50 @@ def ensure_schema(repo: Any) -> None:
 
 
 def _prune_observations(cursor: Any, workspace_id: str) -> None:
+    """Bound visible observations without evicting live injection markers."""
+
     cursor.execute(
         """
         DELETE FROM agent_observations
         WHERE correlation_id = ?
+          AND event_type != ?
           AND id NOT IN (
               SELECT id
               FROM agent_observations
               WHERE correlation_id = ?
+                AND event_type != ?
               ORDER BY created_at DESC, id DESC
               LIMIT ?
           )
         """,
         (
             workspace_id,
+            _CONTEXT_INJECTED_EVENT,
             workspace_id,
+            _CONTEXT_INJECTED_EVENT,
             _MAX_OBSERVATIONS_PER_WORKSPACE,
+        ),
+    )
+    cursor.execute(
+        """
+        DELETE FROM agent_observations
+        WHERE correlation_id = ?
+          AND event_type = ?
+          AND id NOT IN (
+              SELECT id
+              FROM agent_observations
+              WHERE correlation_id = ?
+                AND event_type = ?
+              ORDER BY created_at DESC, id DESC
+              LIMIT ?
+          )
+        """,
+        (
+            workspace_id,
+            _CONTEXT_INJECTED_EVENT,
+            workspace_id,
+            _CONTEXT_INJECTED_EVENT,
+            _MAX_CONTEXT_MARKERS_PER_WORKSPACE,
         ),
     )
 

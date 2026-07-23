@@ -1,0 +1,109 @@
+name: Final local handoff validation
+
+on:
+  push:
+    branches:
+      - feature/zero-config-cross-agent-handoff
+
+permissions:
+  contents: write
+
+concurrency:
+  group: final-local-handoff-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    if: ${{ !contains(github.event.head_commit.message, '[branch-fix complete]') }}
+    name: pytest (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python tools/_branch_fix.py
+      - run: python -m pip install -e ".[dev]"
+      - run: pytest -q --tb=short
+
+  quality:
+    if: ${{ !contains(github.event.head_commit.message, '[branch-fix complete]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python tools/_branch_fix.py
+      - run: python -m pip install -e ".[dev,pg]"
+      - run: python -m pip install pre-commit
+      - run: pre-commit run ruff-check --all-files
+      - run: pre-commit run ruff-format --all-files
+      - run: mypy
+      - run: git diff --check
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: vscode-ext/package-lock.json
+      - name: Validate VS Code extension
+        working-directory: vscode-ext
+        run: |
+          npm ci
+          npx tsc -p ./ --noEmit
+          npm run compile
+
+  postgres:
+    if: ${{ !contains(github.event.head_commit.message, '[branch-fix complete]') }}
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: djobs
+          POSTGRES_PASSWORD: djobs
+          POSTGRES_DB: djobs
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U djobs"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DJOBS_TEST_PG_DSN: postgresql://djobs:djobs@localhost:5432/djobs
+      DJOBS_REQUIRE_PG: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python tools/_branch_fix.py
+      - run: python -m pip install -e ".[dev,pg]"
+      - run: pytest -q --tb=short tests/integration/test_repository_contract.py
+
+  finalize:
+    if: ${{ !contains(github.event.head_commit.message, '[branch-fix complete]') }}
+    needs: [tests, quality, postgres]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python tools/_branch_fix.py
+      - run: git diff --check
+      - name: Commit validated fixes and remove temporary validation files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm tools/_branch_fix.py .github/workflows/branch-fix.yml
+          git add src/djobs/handoff.py CHANGELOG.md tests/unit/test_handoff_budget_priority.py
+          git commit -m "[branch-fix complete] fix: finish local handoff hardening"
+          git push origin HEAD:${GITHUB_REF_NAME}

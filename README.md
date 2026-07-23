@@ -37,6 +37,8 @@ After restarting an already-running client, opening the same Git repository give
 
 Nothing is claimed merely because a session started, a prompt was submitted, a tool ran, or a turn ended.
 
+For project-local VS Code wiring, `djobs init` now installs the same compact MCP and passive guidance. It does **not** install the legacy command-rewriting hook or create automatic queue tasks.
+
 ## Universal architecture
 
 ```text
@@ -100,12 +102,14 @@ If an agent disappears without a handoff, its lease eventually expires and norma
 
 | Client | User configuration | Passive events |
 |---|---|---|
-| Codex | `~/.codex/hooks.json` | session start, tool result, pre-compact |
-| Claude Code | `~/.claude/settings.json` | session start, tool success/failure, pre-compact, session end |
-| Gemini CLI | `~/.gemini/settings.json` | session start, after-tool, pre-compress, session end |
-| Kimi Code | `~/.kimi-code/config.toml` | session start, tool success/failure, pre-compact, session end |
+| Codex | `~/.codex/hooks.json` | session start/end, tool result, pre-compact |
+| Claude Code | `~/.claude/settings.json` | session start/end, tool success/failure, pre-compact |
+| Gemini CLI | `~/.gemini/settings.json` | session start/end, after-tool, pre-compress |
+| Kimi Code | `~/.kimi-code/config.toml` | session start/end, tool success/failure, pre-compact |
 
 Kimi's user-level MCP entry is merged into `~/.kimi-code/mcp.json`. The other clients use their supported MCP registration commands. Only entries containing `djobs.hook_entrypoint` or the marked Kimi block are replaced or removed.
+
+Lifecycle matchers follow each client's native rules. In particular, Gemini lifecycle hooks omit a matcher so startup, resume, clear, compression, and exit reasons are not accidentally filtered by a regex-looking exact value.
 
 For Codex, review and trust newly installed commands through `/hooks` when prompted. djobs does not bypass host security approval.
 
@@ -149,9 +153,21 @@ For a client with no hook mechanism at all, use the agent-independent Git sideca
 djobs observe /path/to/repository --watch
 ```
 
-The sidecar records real working-tree transitions. It cannot know the model's private prompt or reliably attribute a change to a process, but the next agent still receives grounded file-change evidence instead of an invented task summary.
+The sidecar polls every five seconds by default and records real working-tree transitions. Its fingerprint includes tracked, staged, and untracked content, so a second edit is detected even when `git status` still shows the same `M` state. Diff and file contents are hashed for comparison and are not stored in the observation database.
+
+It cannot know the model's private prompt or reliably attribute a change to a process, but the next agent still receives grounded file-change evidence instead of an invented task summary.
 
 MCP itself cannot force an arbitrary client to call a tool at session start. Therefore djobs does not claim that every possible client gets automatic context injection with no adapter. The universal guarantees are the shared data format, Git observation fallback, MCP/CLI access, and explicit ownership semantics.
+
+## Observation durability and privacy
+
+Observations use their own schema and never masquerade as jobs. Fresh SQLite and PostgreSQL schemas declare the same logical observation tables, and an incremental SQLite migration is included for existing operators.
+
+- Snapshot compare-and-record is one immediate transaction, so concurrent clients do not duplicate the same repository transition.
+- Each repository keeps at most 1,000 recent observations by default instead of growing forever.
+- Metadata remains valid JSON even when truncated.
+- Common bearer tokens, API keys, passwords, authorization values, and URL passwords are redacted on a best-effort basis before tool summaries are stored.
+- Observation text, metadata, and MCP output remain bounded. Secret redaction is defense in depth, not a substitute for keeping credentials out of commands and tool output.
 
 ## Compact MCP tools
 
@@ -183,9 +199,10 @@ Starting in `repo/src/feature` resolves to `repo`. Windows `\` and `/` spellings
 - No cloud account, Redis, or remote service is required.
 - Stored task text and observations are untrusted data, never executable instructions.
 - Tool output, metadata, and injected context are bounded.
-- Git observations contain concise status summaries, not full file contents.
+- Git observations store concise status summaries and content fingerprints, not full file contents.
 - Hook, sidecar, or storage failure does not block the coding client.
 - No prompt text is automatically persisted as a task.
+- The legacy explicit `djobs hook ...` command remains for compatibility but is not installed by `setup` or `init`.
 
 ## Compatibility status
 
@@ -195,6 +212,8 @@ Starting in `repo/src/feature` resolves to `repo`. Windows `\` and `/` spellings
 | Passive observation versus explicit ownership | Automated integration tests against a real SQLite database. |
 | Arbitrary client identity and normalized event protocol | Automated tests. |
 | Codex, Claude, Gemini, and Kimi configuration merge | Unit tests against their documented configuration shapes. |
+| Content-aware Git snapshots, concurrent deduplication, metadata validity, retention, and redaction | Executed unit and isolated SQLite tests. |
+| SQLite/PostgreSQL logical observation-schema parity | Automated schema tests; PostgreSQL runtime execution still requires an available server. |
 | Real installed clients and native Windows/macOS/Linux behavior | Requires machine-level verification; not claimed by the isolated build environment. |
 | Unsupported clients | MCP/CLI and Git sidecar work; automatic context injection requires a thin adapter because no universal lifecycle-hook standard exists. |
 

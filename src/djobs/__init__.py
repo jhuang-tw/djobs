@@ -1,4 +1,4 @@
-"""djobs — crash-proof checkpoints and resumable task memory for coding agents.
+"""djobs — local repository memory and explicit handoff for coding agents.
 
 Public API
 ----------

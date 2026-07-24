@@ -70,14 +70,11 @@ def test_current_docs_and_marketplace_copy_match_passive_local_behavior() -> Non
 
 def test_public_surfaces_share_layered_recovery_positioning() -> None:
     paths = ("README.md", "vscode-ext/README.md", "docs/index.html")
-    surfaces = {
-        path: (ROOT / path).read_text(encoding="utf-8").lower()
-        for path in paths
-    }
+    surfaces = {path: (ROOT / path).read_text(encoding="utf-8").lower() for path in paths}
     required = (
         "local project memory and explicit handoff for ai coding agents.",
         "continue the repository instead of explaining it again in every new ai session.",
-        "context_tier=\"resume\"",
+        'context_tier="resume"',
         "python 3.10",
         "node.js 20+",
         "1.101",

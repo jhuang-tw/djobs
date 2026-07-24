@@ -1,20 +1,21 @@
 # Release runbook
 
 This is the canonical publishing process for djobs. The Python package, VS Code
-extension, MCP Registry manifest, package lock, GitHub Release, and public artifacts
-use one lockstep version.
+extension, MCP Registry manifest, package lock, GitHub Release, and immutable release
+tag use one lockstep version.
 
 ## Automatic release path
 
-A normal change now requires only one pull request:
+A normal change requires only one pull request:
 
 1. merge the pull request into `main`;
-2. wait for the main-branch `CI` workflow to pass;
-3. the `Release` workflow computes the next semantic version, synchronizes all
-   published manifests, creates a release commit, and publishes every surface.
+2. the `Release` workflow waits for that exact main commit's `CI` run to pass;
+3. it computes the next semantic version and creates a deterministic release snapshot;
+4. it publishes PyPI and the VS Code Marketplace, creates the immutable tag and
+   GitHub Release, then removes its temporary branch.
 
-No follow-up edit to `.github/release.json`, manual tag, or separate PyPI command is
-required.
+No follow-up edit to `.github/release.json`, manual version bump, tag, or separate
+PyPI command is required.
 
 ## Version selection
 
@@ -24,13 +25,18 @@ required.
 - a `!` marker or `BREAKING CHANGE:` footer selects a major release;
 - every other merged change selects a patch release.
 
-The highest required bump wins when several commits are released together. Because
-all merges are versioned, non-conventional commit titles still produce a patch
-release rather than silently skipping publication.
+The highest required bump wins. The latest immutable release tag is the version
+authority, so releases continue from the published version even when protected
+`main` intentionally retains an older checked-in version.
 
-## Generated release commit
+## Protected-main release snapshot
 
-After CI succeeds, GitHub Actions updates:
+The repository rules require every `main` change to use a pull request and pass all
+required checks. GitHub Actions is therefore not allowed to push a generated version
+commit directly to `main`.
+
+After main CI succeeds, the workflow updates these files in a temporary
+`automation/release-vX.Y.Z` snapshot:
 
 - `src/djobs/__init__.py`;
 - `server.json` and every package entry;
@@ -38,15 +44,11 @@ After CI succeeds, GitHub Actions updates:
 - `vscode-ext/package-lock.json` and its root package entry;
 - `CHANGELOG.md` with a dated release section.
 
-It commits those changes as:
-
-```text
-chore(release): vX.Y.Z [skip ci]
-```
-
-`[skip ci]` prevents the generated version commit from recursively creating another
-release. The workflow uses a concurrency lock so closely spaced merges are folded
-into one ordered release instead of racing.
+The snapshot commit uses a deterministic date from the source main commit. A retry
+therefore recreates the same release commit instead of inventing another version.
+The temporary branch keeps the commit reachable while publishing and is deleted only
+after the GitHub Release succeeds. The immutable tag permanently retains the exact
+published source.
 
 ## Publishing order and retries
 
@@ -54,38 +56,29 @@ The workflow publishes in this order:
 
 1. build and publish the Python package to PyPI with trusted publishing;
 2. compile and publish the VS Code extension;
-3. create the immutable Git tag and GitHub Release from the matching changelog section.
+3. create or update the immutable Git tag and GitHub Release;
+4. delete the temporary release branch.
 
 PyPI and Marketplace duplicate versions are treated idempotently. If publication is
-interrupted after the release commit reaches `main`, manually re-run the `Release`
-workflow; it detects the untagged prepared version and resumes instead of incrementing
-again.
-
-## Required repository setting
-
-The Release workflow must be allowed to write its generated `chore(release)` commit
-to `main`. When a repository ruleset blocks every direct write, add GitHub Actions as
-a bypass actor for this single generated release path. Normal contributor changes
-continue to require pull requests and CI.
+interrupted, re-run the `Release` workflow. It derives the same version from the
+latest tag and source history, force-updates only the dedicated temporary branch, and
+resumes without writing to protected `main`.
 
 ## Manual recovery only
 
 `workflow_dispatch` remains available for retrying an interrupted publication. It is
-not a second versioning procedure and does not ask for a version number or target SHA.
-The workflow always derives both from repository history.
-
-Never create an independent manual tag or upload a package under a version that is
-not represented by the generated release commit.
+not a second versioning procedure and asks for neither a version nor a target SHA.
+Never manually upload a package or create an independent tag with mismatched content.
 
 ## Verification
 
 Confirm that:
 
-- the GitHub Release body matches the dated changelog section;
+- the GitHub Release body matches the tagged changelog section;
 - PyPI shows the same package version;
 - the VS Code Marketplace shows the same extension version;
-- `server.json` and `src/djobs/__init__.py` match the release tag;
-- GitHub Pages deploys successfully.
+- `server.json`, `src/djobs/__init__.py`, and extension manifests match inside the tag;
+- no `automation/release-vX.Y.Z` branch remains after a successful release.
 
-Do not edit already-published artifacts under the same version. Merge another change
-and let the automatic workflow create the next semantic version.
+Do not edit already-published artifacts under the same version. Merge another normal
+change and let the automatic workflow derive the next release from the latest tag.

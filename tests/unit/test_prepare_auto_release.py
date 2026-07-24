@@ -12,6 +12,7 @@ bump_version = cast(Any, PLANNER["bump_version"])
 classify_bump = cast(Any, PLANNER["classify_bump"])
 parse_version = cast(Any, PLANNER["parse_version"])
 render_changelog_section = cast(Any, PLANNER["render_changelog_section"])
+select_base_version = cast(Any, PLANNER["select_base_version"])
 
 
 def test_semantic_version_bumps() -> None:
@@ -19,6 +20,12 @@ def test_semantic_version_bumps() -> None:
     assert bump_version("0.16.0", "patch") == "0.16.1"
     assert bump_version("0.16.0", "minor") == "0.17.0"
     assert bump_version("0.16.0", "major") == "1.0.0"
+
+
+def test_latest_tag_advances_protected_main_version() -> None:
+    assert select_base_version("0.16.0", "v0.17.0") == "0.17.0"
+    assert select_base_version("0.18.0", "v0.17.0") == "0.18.0"
+    assert select_base_version("0.16.0", "") == "0.16.0"
 
 
 def test_commit_types_select_highest_required_bump() -> None:

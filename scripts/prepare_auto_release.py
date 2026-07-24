@@ -107,6 +107,19 @@ def tag_exists(tag: str) -> bool:
     return bool(_run("git", "tag", "--list", tag))
 
 
+def select_base_version(working_version: str, latest_tag: str) -> str:
+    """Return the greatest released or checked-in semantic version."""
+
+    parse_version(working_version)
+    if not latest_tag:
+        return working_version
+    tagged_version = latest_tag.removeprefix("v")
+    parse_version(tagged_version)
+    if parse_version(tagged_version) > parse_version(working_version):
+        return tagged_version
+    return working_version
+
+
 def commits_since(tag: str) -> tuple[Commit, ...]:
     revision = f"{tag}..HEAD" if tag else "HEAD"
     raw = _run(
@@ -209,12 +222,31 @@ def update_version_files(version: str) -> None:
     SERVER_PATH.write_text(json.dumps(server, indent=2) + "\n", encoding="utf-8")
 
 
-def update_changelog(version: str, date: str, commits: tuple[Commit, ...]) -> None:
-    text = CHANGELOG_PATH.read_text(encoding="utf-8")
+def _changelog_base(working_version: str, previous_tag: str) -> str:
+    if previous_tag:
+        tagged_version = previous_tag.removeprefix("v")
+        if parse_version(tagged_version) > parse_version(working_version):
+            tagged_text = _run("git", "show", f"{previous_tag}:CHANGELOG.md")
+            if "## [Unreleased]" not in tagged_text:
+                raise RuntimeError(f"{previous_tag}:CHANGELOG.md has no [Unreleased] section")
+            return tagged_text.rstrip() + "\n"
+    return CHANGELOG_PATH.read_text(encoding="utf-8")
+
+
+def update_changelog(
+    version: str,
+    date: str,
+    commits: tuple[Commit, ...],
+    *,
+    working_version: str,
+    previous_tag: str,
+) -> None:
+    text = _changelog_base(working_version, previous_tag)
     marker = "## [Unreleased]"
     if marker not in text:
         raise RuntimeError("CHANGELOG.md has no [Unreleased] section")
     if re.search(rf"^## \[{re.escape(version)}\] - ", text, re.MULTILINE):
+        CHANGELOG_PATH.write_text(text, encoding="utf-8")
         return
     section = render_changelog_section(version, date, commits)
     replacement = marker + "\n\n" + section
@@ -222,24 +254,39 @@ def update_changelog(version: str, date: str, commits: tuple[Commit, ...]) -> No
 
 
 def make_plan(date: str) -> ReleasePlan:
-    version = current_version()
+    working_version = current_version()
     latest_tag = latest_version_tag()
-    current_tag = f"v{version}"
+    current_tag = f"v{working_version}"
 
-    # A release commit may already be on main while publishing is being retried.
+    # A protected-main release PR may already be merged while publishing is retried.
     if not tag_exists(current_tag) and latest_tag:
         latest_version = latest_tag.removeprefix("v")
-        if parse_version(version) > parse_version(latest_version):
-            return ReleasePlan(True, version, current_tag, latest_tag, False, None, ())
+        if parse_version(working_version) > parse_version(latest_version):
+            return ReleasePlan(True, working_version, current_tag, latest_tag, False, None, ())
 
+    base_version = select_base_version(working_version, latest_tag)
     commits = commits_since(latest_tag)
     if not commits:
-        return ReleasePlan(False, version, current_tag, latest_tag, False, None, ())
+        return ReleasePlan(
+            False,
+            base_version,
+            f"v{base_version}",
+            latest_tag,
+            False,
+            None,
+            (),
+        )
 
     bump = classify_bump(commits)
-    next_version = bump_version(version, bump)
+    next_version = bump_version(base_version, bump)
     update_version_files(next_version)
-    update_changelog(next_version, date, commits)
+    update_changelog(
+        next_version,
+        date,
+        commits,
+        working_version=working_version,
+        previous_tag=latest_tag,
+    )
     return ReleasePlan(True, next_version, f"v{next_version}", latest_tag, True, bump, commits)
 
 

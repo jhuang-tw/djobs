@@ -20,6 +20,7 @@ jobs:
       version: ${{ steps.plan.outputs.version }}
       tag: ${{ steps.plan.outputs.tag }}
       release_sha: ${{ steps.commit.outputs.release_sha }}
+      release_branch: ${{ steps.commit.outputs.release_branch }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -74,7 +75,12 @@ jobs:
 
       - name: Prepare next semantic version
         id: plan
-        run: python scripts/prepare_auto_release.py
+        run: |
+          set -euo pipefail
+          release_date="$(git show -s --format=%cs HEAD)"
+          source_timestamp="$(git show -s --format=%cI HEAD)"
+          python scripts/prepare_auto_release.py --date "$release_date"
+          echo "source_timestamp=$source_timestamp" >> "$GITHUB_OUTPUT"
 
       - name: Validate generated release surfaces
         if: steps.plan.outputs.release == 'true' && steps.plan.outputs.changed == 'true'
@@ -87,16 +93,20 @@ jobs:
           python -m pytest -q --tb=short
           git diff --check
 
-      - name: Commit generated version and changelog
+      - name: Commit generated release snapshot
         id: commit
         env:
           RELEASE: ${{ steps.plan.outputs.release }}
           CHANGED: ${{ steps.plan.outputs.changed }}
           VERSION: ${{ steps.plan.outputs.version }}
+          SOURCE_TIMESTAMP: ${{ steps.plan.outputs.source_timestamp }}
         run: |
           set -euo pipefail
+          release_branch="automation/release-v${VERSION}"
+
           if [ "$RELEASE" != "true" ]; then
             echo "release_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+            echo "release_branch=" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -109,11 +119,15 @@ jobs:
               server.json \
               vscode-ext/package.json \
               vscode-ext/package-lock.json
-            git commit -m "chore(release): v${VERSION} [skip ci]"
-            git push origin HEAD:main
+            GIT_AUTHOR_DATE="$SOURCE_TIMESTAMP" \
+              GIT_COMMITTER_DATE="$SOURCE_TIMESTAMP" \
+              git commit -m "chore(release): v${VERSION}"
           fi
 
-          echo "release_sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          release_sha="$(git rev-parse HEAD)"
+          git push --force origin "HEAD:refs/heads/${release_branch}"
+          echo "release_sha=$release_sha" >> "$GITHUB_OUTPUT"
+          echo "release_branch=$release_branch" >> "$GITHUB_OUTPUT"
 
   publish-pypi:
     needs: prepare
@@ -220,26 +234,6 @@ jobs:
           ref: ${{ needs.prepare.outputs.release_sha }}
           fetch-depth: 0
 
-      - name: Create and push immutable release tag
-        env:
-          TAG: ${{ needs.prepare.outputs.tag }}
-          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
-        run: |
-          set -euo pipefail
-          git fetch origin --tags --force
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            tagged_sha="$(git rev-list -n 1 "$TAG")"
-            if [ "$tagged_sha" != "$RELEASE_SHA" ]; then
-              echo "$TAG already points to $tagged_sha, expected $RELEASE_SHA" >&2
-              exit 1
-            fi
-          else
-            git config user.name github-actions[bot]
-            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-            git tag -a "$TAG" "$RELEASE_SHA" -m "Release $TAG"
-            git push origin "$TAG"
-          fi
-
       - name: Prepare release body from CHANGELOG.md
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
@@ -251,10 +245,31 @@ jobs:
           ' CHANGELOG.md > release_body.md
           test -s release_body.md
 
-      - name: Create or update GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.prepare.outputs.tag }}
-          target_commitish: ${{ needs.prepare.outputs.release_sha }}
-          body_path: release_body.md
-          generate_release_notes: false
+      - name: Create or update immutable GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_SHA: ${{ needs.prepare.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            tagged_sha="$(git rev-list -n 1 "$TAG")"
+            if [ "$tagged_sha" != "$RELEASE_SHA" ]; then
+              echo "$TAG already points to $tagged_sha, expected $RELEASE_SHA" >&2
+              exit 1
+            fi
+            gh release edit "$TAG" --title "$TAG" --notes-file release_body.md
+          else
+            gh release create "$TAG" \
+              --target "$RELEASE_SHA" \
+              --title "$TAG" \
+              --notes-file release_body.md
+          fi
+
+      - name: Remove temporary release branch
+        env:
+          RELEASE_BRANCH: ${{ needs.prepare.outputs.release_branch }}
+        run: |
+          if [ -n "$RELEASE_BRANCH" ]; then
+            git push origin --delete "$RELEASE_BRANCH" || true
+          fi

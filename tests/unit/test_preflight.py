@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("djobs_preflight", ROOT / "scripts/preflight.py")
 assert SPEC is not None and SPEC.loader is not None
 preflight = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = preflight
 SPEC.loader.exec_module(preflight)
 
 

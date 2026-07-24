@@ -8,6 +8,7 @@ explicit MCP/CLI action through ``checkpoint`` and ``handoff``.
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import timedelta
 from typing import Any
@@ -18,6 +19,8 @@ from djobs.observations import (
     claim_context_injection,
     clean,
     record_observation,
+    record_session_capsule,
+    record_unique_session_observation,
     reset_context_injection,
 )
 
@@ -48,6 +51,50 @@ _FLAG_UNQUOTED_RE = re.compile(
 )
 _BEARER_RE = re.compile(r"(?i)(\bbearer\s+)[A-Za-z0-9._~+/=-]+")
 _URL_CREDENTIAL_RE = re.compile(r"(://[^:/\s]+:)[^@\s]+@")
+_PROMPT_KEYS = (
+    "prompt",
+    "initial_prompt",
+    "initialPrompt",
+    "user_prompt",
+    "userPrompt",
+    "message",
+    "input",
+    "text",
+)
+_NO_MEMORY_MARKERS = ("[djobs:no-memory]", "<djobs:no-memory>")
+
+
+def _capture_user_intent_enabled() -> bool:
+    value = os.environ.get("DJOBS_CAPTURE_USER_INTENT", "1").strip().casefold()
+    return value not in {"0", "false", "no", "off", "disabled"}
+
+
+def _prompt_text(payload: dict[str, Any]) -> str:
+    """Extract a bounded prompt from common host-native payload shapes."""
+
+    for key in _PROMPT_KEYS:
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return clean(_redact(value), 500)
+        if isinstance(value, dict):
+            for nested_key in ("content", "text", "prompt", "message"):
+                nested = value.get(nested_key)
+                if isinstance(nested, str) and nested.strip():
+                    return clean(_redact(nested), 500)
+    return ""
+
+
+def _next_hint(repo: Any, workspace: Any, agent_id: str) -> str | None:
+    rows = _owned_rows(repo, workspace, agent_id)
+    if not rows:
+        return None
+    row = rows[0]
+    try:
+        payload = json.loads(row["payload_json"] or "{}")
+    except (TypeError, json.JSONDecodeError):
+        payload = {}
+    summary = payload.get("summary") or payload.get("title") or payload.get("path")
+    return clean(summary or f"Continue explicit task {row['id']}", 240)
 
 
 def _redact(value: Any) -> str:
@@ -210,6 +257,7 @@ def session_start(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]
                 cwd=cwd,
                 agent_type=agent_type,
                 session_id=session_id,
+                query=_prompt_text(payload) or None,
                 max_items=5,
                 token_budget=450,
             )
@@ -265,8 +313,9 @@ def prepare_prompt_context(payload: dict[str, Any], *, agent_type: str) -> dict[
 
 
 def prompt_context(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]:
-    """Return non-empty read-only context once for a client's current session."""
+    """Record current intent and return relevant read-only context once per session."""
 
+    user_prompt_submit(payload, agent_type=agent_type)
     context = session_start(payload, agent_type=agent_type)
     if not context:
         return {}
@@ -277,7 +326,12 @@ def prompt_context(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any
             agent_type=agent_type,
             session_id=_session_id(payload),
         )
-        if not claim_context_injection(repo, workspace, agent):
+        if not claim_context_injection(
+            repo,
+            workspace,
+            agent,
+            context_key=_prompt_text(payload) or None,
+        ):
             return {}
     except Exception:
         return {}
@@ -310,6 +364,13 @@ def pre_compact(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]:
             metadata={"trigger": trigger, "stored_as_data": True},
         )
         capture_repository_snapshot(repo, workspace, agent)
+        record_session_capsule(
+            repo,
+            workspace,
+            agent,
+            reason=f"pre_compact:{trigger}",
+            next_hint=_next_hint(repo, workspace, agent.agent_id),
+        )
     except Exception:
         pass
     return {}
@@ -325,6 +386,13 @@ def session_end(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]:
         )
         reason = clean(payload.get("reason", "other"), 80)
         capture_repository_snapshot(repo, workspace, agent)
+        record_session_capsule(
+            repo,
+            workspace,
+            agent,
+            reason=f"session_end:{reason}",
+            next_hint=_next_hint(repo, workspace, agent.agent_id),
+        )
         record_observation(
             repo,
             workspace,
@@ -338,9 +406,33 @@ def session_end(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]:
     return {}
 
 
-# Compatibility no-ops for hook files installed by the previous prerelease.
 def user_prompt_submit(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]:
-    del payload, agent_type
+    """Store bounded user intent as passive memory, never as task ownership."""
+
+    prompt = _prompt_text(payload)
+    if (
+        not prompt
+        or not _capture_user_intent_enabled()
+        or any(marker in prompt.casefold() for marker in _NO_MEMORY_MARKERS)
+    ):
+        return {}
+    try:
+        workspace, agent, _queue, repo = _resolve(
+            roots=None,
+            cwd=_cwd(payload),
+            agent_type=agent_type,
+            session_id=_session_id(payload),
+        )
+        record_unique_session_observation(
+            repo,
+            workspace,
+            agent,
+            "user_intent",
+            prompt,
+            metadata={"source": "user_prompt", "stored_as_data": True},
+        )
+    except Exception:
+        pass
     return {}
 
 

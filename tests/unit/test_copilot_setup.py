@@ -38,12 +38,13 @@ def test_copilot_hook_file_uses_native_versioned_format(tmp_path: Path) -> None:
     assert saved["version"] == 1
     assert set(saved["hooks"]) == {
         "SessionStart",
+        "UserPromptSubmit",
         "PostToolUse",
         "PostToolUseFailure",
         "PreCompact",
         "SessionEnd",
     }
-    assert "UserPromptSubmit" not in saved["hooks"]
+    assert "user-prompt" in saved["hooks"]["UserPromptSubmit"][0]["bash"]
     assert "Stop" not in saved["hooks"]
     handler = saved["hooks"]["SessionStart"][0]
     assert handler["type"] == "command"
@@ -89,7 +90,7 @@ def test_copilot_mcp_command_is_scoped_and_tool_limited(tmp_path: Path) -> None:
     assert "DJOBS_AGENT_TYPE=copilot" in command
     assert "--tools" in command
     assert command[command.index("--tools") + 1] == (
-        "sync_workspace,checkpoint,handoff,resume_delta"
+        "sync_workspace,memory,checkpoint,handoff,resume_delta"
     )
     assert command[command.index("--") + 1 :] == ["djobs-mcp"]
 

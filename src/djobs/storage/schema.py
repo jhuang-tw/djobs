@@ -29,6 +29,47 @@ from typing import Any
 # recording repository/tool/session evidence must never change task ownership.
 # ---------------------------------------------------------------------------
 
+SQLITE_OBSERVATION_FTS_SCHEMA_SQL = """
+CREATE VIRTUAL TABLE IF NOT EXISTS agent_observations_fts USING fts5(
+    observation_id UNINDEXED,
+    correlation_id UNINDEXED,
+    event_type,
+    tool_name,
+    summary,
+    tokenize='unicode61 remove_diacritics 2'
+);
+
+CREATE TRIGGER IF NOT EXISTS trg_agent_observations_fts_insert
+AFTER INSERT ON agent_observations
+BEGIN
+    INSERT INTO agent_observations_fts (
+        observation_id, correlation_id, event_type, tool_name, summary
+    ) VALUES (
+        NEW.id, NEW.correlation_id, NEW.event_type,
+        COALESCE(NEW.tool_name, ''), NEW.summary
+    );
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_agent_observations_fts_delete
+AFTER DELETE ON agent_observations
+BEGIN
+    DELETE FROM agent_observations_fts WHERE observation_id = OLD.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_agent_observations_fts_update
+AFTER UPDATE ON agent_observations
+BEGIN
+    DELETE FROM agent_observations_fts WHERE observation_id = OLD.id;
+    INSERT INTO agent_observations_fts (
+        observation_id, correlation_id, event_type, tool_name, summary
+    ) VALUES (
+        NEW.id, NEW.correlation_id, NEW.event_type,
+        COALESCE(NEW.tool_name, ''), NEW.summary
+    );
+END;
+"""
+
+
 SQLITE_OBSERVATION_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS agent_observations (
     id TEXT PRIMARY KEY,

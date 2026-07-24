@@ -7,7 +7,7 @@ import json
 
 from djobs import coding_mcp, delta_mcp
 
-_MINIMAL = {"sync_workspace", "checkpoint", "handoff", "resume_delta"}
+_MINIMAL = {"sync_workspace", "memory", "checkpoint", "handoff", "resume_delta"}
 _ADVANCED = {
     "claim_task",
     "heartbeat_task",

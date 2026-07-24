@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "djobs"
 dynamic = ["version"]
-description = "Local repository memory, passive observations, and explicit handoff for coding agents."
+description = "Local project memory that helps coding agents continue work across AI sessions."
 requires-python = ">=3.10"
 license = "MIT"
 readme = "README.md"

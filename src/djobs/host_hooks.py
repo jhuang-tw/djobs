@@ -17,6 +17,7 @@ _KIMI_END = "# <<< djobs managed observation hooks <<<"
 _JSON_EVENTS = (
     "SessionStart",
     "UserPromptSubmit",
+    "BeforeAgent",
     "PreToolUse",
     "PostToolUse",
     "PostToolUseFailure",
@@ -28,6 +29,7 @@ _JSON_EVENTS = (
 )
 _COPILOT_EVENTS = (
     "SessionStart",
+    "UserPromptSubmit",
     "PostToolUse",
     "PostToolUseFailure",
     "PreCompact",
@@ -85,7 +87,7 @@ def _json_handler(event: str, client: str, database: Path, mode: str) -> dict[st
             "command": command,
             "name": f"djobs-{event}",
             "timeout": 15000,
-            "description": "Record read-only repository observations for cross-agent context.",
+            "description": "Record and recover bounded local repository memory.",
         }
     return {
         "type": "command",
@@ -102,10 +104,11 @@ def _copilot_handler(
     mode: str,
     *,
     matcher: str | None = None,
+    output: str = "json",
 ) -> dict[str, Any]:
     """Return one Copilot CLI/VS Code compatible command hook."""
 
-    argv = _hook_argv(event, "copilot", database, mode)
+    argv = _hook_argv(event, "copilot", database, mode, output=output)
     handler: dict[str, Any] = {
         "type": "command",
         "bash": _command(argv, windows=False),
@@ -124,6 +127,7 @@ def _copilot_document(database: Path, mode: str) -> dict[str, Any]:
         "version": 1,
         "hooks": {
             "SessionStart": [_copilot_handler("session-start", database, mode)],
+            "UserPromptSubmit": [_copilot_handler("user-prompt", database, mode, output="silent")],
             "PostToolUse": [
                 _copilot_handler(
                     "post",
@@ -159,6 +163,7 @@ def _specs(client: str) -> tuple[tuple[str, str, str | None], ...]:
     if client == "claude":
         return (
             ("SessionStart", "session-start", "startup|resume|clear|compact"),
+            ("UserPromptSubmit", "prompt-context", None),
             ("PostToolUse", "post", "Bash|apply_patch|Edit|Write"),
             ("PostToolUseFailure", "post-failure", "Bash|apply_patch|Edit|Write"),
             ("PreCompact", "pre-compact", "manual|auto"),
@@ -167,6 +172,7 @@ def _specs(client: str) -> tuple[tuple[str, str, str | None], ...]:
     if client == "gemini":
         return (
             ("SessionStart", "session-start", None),
+            ("BeforeAgent", "prompt-context", None),
             ("AfterTool", "post", "run_shell_command|write_file|replace|write_.*"),
             ("PreCompress", "pre-compact", None),
             ("SessionEnd", "session-end", None),

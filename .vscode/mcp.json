@@ -12,12 +12,8 @@
         "DJOBS_AGENT_TYPE": "copilot"
       },
       "autoApprove": [
-        "resume_delta",
-        "enqueue_batch",
-        "complete_batch",
-        "check_task",
-        "fail_task",
-        "work_receipt"
+        "sync_workspace",
+        "resume_delta"
       ]
     }
   }

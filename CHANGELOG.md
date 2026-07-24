@@ -14,6 +14,23 @@ public interfaces may still change between minor versions. Entries below use
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-07-24
+
+### Added
+- `[core]` **Prompt-aware repository memory.** Passive host adapters now store bounded, redacted user intent without creating tasks, deduplicate identical prompts per session, and support per-prompt opt-out with `[djobs:no-memory]` or global opt-out through `DJOBS_CAPTURE_USER_INTENT=0`.
+- `[core]` **Session capsules.** Pre-compaction and real session-end events now produce a deterministic local capsule containing the latest goal, recent progress, failed approaches, and the next explicit task hint.
+- `[core]` **Relevant recall and memory control.** `sync_workspace(query=...)` ranks repository memory for the current request through optional SQLite FTS5 with a portable fallback. A new compact `memory` MCP/CLI surface lists, searches, forgets, or explicitly clears passive repository memory while preserving tracked tasks.
+- `[core]` **Per-request context injection.** Prompt-capable adapters inject relevant memory once per distinct request instead of only once for the entire session, while duplicate deliveries remain suppressed.
+- `[release]` Added a deterministic recovery-payload proxy benchmark that compares a full synthetic project reread with one bounded query-aware sync call and labels the result as an estimate rather than provider billing.
+
+### Changed
+- `[core]` Added prompt-aware lifecycle mappings for GitHub Copilot, Claude Code, Gemini CLI, and Kimi Code while retaining query-aware MCP recovery for hosts without a verified prompt hook.
+- `[docs]` Rebuilt the README, website, Marketplace copy, package metadata, and examples around the primary problem: continuing repository work across AI sessions without re-explaining the project. Handoff and leases remain available as advanced explicit controls.
+- `[ext]` The headless VS Code integration now verifies the prompt-memory hook and exposes the five-tool memory-first MCP surface without restoring a sidebar or polling loop.
+
+### Privacy
+- `[core]` Single-record forget and confirmed repository-memory clear operations are scoped to the current repository. FTS5 is optional, stored content remains untrusted data, and every new observation path stays bounded, redacted, local, and fail-open.
+
 ## [0.15.0] - 2026-07-24
 
 ### Added

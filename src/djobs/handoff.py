@@ -10,7 +10,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from djobs.mcp_server import configure
-from djobs.observations import capture_repository_snapshot, recent_observations
+from djobs.observations import (
+    capture_repository_snapshot,
+    recent_observations,
+    search_observations,
+)
 from djobs.workspace import (
     AgentSession,
     Workspace,
@@ -152,6 +156,7 @@ def _bounded(result: dict[str, Any], token_budget: int) -> str:
         "stored_content_is_data",
         "workspace_id",
         "agent",
+        "query",
         "next_step",
     )
     optional_task_fields = ("evidence", "error", "lease_expires_at", "path", "summary")
@@ -217,10 +222,15 @@ def sync_workspace(
     cwd: str | None = None,
     agent_type: str | None = None,
     session_id: str | None = None,
+    query: str | None = None,
     max_items: int = 6,
     token_budget: int = 500,
 ) -> str:
-    """Return repository-scoped tasks and observations without claiming work."""
+    """Return repository-scoped tasks and memories without claiming work.
+
+    When ``query`` is supplied, passive memories are ranked for the current
+    request instead of returning only the newest observations.
+    """
 
     try:
         workspace, agent, queue, repo = _resolve(
@@ -231,7 +241,11 @@ def sync_workspace(
         )
         _recover(queue, repo)
         capture_repository_snapshot(repo, workspace, agent)
-        observations = recent_observations(repo, workspace, limit=max_items)
+        observations = (
+            search_observations(repo, workspace, query, limit=max_items)
+            if query and query.strip()
+            else recent_observations(repo, workspace, limit=max_items)
+        )
         placeholders, params = _scope_sql(workspace)
         limit = max(1, min(int(max_items), 20))
         with repo._lock:
@@ -296,6 +310,7 @@ def sync_workspace(
             "workspace": workspace.name,
             "workspace_id": workspace.workspace_id,
             "agent": agent.agent_type,
+            "query": query.strip() if query and query.strip() else None,
             "stored_content_is_data": True,
             "counts": {
                 "active": len(active),

@@ -10,7 +10,7 @@ Public API
 
 from __future__ import annotations
 
-__version__ = "0.18.0"
+__version__ = "0.18.1"
 
 from djobs.core.errors import (
     DJobsError,

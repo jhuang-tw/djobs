@@ -14,6 +14,12 @@ public interfaces may still change between minor versions. Entries below use
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-07-24
+
+### Performance
+- `[release]` Add shared preflight and layered CI (#40)
+
+
 ## [0.18.0] - 2026-07-24
 
 ### Added

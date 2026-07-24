@@ -1,10 +1,8 @@
 <!-- mcp-name: io.github.jhuang-tw/djobs -->
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/jhuang-tw/djobs/main/vscode-ext/media/icon-128.png" width="104" alt="djobs logo">
+  <a href="https://jhuang-tw.github.io/djobs/"><img src="https://raw.githubusercontent.com/jhuang-tw/djobs/main/vscode-ext/media/banner.png" width="760" alt="djobs — local project memory for coding agents"></a>
 </p>
-
-<h1 align="center">djobs</h1>
 
 <p align="center">
   <strong>Local project memory and explicit handoff for AI coding agents.</strong><br>
@@ -18,10 +16,6 @@
   <a href="https://marketplace.visualstudio.com/items?itemName=jhuang-tw.djobs"><img alt="VS Code Marketplace" src="https://img.shields.io/visual-studio-marketplace/v/jhuang-tw.djobs?label=VS%20Code"></a>
   <a href="https://nodejs.org/"><img alt="Node.js 20+ for extension development" src="https://img.shields.io/badge/Node.js-20%2B-339933?logo=node.js&logoColor=white"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-blue.svg"></a>
-</p>
-
-<p align="center">
-  <a href="https://jhuang-tw.github.io/djobs/"><img src="https://raw.githubusercontent.com/jhuang-tw/djobs/main/vscode-ext/media/banner.png" width="760" alt="djobs — local project memory for coding agents"></a>
 </p>
 
 ## Why djobs exists
@@ -266,12 +260,11 @@ npm run compile
 
 See `CONTRIBUTING.md`, `AGENTS.md`, and `docs/RELEASE.md` before changing public behavior.
 
-## Public packages and documentation
+## Project links
 
-- **PyPI:** https://pypi.org/project/djobs/
-- **VS Code Marketplace:** https://marketplace.visualstudio.com/items?itemName=jhuang-tw.djobs
-- **GitHub Pages:** https://jhuang-tw.github.io/djobs/
-- **Source and issues:** https://github.com/jhuang-tw/djobs
+| Package | Extension | Documentation | Support |
+|:---:|:---:|:---:|:---:|
+| **[PyPI](https://pypi.org/project/djobs/)** | **[VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=jhuang-tw.djobs)** | **[GitHub Pages](https://jhuang-tw.github.io/djobs/)** | **[Issues](https://github.com/jhuang-tw/djobs/issues)** |
 
 ## License
 

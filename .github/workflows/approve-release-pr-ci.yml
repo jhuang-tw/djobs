@@ -1,9 +1,8 @@
 name: Approve automated release PR CI
 
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
+  pull_request_target:
+    types: [opened, synchronize, reopened]
 
 permissions:
   actions: write
@@ -12,17 +11,50 @@ permissions:
 jobs:
   approve:
     if: >-
-      github.event.workflow_run.event == 'pull_request' &&
-      github.event.workflow_run.conclusion == 'action_required' &&
-      startsWith(github.event.workflow_run.head_branch, 'automation/release-v')
+      github.event.pull_request.user.login == 'github-actions[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'automation/release-v')
     runs-on: ubuntu-latest
     steps:
       - name: Approve the gated CI run
         env:
           GH_TOKEN: ${{ github.token }}
-          RUN_ID: ${{ github.event.workflow_run.id }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          gh api --method POST \
-            "repos/${{ github.repository }}/actions/runs/${RUN_ID}/approve"
-          echo "Approved release PR CI run ${RUN_ID}."
+
+          for attempt in $(seq 1 60); do
+            run_json="$(gh run list \
+              --workflow CI \
+              --commit "$HEAD_SHA" \
+              --event pull_request \
+              --limit 1 \
+              --json databaseId,status,conclusion \
+              --jq '.[0] // empty')"
+
+            if [ -z "$run_json" ]; then
+              sleep 2
+              continue
+            fi
+
+            run_id="$(jq -r '.databaseId' <<<"$run_json")"
+            status="$(jq -r '.status' <<<"$run_json")"
+            conclusion="$(jq -r '.conclusion // ""' <<<"$run_json")"
+
+            if [ "$conclusion" = "action_required" ]; then
+              gh api --method POST \
+                "repos/${{ github.repository }}/actions/runs/${run_id}/approve"
+              echo "Approved release PR CI run ${run_id}."
+              exit 0
+            fi
+
+            if [ "$status" = "queued" ] || [ "$status" = "in_progress" ]; then
+              echo "Release PR CI run ${run_id} already started."
+              exit 0
+            fi
+
+            sleep 2
+          done
+
+          echo "Timed out waiting for gated CI on ${HEAD_SHA}." >&2
+          exit 1

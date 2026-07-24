@@ -96,7 +96,13 @@ def test_version_sync_and_release_workflow_cover_every_published_surface() -> No
     assert "HEAD:main" not in release
     assert ".github/release.json" not in release
 
-    assert "types: [completed]" in approver
-    assert "conclusion == 'action_required'" in approver
-    assert "startsWith(github.event.workflow_run.head_branch, 'automation/release-v')" in approver
-    assert "/actions/runs/${RUN_ID}/approve" in approver
+    required_approval_guards = [
+        "pull_request_target:",
+        "types: [opened, synchronize, reopened]",
+        "github.event.pull_request.user.login == 'github-actions[bot]'",
+        "github.event.pull_request.head.repo.full_name == github.repository",
+        "startsWith(github.event.pull_request.head.ref, 'automation/release-v')",
+        "/actions/runs/${run_id}/approve",
+    ]
+    for guard in required_approval_guards:
+        assert guard in approver

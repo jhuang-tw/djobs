@@ -14,6 +14,14 @@ public interfaces may still change between minor versions. Entries below use
 
 ## [Unreleased]
 
+## [0.17.2] - 2026-07-24
+
+### Fixed
+- `[release]` Extract GitHub Release notes deterministically (#28)
+- `[release]` Approve gated release CI after completion (#30)
+- `[release]` Approve gated release CI from pull request target (#32)
+
+
 ## [0.17.1] - 2026-07-24
 
 ### Fixed

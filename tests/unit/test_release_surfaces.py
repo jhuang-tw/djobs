@@ -72,7 +72,6 @@ def test_version_sync_and_release_workflow_cover_every_published_surface() -> No
     sync = (ROOT / "vscode-ext/scripts/sync-version.js").read_text(encoding="utf-8")
     planner = (ROOT / "scripts/prepare_auto_release.py").read_text(encoding="utf-8")
     release = (ROOT / ".github/workflows/publish.yml").read_text(encoding="utf-8")
-    approver = (ROOT / ".github/workflows/approve-release-pr-ci.yml").read_text(encoding="utf-8")
     ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 
     assert "package-lock.json" in sync
@@ -84,7 +83,10 @@ def test_version_sync_and_release_workflow_cover_every_published_surface() -> No
     assert "workflow_dispatch:" in ci
     assert "actions: write" in release
     assert "pull-requests: write" in release
-    assert "gh workflow run ci.yml" in release
+    assert "gh workflow run ci.yml" not in release
+    assert "--event pull_request" in release
+    assert 'if [ "$conclusion" = "action_required" ]; then' in release
+    assert "/actions/runs/${pr_run_id}/approve" in release
     assert "gh pr create" in release
     assert "gh pr checks" in release
     assert "gh pr merge" in release
@@ -95,14 +97,4 @@ def test_version_sync_and_release_workflow_cover_every_published_surface() -> No
     assert "gh release create" in release
     assert "HEAD:main" not in release
     assert ".github/release.json" not in release
-
-    required_approval_guards = [
-        "pull_request_target:",
-        "types: [opened, synchronize, reopened]",
-        "github.event.pull_request.user.login == 'github-actions[bot]'",
-        "github.event.pull_request.head.repo.full_name == github.repository",
-        "startsWith(github.event.pull_request.head.ref, 'automation/release-v')",
-        "/actions/runs/${run_id}/approve",
-    ]
-    for guard in required_approval_guards:
-        assert guard in approver
+    assert not (ROOT / ".github/workflows/approve-release-pr-ci.yml").exists()

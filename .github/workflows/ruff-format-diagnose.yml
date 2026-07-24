@@ -1,0 +1,31 @@
+name: Ruff format diagnose
+
+on:
+  push:
+    branches: [release/layered-recovery-presentation]
+
+permissions:
+  contents: read
+
+jobs:
+  capture:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pre-commit
+      - name: Apply pinned Ruff formatter
+        run: pre-commit run ruff-format --all-files || true
+      - name: Collect changed files
+        run: |
+          git diff --name-only > ruff-formatted-files.txt
+          tar -czf ruff-formatted-files.tar.gz -T ruff-formatted-files.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ruff-formatted-files
+          path: |
+            ruff-formatted-files.txt
+            ruff-formatted-files.tar.gz

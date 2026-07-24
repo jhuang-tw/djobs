@@ -1,0 +1,35 @@
+SIM118 Use `key in dict` instead of `key in dict.keys()`
+   --> src/djobs/observations.py:362:55
+    |
+361 | def _row_to_observation(row: Any, *, score: float | None = None) -> dict[str, Any]:
+362 |     metadata = _metadata_dict(row["metadata_json"] if "metadata_json" in row.keys() else "{}")
+    |                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+363 |     item: dict[str, Any] = {
+364 |         "id": row["id"],
+    |
+help: Remove `.keys()`
+
+E501 Line too long (116 > 99)
+   --> src/djobs/observations.py:537:100
+    |
+535 |             cursor.execute("BEGIN IMMEDIATE")
+536 |             row = cursor.execute(
+537 |                 f"SELECT metadata_json FROM agent_observations WHERE id = ? AND correlation_id IN ({placeholders})",
+    |                                                                                                    ^^^^^^^^^^^^^^^^^
+538 |                 (memory_id, *scopes),
+539 |             ).fetchone()
+    |
+
+E501 Line too long (106 > 99)
+   --> src/djobs/observations.py:824:100
+    |
+822 |                 VALUES (?, ?, ?, ?)
+823 |                 ON CONFLICT(workspace_id) DO UPDATE SET
+824 |                     digest = excluded.digest, summary = excluded.summary, updated_at = excluded.updated_at
+    |                                                                                                    ^^^^^^^
+825 |                 """,
+826 |                 (checkout_id, digest, summary, now),
+    |
+
+Found 3 errors.
+No fixes available (1 hidden fix can be enabled with the `--unsafe-fixes` option).

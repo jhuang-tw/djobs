@@ -100,9 +100,7 @@ def memory_action(
             )
         if action == "status":
             if not memory_id:
-                return _dumps(
-                    {"ok": False, "action": action, "error": "memory_id is required"}
-                )
+                return _dumps({"ok": False, "action": action, "error": "memory_id is required"})
             if status is None:
                 return _dumps({"ok": False, "action": action, "error": "status is required"})
             updated = update_observation_status(
@@ -125,9 +123,7 @@ def memory_action(
             )
         if action == "forget":
             if not memory_id:
-                return _dumps(
-                    {"ok": False, "action": action, "error": "memory_id is required"}
-                )
+                return _dumps({"ok": False, "action": action, "error": "memory_id is required"})
             forgotten = forget_observation(repo, workspace, memory_id)
             return _dumps(
                 {

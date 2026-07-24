@@ -77,11 +77,7 @@ def _with_context_hash(raw: str, known_context_hash: str | None) -> str:
     if not isinstance(result, dict) or not result.get("ok"):
         return raw
     observations = result.get("observations")
-    selected = (
-        cast(list[dict[str, Any]], observations)
-        if isinstance(observations, list)
-        else []
-    )
+    selected = cast(list[dict[str, Any]], observations) if isinstance(observations, list) else []
     context_hash = memory_context_hash(selected)
     unchanged = bool(known_context_hash) and known_context_hash == context_hash
     result["context_hash"] = context_hash

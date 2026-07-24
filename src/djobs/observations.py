@@ -92,7 +92,11 @@ def _metadata_json(metadata: dict[str, Any] | None) -> str:
 
 def _memory_status(raw: Any) -> str:
     status = str(_metadata_dict(raw).get("memory_status") or "active").casefold()
-    return status if status in {"active", "resolved", "superseded", "stale", "contradicted"} else "active"
+    return (
+        status
+        if status in {"active", "resolved", "superseded", "stale", "contradicted"}
+        else "active"
+    )
 
 
 def ensure_schema(repo: Any) -> None:
@@ -134,7 +138,13 @@ def _prune_observations(cursor: Any, scope_id: str) -> None:
               ORDER BY created_at DESC, id DESC LIMIT ?
           )
         """,
-        (scope_id, _CONTEXT_INJECTED_EVENT, scope_id, _CONTEXT_INJECTED_EVENT, _MAX_OBSERVATIONS_PER_WORKSPACE),
+        (
+            scope_id,
+            _CONTEXT_INJECTED_EVENT,
+            scope_id,
+            _CONTEXT_INJECTED_EVENT,
+            _MAX_OBSERVATIONS_PER_WORKSPACE,
+        ),
     )
     cursor.execute(
         """
@@ -147,7 +157,13 @@ def _prune_observations(cursor: Any, scope_id: str) -> None:
               ORDER BY created_at DESC, id DESC LIMIT ?
           )
         """,
-        (scope_id, _CONTEXT_INJECTED_EVENT, scope_id, _CONTEXT_INJECTED_EVENT, _MAX_CONTEXT_MARKERS_PER_WORKSPACE),
+        (
+            scope_id,
+            _CONTEXT_INJECTED_EVENT,
+            scope_id,
+            _CONTEXT_INJECTED_EVENT,
+            _MAX_CONTEXT_MARKERS_PER_WORKSPACE,
+        ),
     )
 
 
@@ -278,7 +294,12 @@ def reset_context_injection(repo: Any, workspace: Any, agent: Any) -> None:
             WHERE correlation_id = ? AND agent_type = ? AND session_id_hash = ?
               AND event_type = ?
             """,
-            (_memory_scope(workspace), agent.agent_type, _session_hash(agent), _CONTEXT_INJECTED_EVENT),
+            (
+                _memory_scope(workspace),
+                agent.agent_type,
+                _session_hash(agent),
+                _CONTEXT_INJECTED_EVENT,
+            ),
         )
         repo._connection.commit()
 
@@ -348,7 +369,14 @@ def _row_to_observation(row: Any, *, score: float | None = None) -> dict[str, An
         "created_at": row["created_at"],
         "status": _memory_status(metadata),
     }
-    for field in ("checkout_id", "commit_sha", "branch", "affected_files", "superseded_by", "resolved_by_commit"):
+    for field in (
+        "checkout_id",
+        "commit_sha",
+        "branch",
+        "affected_files",
+        "superseded_by",
+        "resolved_by_commit",
+    ):
         if metadata.get(field) not in (None, "", []):
             item[field] = metadata[field]
     if score is not None:
@@ -479,7 +507,9 @@ def memory_context_hash(observations: list[dict[str, Any]]) -> str:
         }
         for item in observations
     ]
-    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    encoded = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode()
     return hashlib.sha256(encoded).hexdigest()
 
 
@@ -729,11 +759,30 @@ def _git_state(root: str) -> tuple[str, str, bool] | None:
     if lines:
         tracked_ok = _hash_command(
             digest,
-            ["git", "-C", root, "diff", "--no-ext-diff", "--no-textconv", "--binary", "--no-color"],
+            [
+                "git",
+                "-C",
+                root,
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--binary",
+                "--no-color",
+            ],
         )
         staged_ok = _hash_command(
             digest,
-            ["git", "-C", root, "diff", "--cached", "--no-ext-diff", "--no-textconv", "--binary", "--no-color"],
+            [
+                "git",
+                "-C",
+                root,
+                "diff",
+                "--cached",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--binary",
+                "--no-color",
+            ],
         )
         untracked_ok = _hash_untracked(digest, root)
         if not (tracked_ok and staged_ok and untracked_ok):

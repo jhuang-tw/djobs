@@ -101,9 +101,7 @@ def run() -> dict[str, Any]:
                 hits += 1
 
         stale_probe = search_observations(repository, target, "Zustand store", limit=3)
-        selected = search_observations(
-            repository, target, "continue parser OAuth work", limit=6
-        )
+        selected = search_observations(repository, target, "continue parser OAuth work", limit=6)
         context_hash = memory_context_hash(selected)
         replay = json.dumps(
             {

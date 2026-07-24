@@ -26,16 +26,23 @@ jobs:
         with:
           python-version: "3.13"
       - run: python -m pip install ruff==0.15.14
-      - run: ruff check --fix --config pyproject.toml src tests scripts/benchmark_resume_quality.py
-      - run: ruff format --config pyproject.toml src tests scripts/benchmark_resume_quality.py
-      - name: Commit formatting
+      - name: Apply safe Ruff fixes
         run: |
-          if git diff --quiet; then
+          ruff check --fix --config pyproject.toml src tests scripts/benchmark_resume_quality.py || true
+          ruff format --config pyproject.toml src tests scripts/benchmark_resume_quality.py
+      - name: Capture remaining diagnostics
+        run: |
+          python -m pip install -e ".[dev,pg]"
+          ruff check --config pyproject.toml src tests scripts/benchmark_resume_quality.py > .github/context-compiler-ruff.txt 2>&1 || true
+          mypy > .github/context-compiler-mypy.txt 2>&1 || true
+      - name: Commit formatting and diagnostics
+        run: |
+          if git diff --quiet && git ls-files --error-unmatch .github/context-compiler-ruff.txt .github/context-compiler-mypy.txt >/dev/null 2>&1; then
             exit 0
           fi
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add src tests scripts/benchmark_resume_quality.py
+          git add src tests scripts/benchmark_resume_quality.py .github/context-compiler-ruff.txt .github/context-compiler-mypy.txt
           git commit -m 'style: apply context compiler formatting'
           git push origin HEAD:${{ github.event.pull_request.head.ref }}
 

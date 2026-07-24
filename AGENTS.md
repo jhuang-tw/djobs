@@ -19,20 +19,21 @@ Read first:
 - Keep MCP responses compact because every field consumes model context.
 - Add tests for behavior changes and use a clear conventional commit or PR title; the release workflow derives the version and changelog automatically after main CI succeeds.
 - Never manually bump published versions, create release tags, restore `.github/release.json`, or push generated release files directly to protected `main` during ordinary feature work.
-- Treat the latest immutable release tag as the published-version authority; release snapshots may intentionally differ from protected `main` metadata.
 - Do not add machine-specific paths, hardcoded test counts, release scratch files, roadmap snapshots, or duplicated architecture documents.
+- Do not hand-maintain a second validation command list. Local hooks and CI must use `scripts/preflight.py`.
 
-## Required gates
+## Required gate before push
 
 ```bash
-ruff check src/ tests/ scripts/prepare_auto_release.py
-ruff format --check src/ tests/ scripts/prepare_auto_release.py
-mypy
-pytest -q
-python -m build
-python -m twine check dist/*
-cd vscode-ext && npm ci && npx tsc -p ./ --noEmit && npm run compile
+python scripts/preflight.py --profile quick --fix --base-ref origin/main
 ```
 
-A change is complete only after relevant tests and CI are green, current Markdown and
-published metadata match the code, and temporary migration or validation files are removed.
+The command applies the pinned formatter first and stops when formatting changes a
+file. Review and stage those changes, then rerun. Use `--profile full --check` only
+when a release-grade local pass is required.
+
+Ordinary PRs run the quick preflight once. Full Python, PostgreSQL, package, extension,
+and three-OS installation validation runs on `main` and automated release PRs. A
+change is complete only after relevant tests and CI are green, current Markdown and
+published metadata match the code, and temporary migration or validation files are
+removed.

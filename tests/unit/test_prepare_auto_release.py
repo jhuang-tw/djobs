@@ -18,8 +18,11 @@ def test_semantic_version_bumps() -> None:
 
 def test_commit_types_select_highest_required_bump() -> None:
     fixes = (Commit("a" * 40, "fix: avoid duplicate replay", ""),)
-    features = fixes + (Commit("b" * 40, "feat(memory): share worktree context", ""),)
-    breaking = features + (Commit("c" * 40, "refactor!: replace the public queue contract", ""),)
+    features = (*fixes, Commit("b" * 40, "feat(memory): share worktree context", ""))
+    breaking = (
+        *features,
+        Commit("c" * 40, "refactor!: replace the public queue contract", ""),
+    )
 
     assert classify_bump(fixes) == "patch"
     assert classify_bump(features) == "minor"

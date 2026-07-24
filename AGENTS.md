@@ -6,7 +6,7 @@ Read first:
 
 1. `README.md` for current product behavior and compatibility claims.
 2. `CONTRIBUTING.md` for architecture, setup, and verification.
-3. `docs/RELEASE.md` only when preparing a release.
+3. `docs/RELEASE.md` only when changing or recovering the release pipeline.
 
 ## Non-negotiable rules
 
@@ -17,8 +17,8 @@ Read first:
 - Normal setup must not install the legacy smart command-checkpoint hook in `auto_hook.py`.
 - Preserve unrelated MCP servers, hook entries, and user configuration.
 - Keep MCP responses compact because every field consumes model context.
-- Add tests for behavior changes and update `CHANGELOG.md` under `[Unreleased]`.
-- Version lives in `src/djobs/__init__.py`; synchronize manifests with `node vscode-ext/scripts/sync-version.js`.
+- Add tests for behavior changes and use a clear conventional commit or PR title; the release workflow derives the version and changelog automatically after main CI succeeds.
+- Never manually bump published versions, create release tags, or restore `.github/release.json` during ordinary feature work.
 - Do not add machine-specific paths, hardcoded test counts, release scratch files, roadmap snapshots, or duplicated architecture documents.
 
 ## Required gates

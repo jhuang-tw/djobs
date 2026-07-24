@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import shutil
 import subprocess
 import sys
@@ -58,8 +57,7 @@ def classify_changes(paths: Iterable[str]) -> ChangeSet:
         for path in normalized
     )
     docs_only = all(
-        path.endswith((".md", ".html", ".svg", ".png"))
-        or path.startswith("docs/")
+        path.endswith((".md", ".html", ".svg", ".png")) or path.startswith("docs/")
         for path in normalized
     )
     known = all(
@@ -88,7 +86,13 @@ def classify_changes(paths: Iterable[str]) -> ChangeSet:
         }
         for path in normalized
     )
-    return ChangeSet(normalized, python=python, extension=extension, docs_only=docs_only, unknown=not known)
+    return ChangeSet(
+        normalized,
+        python=python,
+        extension=extension,
+        docs_only=docs_only,
+        unknown=not known,
+    )
 
 
 def _run(
@@ -118,9 +122,13 @@ def changed_files(base_ref: str | None) -> tuple[str, ...]:
     if base_ref:
         try:
             merge_base = _git_output("merge-base", base_ref, "HEAD")
-            return _normalized(_git_output("diff", "--name-only", f"{merge_base}..HEAD").splitlines())
+            diff = _git_output("diff", "--name-only", f"{merge_base}..HEAD")
+            return _normalized(diff.splitlines())
         except subprocess.CalledProcessError:
-            print(f"Could not resolve {base_ref}; using conservative full preflight.", file=sys.stderr)
+            print(
+                f"Could not resolve {base_ref}; using conservative full preflight.",
+                file=sys.stderr,
+            )
             return ("*",)
 
     names: set[str] = set()
@@ -159,7 +167,10 @@ def run_format_and_lint(*, fix: bool) -> None:
     if fix:
         changed = [path for path in tracked if before.get(path) != path.read_bytes()]
         if changed:
-            print("\nRuff formatted files. Review/stage them, then rerun preflight:", file=sys.stderr)
+            print(
+                "\nRuff formatted files. Review/stage them, then rerun preflight:",
+                file=sys.stderr,
+            )
             for path in changed:
                 print(f"  - {path.relative_to(ROOT)}", file=sys.stderr)
             raise SystemExit(2)
@@ -188,6 +199,7 @@ def run_extension() -> None:
 
 
 def run_package_checks() -> None:
+    shutil.rmtree(ROOT / "dist", ignore_errors=True)
     _run([sys.executable, "-m", "build"])
     distributions = sorted(str(path.relative_to(ROOT)) for path in (ROOT / "dist").glob("*"))
     if not distributions:
@@ -199,10 +211,23 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the shared djobs pre-push and CI gates.")
     parser.add_argument("--profile", choices=("lint", "quick", "full"), default="quick")
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--fix", action="store_true", help="Apply Ruff formatting and stop if files change.")
-    mode.add_argument("--check", action="store_true", help="Check formatting without modifying files.")
+    mode.add_argument(
+        "--fix",
+        action="store_true",
+        help="Apply Ruff formatting and stop if files change.",
+    )
+    mode.add_argument(
+        "--check",
+        action="store_true",
+        help="Check formatting without modifying files.",
+    )
     parser.add_argument("--base-ref", help="Git ref used to classify changed files.")
-    parser.add_argument("--changed-file", action="append", default=[], help="Explicit changed path for tests or automation.")
+    parser.add_argument(
+        "--changed-file",
+        action="append",
+        default=[],
+        help="Explicit changed path for tests or automation.",
+    )
     return parser.parse_args(argv)
 
 

@@ -1,0 +1,97 @@
+name: Temporary write release result
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/write-release-result.ready"
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Query public release APIs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          target = "0.16.0"
+          repository = os.environ["GITHUB_REPOSITORY"]
+          token = os.environ["GH_TOKEN"]
+
+          def get_json(url, *, data=None, headers=None):
+              merged = {"User-Agent": "djobs-release-verifier"}
+              if headers:
+                  merged.update(headers)
+              request = urllib.request.Request(url, data=data, headers=merged)
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  return json.load(response)
+
+          def safe(call):
+              try:
+                  return call()
+              except Exception as exc:
+                  return f"error:{type(exc).__name__}"
+
+          github = safe(lambda: str(get_json(
+              f"https://api.github.com/repos/{repository}/releases/tags/v{target}",
+              headers={"Authorization": f"Bearer {token}"},
+          ).get("tag_name", "")).removeprefix("v"))
+          pypi = safe(lambda: str(get_json(
+              "https://pypi.org/pypi/djobs/json"
+          ).get("info", {}).get("version", "")))
+
+          def marketplace():
+              payload = json.dumps({
+                  "filters": [{"criteria": [{"filterType": 7, "value": "jhuang-tw.djobs"}]}],
+                  "assetTypes": [],
+                  "flags": 914,
+              }).encode()
+              value = get_json(
+                  "https://marketplace.visualstudio.com/_apis/public/gallery/extensionquery",
+                  data=payload,
+                  headers={
+                      "Content-Type": "application/json",
+                      "Accept": "application/json;api-version=7.2-preview.1",
+                  },
+              )
+              extensions = value.get("results", [{}])[0].get("extensions", [])
+              versions = extensions[0].get("versions", []) if extensions else []
+              return str(versions[0].get("version", "")) if versions else ""
+
+          result = {
+              "target": target,
+              "github_release": github,
+              "pypi": pypi,
+              "vscode_marketplace": safe(marketplace),
+          }
+          with open(".github/release-verify-result.json", "w", encoding="utf-8") as handle:
+              json.dump(result, handle, indent=2)
+              handle.write("\n")
+          print(result)
+          PY
+      - name: Commit result and remove temporary verifier
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -f .github/write-release-result.ready
+          git rm -f .github/workflows/temp-write-release-result.yml
+          git add .github/release-verify-result.json
+          git commit -m "chore: record temporary 0.16.0 release verification"
+          git push origin HEAD:main

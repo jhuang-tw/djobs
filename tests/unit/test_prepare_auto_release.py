@@ -1,12 +1,17 @@
 from __future__ import annotations
 
-from scripts.prepare_auto_release import (
-    Commit,
-    bump_version,
-    classify_bump,
-    parse_version,
-    render_changelog_section,
-)
+import runpy
+from pathlib import Path
+from typing import Any, cast
+
+ROOT = Path(__file__).resolve().parents[2]
+PLANNER = runpy.run_path(str(ROOT / "scripts" / "prepare_auto_release.py"))
+
+Commit = PLANNER["Commit"]
+bump_version = cast(Any, PLANNER["bump_version"])
+classify_bump = cast(Any, PLANNER["classify_bump"])
+parse_version = cast(Any, PLANNER["parse_version"])
+render_changelog_section = cast(Any, PLANNER["render_changelog_section"])
 
 
 def test_semantic_version_bumps() -> None:

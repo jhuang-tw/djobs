@@ -153,13 +153,12 @@ jobs:
             pr_number="$(gh pr view "$release_branch" --json number --jq .number)"
           fi
 
-          gh workflow run ci.yml --ref "$release_branch"
-
-          for attempt in $(seq 1 240); do
+          pr_run_id=""
+          for attempt in $(seq 1 120); do
             run_json="$(gh run list \
               --workflow CI \
               --commit "$release_sha" \
-              --event workflow_dispatch \
+              --event pull_request \
               --limit 1 \
               --json databaseId,status,conclusion \
               --jq '.[0] // empty')"
@@ -169,13 +168,43 @@ jobs:
               continue
             fi
 
+            pr_run_id="$(jq -r '.databaseId' <<<"$run_json")"
             status="$(jq -r '.status' <<<"$run_json")"
             conclusion="$(jq -r '.conclusion // ""' <<<"$run_json")"
-            run_id="$(jq -r '.databaseId' <<<"$run_json")"
+
+            if [ "$conclusion" = "action_required" ]; then
+              gh api --method POST \
+                "repos/${{ github.repository }}/actions/runs/${pr_run_id}/approve"
+              echo "Approved gated release PR CI run $pr_run_id."
+              break
+            fi
+
+            if [ "$status" != "completed" ] || [ "$conclusion" = "success" ]; then
+              break
+            fi
+
+            echo "Release PR CI run $pr_run_id completed with $conclusion" >&2
+            exit 1
+          done
+
+          if [ -z "$pr_run_id" ]; then
+            echo "Timed out waiting for pull-request CI on $release_sha" >&2
+            exit 1
+          fi
+
+          for attempt in $(seq 1 240); do
+            run_json="$(gh api \
+              "repos/${{ github.repository }}/actions/runs/${pr_run_id}")"
+            status="$(jq -r '.status' <<<"$run_json")"
+            conclusion="$(jq -r '.conclusion // ""' <<<"$run_json")"
 
             if [ "$status" = "completed" ]; then
+              if [ "$conclusion" = "action_required" ]; then
+                sleep 2
+                continue
+              fi
               if [ "$conclusion" != "success" ]; then
-                echo "Release PR CI run $run_id completed with $conclusion" >&2
+                echo "Release PR CI run $pr_run_id completed with $conclusion" >&2
                 exit 1
               fi
               break
@@ -184,8 +213,8 @@ jobs:
             sleep 5
           done
 
-          if [ "${status:-}" != "completed" ]; then
-            echo "Timed out waiting for release PR CI on $release_sha" >&2
+          if [ "${status:-}" != "completed" ] || [ "${conclusion:-}" != "success" ]; then
+            echo "Timed out waiting for release PR CI run $pr_run_id" >&2
             exit 1
           fi
 

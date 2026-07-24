@@ -79,7 +79,7 @@ def test_version_sync_and_release_workflow_cover_every_published_surface() -> No
     assert 'server["version"] = version' in planner
     assert "push:\n    branches: [main]" in release
     assert "gh run list" in release
-    assert '--workflow CI' in release
+    assert "--workflow CI" in release
     assert 'conclusion" != "success"' in release
     assert "scripts/prepare_auto_release.py" in release
     assert "vscode-ext/package-lock.json" in release

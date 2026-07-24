@@ -100,5 +100,8 @@ def test_version_sync_and_release_workflow_cover_every_published_surface() -> No
 
     assert "types: [completed]" in approver
     assert "conclusion == 'action_required'" in approver
-    assert "startsWith(github.event.workflow_run.head_branch, 'automation/release-v')" in approver
+    assert (
+        "startsWith(github.event.workflow_run.head_branch, 'automation/release-v')"
+        in approver
+    )
     assert "/actions/runs/${RUN_ID}/approve" in approver

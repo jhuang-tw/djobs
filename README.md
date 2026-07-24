@@ -1,51 +1,81 @@
 <!-- mcp-name: io.github.jhuang-tw/djobs -->
 
-# djobs — project memory for coding agents
+<p align="center">
+  <img src="https://raw.githubusercontent.com/jhuang-tw/djobs/main/vscode-ext/media/icon-128.png" width="104" alt="djobs logo">
+</p>
 
-**Stop explaining the same project every time you open a new AI session.**
+<h1 align="center">djobs</h1>
 
-Yesterday your coding agent read the repository, tried a fix, found why the tests failed, and
-changed several files. Today the chat is gone or the context was compacted, so it starts over.
+<p align="center">
+  <strong>Local project memory and explicit handoff for AI coding agents.</strong><br>
+  Continue the repository instead of explaining it again in every new session.
+</p>
 
-`djobs` keeps a small, local memory for each Git repository so the next session can recover:
+<p align="center">
+  <a href="https://github.com/jhuang-tw/djobs/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/jhuang-tw/djobs/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://pypi.org/project/djobs/"><img alt="PyPI" src="https://img.shields.io/pypi/v/djobs.svg"></a>
+  <a href="https://pypi.org/project/djobs/"><img alt="Python 3.10–3.14" src="https://img.shields.io/badge/Python-3.10%E2%80%933.14-3776AB?logo=python&logoColor=white"></a>
+  <a href="https://marketplace.visualstudio.com/items?itemName=jhuang-tw.djobs"><img alt="VS Code Marketplace" src="https://img.shields.io/visual-studio-marketplace/v/jhuang-tw.djobs?label=VS%20Code"></a>
+  <a href="https://nodejs.org/"><img alt="Node.js 20+ for extension development" src="https://img.shields.io/badge/Node.js-20%2B-339933?logo=node.js&logoColor=white"></a>
+  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-blue.svg"></a>
+</p>
 
-- what you asked for and which constraints matter;
-- which tools succeeded or failed;
-- what changed in the working tree;
-- a compact end-of-session capsule with the goal, progress, failures, and next step.
+<p align="center">
+  <a href="https://jhuang-tw.github.io/djobs/"><img src="https://raw.githubusercontent.com/jhuang-tw/djobs/main/vscode-ext/media/banner.png" width="760" alt="djobs — local project memory for coding agents"></a>
+</p>
 
-It searches those memories using the current request instead of blindly replaying the latest
-chat history. Memory stays in local SQLite. No account, hosted service, or project upload is
-required.
+## Why djobs exists
+
+A coding agent can spend an entire session reading a repository, discovering a failed approach,
+learning a project constraint, editing several files, and leaving one test unfinished. When the
+chat closes or context is compacted, the next session often starts from zero.
+
+`djobs` keeps a small local memory for each Git repository so a later session can recover:
+
+- the user's goal and important constraints;
+- successful and failed tool results;
+- actual Git working-tree changes;
+- a compact session capsule with progress, failures, and the next step;
+- explicit task ownership and handoff evidence when coordinated work needs it.
+
+Memory stays in local SQLite. No hosted account, remote queue, vector database, or project upload
+is required.
 
 ## What continuing work looks like
 
 ```text
 Session 1
-You: Fix the OAuth callback loop. Keep the public auth API and preserve '+' in state.
+You: Fix the OAuth callback loop. Preserve '+' in state and do not change the public API.
 Agent: pytest failed because normalization removed '+'.
-Agent: updated src/auth/callback.py; one integration test remains.
-[context compacts or the session closes]
+Agent: callback parser updated; one integration test remains.
+[chat closes or context compacts]
 
 Session 2
 You: Continue the OAuth fix.
-Agent receives from djobs:
-- Goal: fix the OAuth callback loop without changing the public auth API
-- Failed: state normalization removed '+'
-- Progress: callback parser updated; integration test remains
+djobs recovers:
+- Goal: fix the callback loop without changing the public API
+- Constraint: preserve '+' in state
+- Failed approach: normalization removed '+'
+- Progress: parser updated; integration test remains
 - Current Git changes
 ```
 
-The recovered text is data, not an instruction. The coding agent still follows your current
-request.
+The recovered text is treated as untrusted data, not as an instruction. The current user request
+always remains authoritative.
 
-## Install once, then open any repository
+## Install once
 
-The easiest route for VS Code / GitHub Copilot users is the
-[VS Code extension](https://marketplace.visualstudio.com/items?itemName=jhuang-tw.djobs).
-It registers the local MCP server without adding a sidebar or background polling UI.
+### VS Code / GitHub Copilot
 
-For another MCP host, add this server once:
+Install the **[djobs VS Code extension](https://marketplace.visualstudio.com/items?itemName=jhuang-tw.djobs)**.
+It registers the local MCP server and manages setup, repair, diagnostics, pause, and resume.
+
+There is no required per-project wizard. The first djobs MCP call creates the local database and
+installs only the detected host's passive lifecycle adapter.
+
+### Any MCP-compatible host
+
+Add the server once:
 
 ```json
 {
@@ -58,61 +88,91 @@ For another MCP host, add this server once:
 }
 ```
 
-After the MCP is present, normal Vibe Coding needs no per-project command and no setup wizard.
-The first `djobs` tool call creates `~/.djobs/global.db`, identifies the current Git repository,
-and installs only the detected host's passive lifecycle adapter. Opening another repository
-uses a different local memory automatically. Sibling Git worktrees share passive project memory,
-while explicit task ownership and leases remain isolated to each checkout.
+Manual repair commands remain available for headless or damaged environments:
 
-`djobs setup` and `djobs doctor` remain available only for manual repair or diagnostics in
-headless environments.
+```bash
+pipx install djobs
+# or: uv tool install djobs
 
-## What is saved automatically
+djobs setup
+djobs doctor
+```
 
-| Memory | Example | Changes task ownership? |
-|---|---|---|
-| User intent | “Keep Python 3.10 support; do not replace Zustand.” | No |
-| Tool result | “edit completed — src/parser.py — fallback parser updated” | No |
-| Tool failure | “pytest failed — state normalization removed plus signs” | No |
-| Git observation | Actual tracked, staged, and bounded untracked changes | No |
-| Session capsule | Goal, recent progress, failures, and next step | No |
+## Two layers, kept deliberately separate
 
-Exact duplicate prompts in the same session are ignored. Before context compaction and at real
-session end, djobs creates a deterministic capsule without calling an external model or sending
-repository content anywhere.
+### Passive project memory
 
-## Relevant and current memory
+Normal sessions can record bounded observations without creating or claiming tasks.
 
-Agents should call:
+| Memory | Example |
+|---|---|
+| User intent | “Keep Python 3.10 support.” |
+| Tool result | “Updated `src/parser.py`; focused tests passed.” |
+| Tool failure | “State normalization removed plus signs.” |
+| Git observation | Tracked, staged, and bounded untracked changes |
+| Session capsule | Goal, progress, failures, and next step |
+
+Sibling Git worktrees share passive repository memory. Exact task ownership and leases remain
+isolated to each checkout.
+
+### Explicit checkpoint and handoff
+
+Use explicit ownership only when coordinated work actually needs it:
+
+```text
+checkpoint("Implement parser", path="src/parser.py")
+  -> this checkout owns one expiring lease
+
+handoff(task_id, "Parser updated; edge tests remain", completed=false)
+  -> releases the task with bounded evidence
+```
+
+Passive hooks never silently turn every prompt into a task, claim another agent's work, or infer
+completion from natural-language output.
+
+## Query-aware recovery
+
+Agents normally recover with:
 
 ```text
 sync_workspace(query="the user's current request")
 ```
 
-The query searches repository-family memory with SQLite FTS5 when available and a portable
-bounded fallback otherwise. Older relevant constraints and failed approaches can therefore rank
-above newer unrelated activity.
+The query searches repository-family memory using SQLite FTS5 when available and a bounded
+portable fallback otherwise. Relevant older constraints or failed approaches can rank above newer
+but unrelated activity.
 
-The response includes a `context_hash`. A host that persists it can pass
-`known_context_hash="..."` on the next equivalent recovery. When the selected passive memory is
-unchanged, djobs returns no repeated observations while still returning current task state.
+The response includes a `context_hash`. A host can return it as `known_context_hash` on the next
+equivalent recovery; unchanged passive memory is then suppressed instead of replayed again.
 
-A remembered fact can be marked `resolved`, `superseded`, `stale`, or `contradicted`. It remains
-available for audit, but inactive memory is excluded from normal recall and context injection.
+Memories can be marked `resolved`, `superseded`, `stale`, or `contradicted`. They remain auditable
+but are excluded from ordinary recall.
 
-You can ask the agent naturally:
+## Default MCP tools
+
+| Tool | Purpose |
+|---|---|
+| `sync_workspace(query?, known_context_hash?, ...)` | Recover relevant goals, failures, capsules, task state, and Git observations under a token budget. |
+| `memory(action, ...)` | List, search, deactivate, forget, or explicitly clear passive memory. |
+| `checkpoint(summary, ...)` | Deliberately create or resume one checkout-scoped unit of work. |
+| `handoff(task_id, ...)` | Release or complete tracked work with bounded evidence. |
+| `resume_delta(correlation_id, ...)` | Compatibility path for integrations that already persist revision IDs. |
+
+Lower-level queue and worker tools remain available through `djobs-mcp-full` rather than occupying
+every normal coding context.
+
+## Memory control
+
+Ask the agent naturally:
 
 ```text
-What does djobs remember about the OAuth bug?
+What does djobs remember about the login bug?
 Mark the old OAuth failure as resolved by this commit.
-Forget the memory about the abandoned Redis experiment.
+Forget the abandoned Redis experiment.
 Clear djobs memory for this repository.
 ```
 
-The MCP exposes a `memory` tool for `list`, `search`, `status`, `forget`, and confirmed `clear`
-actions. Clearing passive memory does not delete explicit tracked tasks.
-
-Terminal equivalents are available when useful:
+Terminal equivalents:
 
 ```bash
 djobs memory list
@@ -122,47 +182,15 @@ djobs memory forget MEMORY_ID
 djobs memory clear --yes
 ```
 
-## Privacy controls
+Privacy controls:
 
-- State is stored locally in `~/.djobs/global.db` by default.
-- Common API keys, bearer tokens, passwords, authorization values, and URL credentials are
-  redacted on a best-effort basis before storage.
-- Put `[djobs:no-memory]` in a prompt to skip that prompt.
-- Set `DJOBS_CAPTURE_USER_INTENT=0` to disable automatic prompt-intent memory.
-- Use `memory(action="status", ...)` to deactivate an obsolete fact without deleting its audit
-  history.
-- Use `memory(action="forget", memory_id="...")` to delete one record.
-- Use confirmed `memory(action="clear")` to clear passive memory for the repository family.
-- Stored content is always treated as untrusted data, never executable instructions.
-- Hook, search, or storage failures are fail-open and never block the coding request.
-
-## Recovery benchmarks
-
-The repository includes a deterministic recovery-payload proxy:
-
-```bash
-python scripts/benchmark_project_memory.py
-```
-
-With its default synthetic 18-file fixture, the current implementation compares:
-
-| Recovery strategy | Estimated context | Minimum calls |
-|---|---:|---:|
-| Re-read every synthetic source file | ~7,805 tokens | 18 file reads |
-| Query-aware `sync_workspace` | ~407 tokens | 1 MCP call |
-
-That is a **94.8% recovery-payload proxy reduction** for this fixture. It is intentionally not
-presented as provider billing, latency, or model-quality measurement. The script is included so
-results can be reproduced and challenged instead of treated as a marketing claim.
-
-A second deterministic benchmark checks recovery quality rather than only payload size:
-
-```bash
-python scripts/benchmark_resume_quality.py
-```
-
-It verifies cross-worktree recall, checkout ownership isolation, stale-memory exclusion, and
-unchanged-context replay suppression.
+- database: `~/.djobs/global.db` by default;
+- common API keys, bearer tokens, passwords, authorization values, and URL credentials are
+  redacted on a best-effort basis before storage;
+- `[djobs:no-memory]` skips one prompt;
+- `DJOBS_CAPTURE_USER_INTENT=0` disables automatic prompt-intent capture;
+- stored content is always treated as untrusted data;
+- hook, search, and storage failures are fail-open and never block the coding request.
 
 ## Supported local hosts
 
@@ -172,72 +200,45 @@ unchanged-context replay suppression.
 | Claude Code | `UserPromptSubmit` | session, tool, compact, end | `~/.claude/settings.json` |
 | Gemini CLI | `BeforeAgent` | session, tool, compress, end | `~/.gemini/settings.json` |
 | Kimi Code | `UserPromptSubmit` | session, tool, compact, end | `~/.kimi-code/config.toml` |
-| Codex | Query-aware MCP recovery | supported native session/tool hooks | `~/.codex/hooks.json` |
+| Codex | query-aware MCP recovery | native session/tool hooks when available | `~/.codex/hooks.json` |
 
-Only djobs-managed entries are replaced or removed. Malformed configuration is never
-overwritten automatically. An unidentified host still gets repository-scoped MCP memory; djobs
-simply avoids guessing which hook file to modify.
+Python **3.10–3.14** is tested in CI on Windows, macOS, and Linux. Node.js **20+** is used only to
+build and publish the VS Code extension; end users do not need Node to run the Python MCP server.
 
-Python 3.10+ is supported on Windows, macOS, and Linux.
+## Reproducible recovery benchmarks
 
-## Default MCP tools
+Payload proxy:
 
-The normal server deliberately stays small:
-
-| Tool | Purpose |
-|---|---|
-| `sync_workspace(query?, known_context_hash?, ...)` | Recover relevant goals, failures, capsules, tasks, and Git observations under a token budget; suppress unchanged memory replay. |
-| `memory(action, ...)` | Inspect, search, deactivate, forget, or explicitly clear passive memory for the current repository family. |
-| `checkpoint(summary, ...)` | Explicitly create or resume one checkout-scoped unit of work. |
-| `handoff(task_id, ...)` | Explicitly release or complete tracked work with bounded evidence. |
-| `resume_delta(correlation_id, ...)` | Backward-compatible revision recovery for integrations already storing IDs. |
-
-Lower-level queue and worker tools remain opt-in through `djobs-mcp-full`.
-
-## Advanced: explicit ownership and handoff
-
-Passive memory never creates or claims tasks. Ownership changes only through explicit
-`checkpoint` and `handoff` calls:
-
-```text
-checkpoint("Implement parser", path="src/parser.py")
-  -> this checkout owns one expiring lease
-
-handoff(task_id, "Parser updated; edge tests remain", completed=false)
-  -> releases the work with evidence for a later session
+```bash
+python scripts/benchmark_project_memory.py
 ```
 
-Automatic adapters may heartbeat a task already owned by the same session, but they never:
+With the bundled synthetic 18-file fixture:
 
-- turn every prompt into a task;
-- claim pending work at startup;
-- infer completion from natural-language output;
-- release work when a model turn merely stops;
-- overwrite another client's lease.
+| Recovery strategy | Estimated context | Minimum calls |
+|---|---:|---:|
+| Re-read every synthetic source file | ~7,805 tokens | 18 file reads |
+| Query-aware `sync_workspace` | ~407 tokens | 1 MCP call |
 
-This explicit layer is optional for people who only need project memory.
+That is a **94.8% recovery-payload proxy reduction** for this fixture. It is not presented as
+provider billing, latency, or model-quality measurement.
 
-## Repository identity and storage
+Recovery-quality checks:
 
-Repository resolution uses MCP roots, host cwd, the enclosing Git root, and finally process cwd.
-Windows paths, WSL mounts, and common Git Bash spellings resolve to compatible identities.
-
-Passive memory uses a repository-family identity derived from the normalized Git remote and root
-commit, with the Git common directory as a local fallback. This lets sibling worktrees reuse
-project decisions and prior failures. Explicit tasks, leases, and Git snapshots remain scoped to
-the individual checkout, so parallel lanes do not acquire each other's work.
-
-Default database:
-
-```text
-~/.djobs/global.db
+```bash
+python scripts/benchmark_resume_quality.py
 ```
 
-Override it with `DJOBS_DB`. A repository-specific database is also supported with
-`djobs mcp --db .djobs/state.db`; do not commit the database.
+This benchmark verifies cross-worktree recall, checkout ownership isolation, stale-memory
+exclusion, and unchanged-context replay suppression.
 
-Each repository family retains at most 1,000 recent visible observations by default. Git contents
-are hashed for change detection and are not stored as observation text.
+## Explicit checkpoint demo
+
+The older durable-task flow remains available for work that needs exact checkpoints and handoff:
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/jhuang-tw/djobs/main/docs/demo.svg" width="700" alt="Animated djobs checkpoint and crash-recovery demo">
+</p>
 
 ## Development
 
@@ -245,26 +246,32 @@ are hashed for change detection and are not stored as observation text.
 git clone https://github.com/jhuang-tw/djobs.git
 cd djobs
 python -m venv .venv
-# activate the venv
+# activate the environment
 python -m pip install -e ".[dev,pg]"
 
-ruff check src/ tests/
-ruff format --check src/ tests/
+ruff check src tests scripts/prepare_auto_release.py scripts/extract_release_notes.py
+ruff format --check src tests scripts/prepare_auto_release.py scripts/extract_release_notes.py
 mypy
 pytest -q
-python scripts/benchmark_project_memory.py
-python scripts/benchmark_resume_quality.py
 python -m build
 python -m twine check dist/*
 
 cd vscode-ext
+# Node.js 20+
 npm ci
 npx tsc -p ./ --noEmit
 npm run compile
 ```
 
-See `CONTRIBUTING.md` and `AGENTS.md` before changing public behavior.
+See `CONTRIBUTING.md`, `AGENTS.md`, and `docs/RELEASE.md` before changing public behavior.
+
+## Public packages and documentation
+
+- **PyPI:** https://pypi.org/project/djobs/
+- **VS Code Marketplace:** https://marketplace.visualstudio.com/items?itemName=jhuang-tw.djobs
+- **GitHub Pages:** https://jhuang-tw.github.io/djobs/
+- **Source and issues:** https://github.com/jhuang-tw/djobs
 
 ## License
 
-MIT
+[MIT](LICENSE)

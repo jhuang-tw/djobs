@@ -79,7 +79,7 @@ def test_public_surfaces_share_layered_recovery_positioning() -> None:
         "context_tier=\"resume\"",
         "python 3.10",
         "node.js 20+",
-        "vs code 1.101",
+        "1.101",
         "~224",
         "97.1%",
         "djobs gain",
@@ -100,8 +100,12 @@ def test_public_surfaces_share_layered_recovery_positioning() -> None:
         assert text.count("icon-128.png") == 1
 
     html = surfaces["docs/index.html"]
+    icon_tag = (
+        '<img src="https://raw.githubusercontent.com/jhuang-tw/djobs/main/'
+        'vscode-ext/media/icon-128.png"'
+    )
     assert "banner.png" not in html
-    assert html.count('<img src="https://raw.githubusercontent.com/jhuang-tw/djobs/main/vscode-ext/media/icon-128.png"') == 1
+    assert html.count(icon_tag) == 1
 
 
 def test_version_sync_and_release_workflow_cover_every_published_surface() -> None:

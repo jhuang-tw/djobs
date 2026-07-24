@@ -33,7 +33,7 @@ def test_extracts_only_requested_release_section() -> None:
 
 
 def test_rejects_missing_version_section() -> None:
-    with pytest.raises(ValueError, match="no dated section for 0.17.2"):
+    with pytest.raises(ValueError, match=r"no dated section for 0\.17\.2"):
         extract_release_notes("## [0.17.1] - 2026-07-24\n\n- old\n", "0.17.2")
 
 
@@ -45,5 +45,5 @@ def test_rejects_empty_version_section() -> None:
 - old
 """
 
-    with pytest.raises(ValueError, match="section for 0.17.2 is empty"):
+    with pytest.raises(ValueError, match=r"section for 0\.17\.2 is empty"):
         extract_release_notes(changelog, "0.17.2")

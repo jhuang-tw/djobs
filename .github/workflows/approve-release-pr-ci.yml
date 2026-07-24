@@ -3,7 +3,7 @@ name: Approve automated release PR CI
 on:
   workflow_run:
     workflows: [CI]
-    types: [requested]
+    types: [completed]
 
 permissions:
   actions: write
@@ -13,6 +13,7 @@ jobs:
   approve:
     if: >-
       github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'action_required' &&
       startsWith(github.event.workflow_run.head_branch, 'automation/release-v')
     runs-on: ubuntu-latest
     steps:
@@ -22,25 +23,6 @@ jobs:
           RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
           set -euo pipefail
-          for attempt in $(seq 1 30); do
-            run_json="$(gh api "repos/${{ github.repository }}/actions/runs/${RUN_ID}")"
-            status="$(jq -r '.status' <<<"$run_json")"
-            conclusion="$(jq -r '.conclusion // ""' <<<"$run_json")"
-
-            if [ "$conclusion" = "action_required" ]; then
-              gh api --method POST \
-                "repos/${{ github.repository }}/actions/runs/${RUN_ID}/approve"
-              echo "Approved release PR CI run ${RUN_ID}."
-              exit 0
-            fi
-
-            if [ "$status" != "queued" ] && [ "$status" != "requested" ]; then
-              echo "CI run ${RUN_ID} no longer needs approval: status=${status}, conclusion=${conclusion}."
-              exit 0
-            fi
-
-            sleep 2
-          done
-
-          echo "Timed out waiting for CI run ${RUN_ID} to request approval." >&2
-          exit 1
+          gh api --method POST \
+            "repos/${{ github.repository }}/actions/runs/${RUN_ID}/approve"
+          echo "Approved release PR CI run ${RUN_ID}."

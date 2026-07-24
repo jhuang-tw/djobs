@@ -18,14 +18,15 @@ Read first:
 - Preserve unrelated MCP servers, hook entries, and user configuration.
 - Keep MCP responses compact because every field consumes model context.
 - Add tests for behavior changes and use a clear conventional commit or PR title; the release workflow derives the version and changelog automatically after main CI succeeds.
-- Never manually bump published versions, create release tags, or restore `.github/release.json` during ordinary feature work.
+- Never manually bump published versions, create release tags, restore `.github/release.json`, or push generated release files directly to protected `main` during ordinary feature work.
+- Treat the latest immutable release tag as the published-version authority; release snapshots may intentionally differ from protected `main` metadata.
 - Do not add machine-specific paths, hardcoded test counts, release scratch files, roadmap snapshots, or duplicated architecture documents.
 
 ## Required gates
 
 ```bash
-ruff check src/ tests/
-ruff format --check src/ tests/
+ruff check src/ tests/ scripts/prepare_auto_release.py
+ruff format --check src/ tests/ scripts/prepare_auto_release.py
 mypy
 pytest -q
 python -m build

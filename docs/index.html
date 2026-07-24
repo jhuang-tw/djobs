@@ -3,26 +3,25 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>djobs — Local repository memory for coding agents</title>
-  <meta name="description" content="djobs provides local repository memory, passive observations, compact MCP context, and explicit handoff for coding agents.">
-  <meta name="keywords" content="AI coding agent, local agent memory, repository memory, cross-agent handoff, passive hooks, MCP, GitHub Copilot, Claude Code, Codex, Gemini, Kimi Code">
+  <title>djobs — project memory for coding agents</title>
+  <meta name="description" content="Local project memory that lets coding agents recover goals, failures, decisions, session progress, and Git changes across AI sessions.">
+  <meta name="keywords" content="AI coding agent, Vibe Coding, project memory, repository memory, MCP, GitHub Copilot, Claude Code, Codex, Gemini CLI, Kimi Code">
   <meta name="author" content="jhuang-tw">
   <meta name="robots" content="index, follow, max-image-preview:large">
   <meta name="theme-color" content="#272a3a">
   <link rel="canonical" href="https://jhuang-tw.github.io/djobs/">
-  <meta name="google-site-verification" content="ioDXvGBVsrtGQCvsd5pkSm9ZyYfN_GnipBDsYvz76Go">
 
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="djobs">
   <meta property="og:url" content="https://jhuang-tw.github.io/djobs/">
-  <meta property="og:title" content="djobs — Local repository memory for coding agents">
-  <meta property="og:description" content="Share compact local state across coding agents without turning every prompt or command into a task.">
+  <meta property="og:title" content="djobs — project memory for coding agents">
+  <meta property="og:description" content="Stop explaining the same repository every time you open a new AI session.">
   <meta property="og:image" content="https://raw.githubusercontent.com/jhuang-tw/djobs/main/vscode-ext/media/banner.png">
-  <meta property="og:image:alt" content="djobs local agent memory">
+  <meta property="og:image:alt" content="djobs project memory for coding agents">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="djobs — Local repository memory for coding agents">
-  <meta name="twitter:description" content="Passive local observations, explicit ownership, and four compact MCP tools.">
+  <meta name="twitter:title" content="djobs — project memory for coding agents">
+  <meta name="twitter:description" content="Recover prior goals, failed approaches, progress, and Git changes from local memory.">
   <meta name="twitter:image" content="https://raw.githubusercontent.com/jhuang-tw/djobs/main/vscode-ext/media/banner.png">
 
   <script type="application/ld+json">
@@ -30,7 +29,7 @@
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
     "name": "djobs",
-    "description": "Local repository memory, passive observations, and explicit handoff for coding agents.",
+    "description": "Local project memory for coding agents across AI sessions.",
     "applicationCategory": "DeveloperApplication",
     "operatingSystem": "Windows, macOS, Linux",
     "url": "https://jhuang-tw.github.io/djobs/",
@@ -43,26 +42,28 @@
   </script>
 
   <style>
-    :root { color-scheme: light; --ink:#202330; --muted:#5f6675; --panel:#fff; --paper:#f5f3ed; --line:#dfdcd3; --violet:#6265e7; --dark:#272a3a; }
-    * { box-sizing: border-box; }
+    :root { color-scheme:light; --ink:#202330; --muted:#5f6675; --panel:#fff; --paper:#f5f3ed; --line:#dfdcd3; --violet:#6265e7; --dark:#272a3a; --good:#1f6b47; }
+    * { box-sizing:border-box; }
     body { margin:0; font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; color:var(--ink); background:var(--paper); line-height:1.6; }
     a { color:inherit; }
-    header, main, footer { width:min(1080px, calc(100% - 32px)); margin:auto; }
+    header,main,footer { width:min(1080px,calc(100% - 32px)); margin:auto; }
     nav { display:flex; align-items:center; justify-content:space-between; padding:22px 0; }
     nav strong { font-size:1.2rem; }
     .links { display:flex; gap:18px; flex-wrap:wrap; }
-    .hero { padding:72px 0 50px; display:grid; grid-template-columns:1.2fr .8fr; gap:44px; align-items:center; }
-    h1 { font-size:clamp(2.6rem,7vw,5.5rem); line-height:1; letter-spacing:-.055em; margin:0 0 24px; }
+    .hero { padding:68px 0 50px; display:grid; grid-template-columns:1.08fr .92fr; gap:44px; align-items:center; }
+    h1 { font-size:clamp(2.7rem,7vw,5.5rem); line-height:1; letter-spacing:-.055em; margin:0 0 24px; }
     h2 { font-size:clamp(1.7rem,4vw,2.5rem); letter-spacing:-.03em; margin:0 0 18px; }
     .lead { font-size:1.2rem; color:var(--muted); max-width:760px; }
     .actions { display:flex; gap:12px; flex-wrap:wrap; margin-top:28px; }
     .button { display:inline-block; padding:12px 18px; border-radius:10px; text-decoration:none; font-weight:700; border:1px solid var(--dark); }
     .primary { color:#fff; background:var(--dark); }
-    .terminal { background:#11150f; color:#e8f5e8; border-radius:16px; padding:24px; font:14px/1.8 ui-monospace,SFMono-Regular,Consolas,monospace; box-shadow:0 24px 70px rgba(32,35,48,.18); overflow:auto; }
+    .terminal { background:#11150f; color:#e8f5e8; border-radius:16px; padding:24px; font:14px/1.75 ui-monospace,SFMono-Regular,Consolas,monospace; box-shadow:0 24px 70px rgba(32,35,48,.18); overflow:auto; white-space:pre-wrap; }
+    .terminal b { color:#9de2bb; }
     section { padding:54px 0; }
     .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; }
     .card { background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:24px; }
     .card h3 { margin-top:0; }
+    .metric { font-size:2.4rem; font-weight:800; color:var(--good); letter-spacing:-.04em; }
     .muted { color:var(--muted); }
     code { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; }
     footer { padding:42px 0 60px; color:var(--muted); border-top:1px solid var(--line); }
@@ -81,35 +82,50 @@
   </nav>
   <div class="hero">
     <div>
-      <h1>Continue the work without re-reading the chat.</h1>
-      <p class="lead">djobs gives local coding agents compact repository memory, passive lifecycle observations, and explicit task handoff without a hosted service.</p>
+      <h1>Your next AI session should remember yesterday.</h1>
+      <p class="lead">djobs keeps local memory for each Git repository: what you asked for, what failed, what changed, and what should happen next.</p>
       <div class="actions">
-        <a class="button primary" href="https://github.com/jhuang-tw/djobs">View on GitHub</a>
-        <a class="button" href="https://marketplace.visualstudio.com/items?itemName=jhuang-tw.djobs">Install extension</a>
+        <a class="button primary" href="https://marketplace.visualstudio.com/items?itemName=jhuang-tw.djobs">Install for VS Code</a>
+        <a class="button" href="https://github.com/jhuang-tw/djobs">View source</a>
       </div>
     </div>
-    <div class="terminal">install djobs MCP<br>open your repository<br>start coding<br><br>first MCP call → local memory ready<br>no setup command required</div>
+    <div class="terminal">Session 1
+You → Keep the public auth API.
+pytest → failed: state normalization removed '+'
+edit → callback parser updated
+
+Session 2
+You → Continue the OAuth fix.
+<b>djobs → goal, failure, progress, and Git changes recovered</b></div>
   </div>
 </header>
 <main>
   <section>
-    <h2>Passive context, explicit ownership.</h2>
+    <h2>Memory that follows the repository, not the chat window.</h2>
     <div class="grid">
-      <article class="card"><h3>Zero-touch memory</h3><p>The first MCP tool call creates local memory and installs the detected host adapter automatically. No per-project setup command is required.</p></article>
-      <article class="card"><h3>Explicit handoff</h3><p><code>checkpoint()</code> deliberately claims work, while <code>handoff()</code> explicitly releases or completes it with bounded evidence.</p></article>
-      <article class="card"><h3>Four compact tools</h3><p><code>sync_workspace</code>, <code>checkpoint</code>, <code>handoff</code>, and <code>resume_delta</code> keep ordinary agent context small.</p></article>
-      <article class="card"><h3>Local compatibility</h3><p>Copilot is the default local host, with optional adapters for Codex, Claude Code, Gemini CLI, Kimi Code, and custom agents.</p></article>
+      <article class="card"><h3>User intent</h3><p>Important requests and constraints are saved as passive data, never silently converted into tasks.</p></article>
+      <article class="card"><h3>Session capsules</h3><p>Before compaction or exit, djobs groups the goal, progress, failures, and next step into a compact local capsule.</p></article>
+      <article class="card"><h3>Relevant recall</h3><p>The current request searches older repository memory, so a useful constraint can rank above newer unrelated activity.</p></article>
+      <article class="card"><h3>Memory controls</h3><p>Inspect, search, forget one item, opt out per prompt, or clear passive memory for the current repository.</p></article>
     </div>
   </section>
   <section>
-    <h2>Local by default, conservative by design.</h2>
-    <p class="lead">State stays in SQLite on the user's machine. Adapters fail open, unrelated settings are preserved, observations are treated as untrusted data, and no cloud account or remote queue is required.</p>
+    <h2>One install. No per-project ritual.</h2>
+    <p class="lead">After the MCP is added, the first tool call creates local SQLite memory and installs only the detected host adapter. Open another Git repository and it gets a separate identity automatically.</p>
   </section>
   <section>
-    <h2>One repository identity across local shells.</h2>
-    <p class="lead">Git roots, Windows paths, WSL mounts, and common Git Bash spellings resolve to compatible local identities, so agents can continue the same work without duplicating ownership.</p>
+    <h2>Reproducible, not a marketing number.</h2>
+    <div class="grid">
+      <article class="card"><div class="metric">~7,805</div><p>estimated tokens for re-reading the bundled synthetic 18-file fixture</p></article>
+      <article class="card"><div class="metric">~407</div><p>estimated tokens for one query-aware <code>sync_workspace</code> recovery</p></article>
+    </div>
+    <p class="muted">A 94.8% recovery-payload proxy reduction in the bundled deterministic fixture. Not provider billing, latency, or model-quality measurement.</p>
+  </section>
+  <section>
+    <h2>Local and inspectable.</h2>
+    <p class="lead">Memory stays in <code>~/.djobs/global.db</code>. Common credentials are redacted on a best-effort basis, stored text is treated as untrusted data, and failures remain fail-open. No cloud account or remote queue is required.</p>
   </section>
 </main>
-<footer>MIT licensed. Source, documentation, compatibility details, and issue tracking live in the GitHub repository.</footer>
+<footer>MIT licensed. Python 3.10+. Source, benchmarks, privacy controls, compatibility details, and issue tracking are in the GitHub repository.</footer>
 </body>
 </html>

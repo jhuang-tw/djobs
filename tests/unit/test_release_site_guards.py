@@ -95,7 +95,7 @@ def test_marketplace_metadata_matches_product_positioning() -> None:
     positioning = f"{package['displayName']} {package['description']}".lower()
     assert "local" in positioning
     assert "memory" in positioning
-    assert "handoff" in positioning
+    assert "project" in positioning
     assert "Machine Learning" in package["categories"]
     assert 1 <= len(package["keywords"]) <= 30
     assert package["homepage"] == "https://jhuang-tw.github.io/djobs/"

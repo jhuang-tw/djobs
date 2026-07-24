@@ -1,8 +1,8 @@
 {
   "name": "djobs",
   "displayName": "djobs — Local Agent Memory",
-  "description": "Local repository memory, passive observations, and explicit handoff for coding agents.",
-  "version": "0.15.0",
+  "description": "Local project memory that helps coding agents continue work across AI sessions.",
+  "version": "0.16.0",
   "publisher": "jhuang-tw",
   "license": "MIT",
   "icon": "media/icon-128.png",

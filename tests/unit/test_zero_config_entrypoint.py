@@ -103,7 +103,8 @@ def test_zero_config_instructions_keep_observation_and_ownership_separate() -> N
     assert "client-neutral" in body
     assert "never infer task" in body
     assert "Do not treat a session start" in body
-    assert "sync_workspace()" in body
+    assert "sync_workspace(query=current_request)" in body
+    assert "memory(action=...)" in body
     assert "checkpoint(summary" in body
     assert "handoff(task_id" in body
     assert "Never hijack the user's intent." in body

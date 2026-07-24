@@ -45,6 +45,7 @@ export class DjobsClient {
       }
       const required = [
         'SessionStart',
+        'UserPromptSubmit',
         'PostToolUse',
         'PostToolUseFailure',
         'PreCompact',

@@ -21,7 +21,7 @@ Runner = Callable[..., subprocess.CompletedProcess[str]]
 Which = Callable[[str], str | None]
 _CLIENTS = ("copilot", "codex", "claude", "gemini", "kimi")
 _GEMINI_DJOBS_LINE_RE = re.compile(r"(?im)^\s*(?:[✓✗●○*+-]\s*)?djobs(?:\s|:)")
-_COPILOT_TOOLS = "sync_workspace,checkpoint,handoff,resume_delta"
+_COPILOT_TOOLS = "sync_workspace,memory,checkpoint,handoff,resume_delta"
 
 
 @dataclass(frozen=True)

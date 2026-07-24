@@ -1,51 +1,64 @@
-# djobs — Local Agent Memory
+# djobs — Project Memory for Coding Agents
 
-![djobs local agent memory](https://raw.githubusercontent.com/jhuang-tw/djobs/main/vscode-ext/media/banner.png)
+![djobs project memory](https://raw.githubusercontent.com/jhuang-tw/djobs/main/vscode-ext/media/banner.png)
 
-**Local repository memory, passive observations, and explicit handoff for coding agents.**
+**Open a new AI session and continue the repository instead of explaining it again.**
 
-The extension is intentionally headless. It does not add an Activity Bar icon, task
-sidebar, polling loop, background dashboard, remote service, or cloud database.
+The extension gives GitHub Copilot and VS Code Agent local repository memory without adding a
+sidebar, dashboard, polling loop, remote service, or cloud database.
+
+## What it remembers
+
+- the user's bounded, redacted intent and important constraints;
+- successful and failed tool results;
+- actual Git working-tree changes;
+- a compact session capsule before context compaction or exit.
+
+When the next request arrives, `sync_workspace(query=...)` searches relevant memories instead
+of returning only the newest activity.
 
 ## Zero-touch start
 
-When the local djobs engine is already available, install the extension and start using
-Copilot or VS Code Agent normally. The first djobs MCP tool call creates local memory and
-silently installs the passive Copilot lifecycle adapter. There is no per-project setup
-command.
+Install the extension and use Copilot normally. The first djobs MCP call creates
+`~/.djobs/global.db` and silently installs the passive Copilot lifecycle adapter. There is no
+per-project setup command.
 
-The **djobs: Set up / Repair djobs** command remains a fallback when the Python package is
-missing, an old MCP launch path needs repair, or diagnostics report a damaged installation.
-The adapter records session, tool-result, compaction, and session-end observations in local
-SQLite. It does not turn prompts or commands into tasks.
+**djobs: Set up / Repair djobs** remains a fallback when Python is missing, an old launch path
+needs repair, or diagnostics find a damaged installation.
 
-## Four compact tools
+## Five compact tools
 
-- `sync_workspace()` reads repository tasks and recent observations without claiming work.
-- `checkpoint(...)` deliberately creates or resumes one task and claims its lease.
-- `handoff(...)` explicitly releases or completes owned work with bounded evidence.
+- `sync_workspace(query?, ...)` recovers relevant goals, failures, capsules, tasks, and Git changes.
+- `memory(...)` lists, searches, forgets, or explicitly clears passive repository memory.
+- `checkpoint(...)` deliberately creates or resumes one tracked task and claims its lease.
+- `handoff(...)` explicitly releases or completes tracked work with bounded evidence.
 - `resume_delta(...)` preserves compatibility for integrations already storing revision IDs.
 
-Lower-level queue and administration tools remain available through `djobs-mcp-full`,
-not in every ordinary VS Code Agent context.
+Passive memory never creates or claims tasks. Lower-level queue and administration tools remain
+available through `djobs-mcp-full`, not in every ordinary Agent context.
+
+## Memory control
+
+Ask Copilot naturally:
+
+```text
+What does djobs remember about the login bug?
+Forget the memory about the abandoned Redis approach.
+Clear djobs memory for this repository.
+```
+
+Put `[djobs:no-memory]` in a prompt to skip that prompt. Set
+`DJOBS_CAPTURE_USER_INTENT=0` to disable automatic prompt-intent memory globally.
 
 ## Commands
 
-- **djobs: Set up / Repair djobs** — install or update the engine, passive hook, and native MCP registration.
+- **djobs: Set up / Repair djobs** — install or update the engine, hooks, and native MCP registration.
 - **djobs: Diagnose Setup** — verify runtime, MCP, local database, and hook health.
 - **djobs: Pause djobs** — temporarily disable djobs operations without deleting state.
 - **djobs: Resume djobs** — re-enable djobs.
 
-## Compatibility
+## Privacy
 
-The extension's native MCP provider and passive Copilot hook document are covered by
-automated tests. Codex, Claude Code, Gemini CLI, Kimi Code, and custom local agents can
-use the same core through their optional adapters. Real host installation still depends
-on the host version and local environment, so diagnostics remain available.
-
-## Privacy and control
-
-State stays on the user's machine. The default shared database is
-`~/.djobs/global.db`, and a workspace-specific path is optional. Hook failures are
-fail-open, unrelated settings are preserved, and no observation or task state is
-uploaded by djobs.
+State stays on the user's machine. Common credentials are redacted on a best-effort basis, hook
+failures are fail-open, unrelated settings are preserved, and no memory or task state is uploaded
+by djobs.

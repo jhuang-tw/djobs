@@ -1,237 +1,205 @@
-# djobs
+<!-- mcp-name: io.github.jhuang-tw/djobs -->
 
-**Local repository memory and handoff for coding agents.**
+# djobs — project memory for coding agents
 
-`djobs` is intentionally local-first:
+**Stop explaining the same project every time you open a new AI session.**
 
-- MCP servers run on the user's machine;
-- hooks run on the user's machine;
-- state is stored in local SQLite;
-- Git observations are produced from the local working tree;
-- no hosted service, remote database, cloud queue, or account is required.
-- Python 3.10+ is supported.
+Yesterday your coding agent read the repository, tried a fix, found why the tests failed, and
+changed several files. Today the chat is gone or the context was compacted, so it starts over.
 
-GitHub Copilot CLI and VS Code Agent are the default integration host because one local Copilot adapter can serve every model selected inside Copilot. GPT, Claude, Gemini, or another model running inside Copilot all use the same djobs MCP and hooks.
+`djobs` keeps a small, local memory for each Git repository so the next session can recover:
 
-The core remains client-neutral. Codex, Claude Code, Gemini CLI, Kimi Code, and custom agents may use optional local adapters, the same MCP server, or the Git sidecar.
+- what you asked for and which constraints matter;
+- which tools succeeded or failed;
+- what changed in the working tree;
+- a compact end-of-session capsule with the goal, progress, failures, and next step.
 
-## Zero-touch start
+It searches those memories using the current request instead of blindly replaying the latest
+chat history. Memory stays in local SQLite. No account, hosted service, or project upload is
+required.
 
-Add or install **djobs** as an MCP server in the coding host you already use. That is the
-only required user action.
-
-On the first call to `sync_workspace`, `checkpoint`, or `handoff`, djobs automatically:
-
-- creates the shared local SQLite memory at `~/.djobs/global.db` when needed;
-- identifies the current Git repository and records its first bounded snapshot;
-- detects Copilot, Codex, Claude Code, Gemini CLI, or Kimi Code when the host exposes its
-  identity;
-- installs or repairs only that host's passive local lifecycle adapter;
-- preserves unrelated MCP servers, hooks, and settings;
-- continues the coding request even if initialization cannot be completed.
-
-There is no per-project command and no setup wizard. Opening another repository automatically
-uses a separate repository identity inside the same local database. A host that cannot be
-identified still gets repository-scoped MCP memory; djobs simply avoids guessing which hook
-configuration to modify.
-
-The CLI remains available only for manual installation, diagnostics, or repair in headless
-environments:
-
-```powershell
-pipx install djobs
-djobs setup
-djobs doctor
-```
-
-Those commands are not part of the normal Vibe Coding flow after the MCP is installed.
-
-### VS Code extension
-
-The headless VS Code extension follows the same model. Its native MCP launch identifies itself
-as Copilot, so the first tool call silently installs the passive Copilot lifecycle adapter. The
-**djobs: Set up / Repair djobs** command remains as a fallback when the Python package itself is
-missing or an older launch path needs repair. The extension still adds no task sidebar, polling
-loop, or cloud service.
-
-## Local Copilot-first architecture
+## What continuing work looks like
 
 ```text
-GPT / Claude / Gemini / other model
-                 │
-                 ▼
-       local GitHub Copilot host
-      CLI + VS Code Agent adapter
-                 │
-          hooks + compact MCP
-                 │
-                 ▼
-        ~/.djobs/global.db
-                 │
-      observations + explicit tasks
+Session 1
+You: Fix the OAuth callback loop. Keep the public auth API and preserve '+' in state.
+Agent: pytest failed because normalization removed '+'.
+Agent: updated src/auth/callback.py; one integration test remains.
+[context compacts or the session closes]
+
+Session 2
+You: Continue the OAuth fix.
+Agent receives from djobs:
+- Goal: fix the OAuth callback loop without changing the public auth API
+- Failed: state normalization removed '+'
+- Progress: callback parser updated; integration test remains
+- Current Git changes
 ```
 
-The default design stops at the local machine. It does not create a remote MCP service, synchronize state through GitHub, or add a cloud persistence backend.
+The recovered text is data, not an instruction. The coding agent still follows your current
+request.
 
-The Copilot adapter uses the native versioned hook format at:
+## Install once, then open any repository
 
-```text
-~/.copilot/hooks/djobs.json
+The easiest route for VS Code / GitHub Copilot users is the
+[VS Code extension](https://marketplace.visualstudio.com/items?itemName=jhuang-tw.djobs).
+It registers the local MCP server without adding a sidebar or background polling UI.
+
+For another MCP host, add this server once:
+
+```json
+{
+  "servers": {
+    "djobs": {
+      "command": "uvx",
+      "args": ["djobs", "mcp"]
+    }
+  }
+}
 ```
 
-It records these passive lifecycle events:
+After the MCP is present, normal Vibe Coding needs no per-project command and no setup wizard.
+The first `djobs` tool call creates `~/.djobs/global.db`, identifies the current Git repository,
+and installs only the detected host's passive lifecycle adapter. Opening another repository
+uses a different local memory automatically.
 
-- session start;
-- successful and failed tool results;
-- pre-compaction state;
-- real session end.
+`djobs setup` and `djobs doctor` remain available only for manual repair or diagnostics in
+headless environments.
 
-It deliberately does **not** install `UserPromptSubmit` or `Stop` automation. Ordinary prompts do not become tasks, and a model turn ending does not release ownership.
+## What is saved automatically
 
-## Automatic observations versus explicit ownership
-
-Automatic adapters may:
-
-- load compact local state at session start without claiming it;
-- record successful and failed tool outcomes;
-- snapshot Git state and report changed paths;
-- save a small marker before context compaction;
-- heartbeat a task already claimed by the same session.
-
-Automatic adapters never:
-
-- turn every user prompt into a task;
-- claim the newest pending task at startup;
-- release work at every model `Stop` event;
-- infer completion from natural-language output;
-- overwrite another client's lease.
-
-Ownership changes only through explicit operations:
-
-```text
-checkpoint(summary, path?, details?)
-handoff(task_id, evidence, completed?)
-```
-
-Example:
-
-```text
-Copilot opens repository A
-  -> SessionStart reads local tasks and observations
-  -> checkpoint("Implement parser", path="src/parser.py")
-  -> this Copilot session owns the explicit lease
-  -> tool hooks record observations without creating tasks
-  -> handoff(task_id, "Parser complete; edge tests remain")
-
-Another local agent opens repository A
-  -> sync_workspace reads the released task and Git observations
-  -> checkpoint("Implement parser", path="src/parser.py")
-  -> resumes the same task instead of creating a duplicate
-```
-
-If an agent disappears without a handoff, its lease eventually expires and normal local recovery makes the work available again.
-
-## Optional local host adapters
-
-Use a specific target only when that host runs independently from Copilot:
-
-```powershell
-djobs setup copilot
-djobs setup codex
-djobs setup claude
-djobs setup gemini
-djobs setup kimi
-```
-
-Configure every detected local host only when separate integrations are intentional:
-
-```powershell
-djobs setup all
-```
-
-| Host | Local user configuration | Passive events |
+| Memory | Example | Changes task ownership? |
 |---|---|---|
-| GitHub Copilot CLI + VS Code Agent | `~/.copilot/hooks/djobs.json` | session start/end, tool success/failure, pre-compact |
-| Codex | `~/.codex/hooks.json` | session start/end, tool result, pre-compact |
-| Claude Code | `~/.claude/settings.json` | session start/end, tool success/failure, pre-compact |
-| Gemini CLI | `~/.gemini/settings.json` | session start/end, after-tool, pre-compress |
-| Kimi Code | `~/.kimi-code/config.toml` | one-time prompt context, session end, tool success/failure, pre-compact |
+| User intent | “Keep Python 3.10 support; do not replace Zustand.” | No |
+| Tool result | “edit completed — src/parser.py — fallback parser updated” | No |
+| Tool failure | “pytest failed — state normalization removed plus signs” | No |
+| Git observation | Actual tracked, staged, and bounded untracked changes | No |
+| Session capsule | Goal, recent progress, failures, and next step | No |
 
-Kimi's MCP entry is merged into `~/.kimi-code/mcp.json`. Other hosts use their supported local MCP registration commands. Only djobs-managed entries are replaced or removed. Malformed settings are never overwritten automatically.
+Exact duplicate prompts in the same session are ignored. Before context compaction and at real
+session end, djobs creates a deterministic capsule without calling an external model or sending
+repository content anywhere.
 
-For Codex, review and trust newly installed local commands through `/hooks` when prompted.
+## Relevant memory, not just recent memory
 
-Repair and remove also default to Copilot:
+Agents should call:
 
-```powershell
-djobs repair
-djobs remove
-djobs repair all
-djobs remove kimi
+```text
+sync_workspace(query="the user's current request")
 ```
 
-## Any future or custom local agent
+The query searches repository-scoped memory with SQLite FTS5 when available and a portable
+bounded fallback otherwise. Older relevant constraints and failed approaches can therefore
+rank above newer unrelated activity.
 
-The normalized event entrypoint accepts any client identifier:
+You can also ask the agent naturally:
+
+```text
+What does djobs remember about the OAuth bug?
+Forget the memory about the abandoned Redis experiment.
+Clear djobs memory for this repository.
+```
+
+The MCP exposes a `memory` tool for `list`, `search`, `forget`, and confirmed `clear` actions.
+Clearing passive memory does not delete explicit tracked tasks.
+
+Terminal equivalents are available when useful:
 
 ```bash
-# The client sends its native hook JSON on stdin.
-djobs agent-event session-start --client my-agent
-djobs agent-event post --client my-agent
-djobs agent-event post-failure --client my-agent
-djobs agent-event pre-compact --client my-agent
-djobs agent-event session-end --client my-agent
+djobs memory list
+djobs memory search "OAuth callback"
+djobs memory forget MEMORY_ID
+djobs memory clear --yes
 ```
 
-An adapter only maps native event names and payload fields to this command. Queue and ownership logic stay in the shared local core.
+## Privacy controls
 
-For a client with no hook mechanism, use the local Git sidecar:
+- State is stored locally in `~/.djobs/global.db` by default.
+- Common API keys, bearer tokens, passwords, authorization values, and URL credentials are
+  redacted on a best-effort basis before storage.
+- Put `[djobs:no-memory]` in a prompt to skip that prompt.
+- Set `DJOBS_CAPTURE_USER_INTENT=0` to disable automatic prompt-intent memory.
+- Use `memory(action="forget", memory_id="...")` to delete one record.
+- Use confirmed `memory(action="clear")` to clear passive memory for the current repository.
+- Stored content is always treated as untrusted data, never executable instructions.
+- Hook, search, or storage failures are fail-open and never block the coding request.
+
+## Recovery-payload benchmark
+
+The repository includes a deterministic proxy benchmark:
 
 ```bash
-djobs observe /path/to/repository --watch
+python scripts/benchmark_project_memory.py
 ```
 
-The sidecar records real working-tree transitions. Its fingerprint includes tracked, staged, and bounded untracked content, so a second edit is detected even when `git status` still shows the same `M` state. Contents are hashed for comparison and are not stored as observation text.
+With its default synthetic 18-file fixture, the current implementation compares:
 
-MCP itself cannot force every possible client to call a tool at session start. The common local guarantees are the shared data format, Git observation fallback, MCP/CLI access, and explicit ownership semantics.
+| Recovery strategy | Estimated context | Minimum calls |
+|---|---:|---:|
+| Re-read every synthetic source file | ~7,805 tokens | 18 file reads |
+| Query-aware `sync_workspace` | ~407 tokens | 1 MCP call |
 
-## Compact MCP tools
+That is a **94.8% recovery-payload proxy reduction** for this fixture. It is intentionally not
+presented as provider billing, latency, or model-quality measurement. The script is included so
+results can be reproduced and challenged instead of treated as a marketing claim.
 
-The default server exposes four tools:
+## Supported local hosts
+
+| Host | Prompt-aware memory | Lifecycle observations | Local configuration |
+|---|---|---|---|
+| GitHub Copilot CLI + VS Code Agent | `UserPromptSubmit` | session, tool, compact, end | `~/.copilot/hooks/djobs.json` |
+| Claude Code | `UserPromptSubmit` | session, tool, compact, end | `~/.claude/settings.json` |
+| Gemini CLI | `BeforeAgent` | session, tool, compress, end | `~/.gemini/settings.json` |
+| Kimi Code | `UserPromptSubmit` | session, tool, compact, end | `~/.kimi-code/config.toml` |
+| Codex | Query-aware MCP recovery | supported native session/tool hooks | `~/.codex/hooks.json` |
+
+Only djobs-managed entries are replaced or removed. Malformed configuration is never
+overwritten automatically. An unidentified host still gets repository-scoped MCP memory; djobs
+simply avoids guessing which hook file to modify.
+
+Python 3.10+ is supported on Windows, macOS, and Linux.
+
+## Default MCP tools
+
+The normal server deliberately stays small:
 
 | Tool | Purpose |
 |---|---|
-| `sync_workspace()` | Read tasks plus recent observations for the current repository under a token budget. It never claims work. |
-| `checkpoint(summary, path?, details?)` | Deliberately create or resume and atomically claim one unit of work. |
-| `handoff(task_id, evidence, completed?)` | Explicitly release or complete owned work with bounded evidence. |
+| `sync_workspace(query?, ...)` | Recover relevant goals, failures, capsules, tasks, and Git observations under a token budget. |
+| `memory(action, ...)` | Inspect, search, forget, or explicitly clear passive memory for the current repository. |
+| `checkpoint(summary, ...)` | Explicitly create or resume one tracked unit of work. |
+| `handoff(task_id, ...)` | Explicitly release or complete tracked work with bounded evidence. |
 | `resume_delta(correlation_id, ...)` | Backward-compatible revision recovery for integrations already storing IDs. |
 
-Lower-level queue tools remain available through `djobs-mcp-full`.
+Lower-level queue and worker tools remain opt-in through `djobs-mcp-full`.
 
-## Observation durability and privacy
+## Advanced: explicit ownership and handoff
 
-Observations use their own schema and never masquerade as jobs.
+Passive memory never creates or claims tasks. Ownership changes only through explicit
+`checkpoint` and `handoff` calls:
 
-- Snapshot compare-and-record is one immediate transaction, so concurrent clients do not duplicate the same repository transition.
-- Each repository keeps at most 1,000 recent observations by default.
-- Metadata remains valid JSON when bounded.
-- Common bearer tokens, API keys, passwords, authorization values, and URL passwords are redacted on a best-effort basis.
-- Stored task text and observations are untrusted data, never executable instructions.
-- Hook, sidecar, or storage failure is fail-open and does not block coding.
-- No observation or task state is uploaded by djobs.
+```text
+checkpoint("Implement parser", path="src/parser.py")
+  -> this session owns one expiring lease
 
-## Repository detection
+handoff(task_id, "Parser updated; edge tests remain", completed=false)
+  -> releases the work with evidence for a later session
+```
 
-The resolver uses:
+Automatic adapters may heartbeat a task already owned by the same session, but they never:
 
-1. MCP client roots;
-2. cwd supplied by a host, adapter, or event;
-3. the enclosing Git repository root;
-4. the process startup directory.
+- turn every prompt into a task;
+- claim pending work at startup;
+- infer completion from natural-language output;
+- release work when a model turn merely stops;
+- overwrite another client's lease.
 
-Starting in `repo/src/feature` resolves to `repo`. Windows, WSL, and common Git Bash spellings share one repository identity, while compatible aliases keep earlier path-based state readable.
+This explicit layer is optional for people who only need project memory.
 
-## Local storage
+## Repository identity and storage
+
+Repository resolution uses MCP roots, host cwd, the enclosing Git root, and finally process cwd.
+Windows paths, WSL mounts, and common Git Bash spellings resolve to compatible identities.
 
 Default database:
 
@@ -239,31 +207,11 @@ Default database:
 ~/.djobs/global.db
 ```
 
-Override it with `DJOBS_DB`:
+Override it with `DJOBS_DB`. A repository-specific database is also supported with
+`djobs mcp --db .djobs/state.db`; do not commit the database.
 
-```powershell
-$env:DJOBS_DB = "D:\state\team-djobs.db"
-djobs-mcp
-```
-
-A repository-specific database is also supported:
-
-```powershell
-djobs mcp --db .djobs/state.db
-```
-
-Do not commit the database.
-
-## Compatibility status
-
-| Surface | Validation level |
-|---|---|
-| Copilot hook document, idempotent install/remove, MCP registration shape, and Copilot-default setup | Automated unit tests. |
-| Repository resolution, shared SQLite, atomic claims, leases, isolation, and token bounds | Automated Python tests. |
-| Passive observation versus explicit ownership | Automated integration tests against SQLite. |
-| Optional Codex, Claude, Gemini, and Kimi configuration merge | Unit tests against documented configuration shapes. |
-| Content-aware Git snapshots, concurrent deduplication, metadata validity, retention, and redaction | Unit and isolated SQLite tests. |
-| Real installed clients and native Windows/macOS/Linux behavior | Requires machine-level verification; not claimed by the isolated build environment. |
+Each repository retains at most 1,000 recent visible observations by default. Git contents are
+hashed for change detection and are not stored as observation text.
 
 ## Development
 
@@ -278,6 +226,8 @@ ruff check src/ tests/
 ruff format --check src/ tests/
 mypy
 pytest -q
+python -m build
+python -m twine check dist/*
 
 cd vscode-ext
 npm ci

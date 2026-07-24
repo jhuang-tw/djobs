@@ -53,7 +53,7 @@ def test_claude_adapter_merge_is_idempotent_and_preserves_settings(tmp_path: Pat
     saved = json.loads(content)
     assert saved["permissions"] == {"allow": ["Read"]}
     assert "echo keep" in content
-    assert content.count("djobs.hook_entrypoint") == 5
+    assert content.count("djobs.hook_entrypoint") == 6
     handler = saved["hooks"]["SessionEnd"][-1]["hooks"][0]
     assert handler["command"] == sys.executable
     assert handler["args"][0:3] == ["-m", "djobs.hook_entrypoint", "session-end"]
@@ -64,8 +64,14 @@ def test_gemini_adapter_uses_native_events_without_invalid_lifecycle_matchers(
 ) -> None:
     result = install_host_hooks("gemini", tmp_path / "shared.db", home=tmp_path)
     saved = json.loads(Path(result["path"]).read_text(encoding="utf-8"))
-    assert set(saved["hooks"]) >= {"SessionStart", "AfterTool", "PreCompress", "SessionEnd"}
-    for event in ("SessionStart", "PreCompress", "SessionEnd"):
+    assert set(saved["hooks"]) >= {
+        "SessionStart",
+        "BeforeAgent",
+        "AfterTool",
+        "PreCompress",
+        "SessionEnd",
+    }
+    for event in ("SessionStart", "BeforeAgent", "PreCompress", "SessionEnd"):
         assert "matcher" not in saved["hooks"][event][0]
     handler = saved["hooks"]["AfterTool"][0]["hooks"][0]
     assert handler["timeout"] == 15000

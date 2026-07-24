@@ -1,0 +1,22 @@
+name: Temporary project-memory export
+
+on:
+  push:
+    branches:
+      - feature/project-memory-core
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Archive exact source
+        run: git archive --format=zip --output=djobs-source.zip HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: djobs-project-memory-source
+          path: djobs-source.zip
+          retention-days: 1

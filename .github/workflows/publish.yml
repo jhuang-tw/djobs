@@ -247,11 +247,15 @@ jobs:
           gh pr merge "$pr_number" --squash --delete-branch
           merged_sha="$(gh pr view "$pr_number" --json mergeCommit --jq .mergeCommit.oid)"
 
+          # Merges performed with GITHUB_TOKEN do not emit a recursive push workflow.
+          # Dispatch CI explicitly on main, then bind the run to the exact merge SHA.
+          gh workflow run ci.yml --ref main
+
           for attempt in $(seq 1 180); do
             run_json="$(gh run list \
               --workflow CI \
               --commit "$merged_sha" \
-              --event push \
+              --event workflow_dispatch \
               --limit 1 \
               --json databaseId,status,conclusion \
               --jq '.[0] // empty')"

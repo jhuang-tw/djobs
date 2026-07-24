@@ -3,25 +3,26 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>djobs — project memory for coding agents</title>
-  <meta name="description" content="Local project memory that lets coding agents recover goals, failures, decisions, session progress, and Git changes across AI sessions.">
-  <meta name="keywords" content="AI coding agent, Vibe Coding, project memory, repository memory, MCP, GitHub Copilot, Claude Code, Codex, Gemini CLI, Kimi Code">
+  <title>djobs — local project memory for AI coding agents</title>
+  <meta name="description" content="djobs gives coding agents local repository memory, query-aware recovery, and explicit handoff across AI sessions. Python 3.10–3.14, MCP, SQLite, VS Code, and multiple coding-agent hosts.">
+  <meta name="keywords" content="AI coding agent, project memory, repository memory, MCP, GitHub Copilot, Claude Code, Codex, Gemini CLI, Kimi Code, VS Code, Python, SQLite">
   <meta name="author" content="jhuang-tw">
   <meta name="robots" content="index, follow, max-image-preview:large">
   <meta name="theme-color" content="#272a3a">
   <link rel="canonical" href="https://jhuang-tw.github.io/djobs/">
+  <meta name="google-site-verification" content="ioDXvGBVsrtGQCvsd5pkSm9ZyYfN_GnipBDsYvz76Go">
 
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="djobs">
   <meta property="og:url" content="https://jhuang-tw.github.io/djobs/">
-  <meta property="og:title" content="djobs — project memory for coding agents">
-  <meta property="og:description" content="Stop explaining the same repository every time you open a new AI session.">
+  <meta property="og:title" content="djobs — local project memory for AI coding agents">
+  <meta property="og:description" content="Continue the repository instead of explaining it again in every AI session.">
   <meta property="og:image" content="https://raw.githubusercontent.com/jhuang-tw/djobs/main/vscode-ext/media/banner.png">
-  <meta property="og:image:alt" content="djobs project memory for coding agents">
+  <meta property="og:image:alt" content="djobs local project memory for coding agents">
 
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="djobs — project memory for coding agents">
-  <meta name="twitter:description" content="Recover prior goals, failed approaches, progress, and Git changes from local memory.">
+  <meta name="twitter:title" content="djobs — local project memory for AI coding agents">
+  <meta name="twitter:description" content="Recover goals, constraints, failed approaches, progress, and Git changes from local repository memory.">
   <meta name="twitter:image" content="https://raw.githubusercontent.com/jhuang-tw/djobs/main/vscode-ext/media/banner.png">
 
   <script type="application/ld+json">
@@ -29,7 +30,7 @@
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
     "name": "djobs",
-    "description": "Local project memory for coding agents across AI sessions.",
+    "description": "Local project memory and explicit handoff for AI coding agents across sessions.",
     "applicationCategory": "DeveloperApplication",
     "operatingSystem": "Windows, macOS, Linux",
     "url": "https://jhuang-tw.github.io/djobs/",
@@ -42,90 +43,422 @@
   </script>
 
   <style>
-    :root { color-scheme:light; --ink:#202330; --muted:#5f6675; --panel:#fff; --paper:#f5f3ed; --line:#dfdcd3; --violet:#6265e7; --dark:#272a3a; --good:#1f6b47; }
-    * { box-sizing:border-box; }
-    body { margin:0; font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; color:var(--ink); background:var(--paper); line-height:1.6; }
-    a { color:inherit; }
-    header,main,footer { width:min(1080px,calc(100% - 32px)); margin:auto; }
-    nav { display:flex; align-items:center; justify-content:space-between; padding:22px 0; }
-    nav strong { font-size:1.2rem; }
-    .links { display:flex; gap:18px; flex-wrap:wrap; }
-    .hero { padding:68px 0 50px; display:grid; grid-template-columns:1.08fr .92fr; gap:44px; align-items:center; }
-    h1 { font-size:clamp(2.7rem,7vw,5.5rem); line-height:1; letter-spacing:-.055em; margin:0 0 24px; }
-    h2 { font-size:clamp(1.7rem,4vw,2.5rem); letter-spacing:-.03em; margin:0 0 18px; }
-    .lead { font-size:1.2rem; color:var(--muted); max-width:760px; }
-    .actions { display:flex; gap:12px; flex-wrap:wrap; margin-top:28px; }
-    .button { display:inline-block; padding:12px 18px; border-radius:10px; text-decoration:none; font-weight:700; border:1px solid var(--dark); }
-    .primary { color:#fff; background:var(--dark); }
-    .terminal { background:#11150f; color:#e8f5e8; border-radius:16px; padding:24px; font:14px/1.75 ui-monospace,SFMono-Regular,Consolas,monospace; box-shadow:0 24px 70px rgba(32,35,48,.18); overflow:auto; white-space:pre-wrap; }
-    .terminal b { color:#9de2bb; }
-    section { padding:54px 0; }
-    .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; }
-    .card { background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:24px; }
-    .card h3 { margin-top:0; }
-    .metric { font-size:2.4rem; font-weight:800; color:var(--good); letter-spacing:-.04em; }
-    .muted { color:var(--muted); }
-    code { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; }
-    footer { padding:42px 0 60px; color:var(--muted); border-top:1px solid var(--line); }
-    @media (max-width:760px) { .hero,.grid { grid-template-columns:1fr; } .hero { padding-top:40px; } }
+    :root {
+      color-scheme: light;
+      --paper: #f4f2ec;
+      --panel: #fffdf9;
+      --ink: #23252f;
+      --muted: #626876;
+      --line: #e2ded4;
+      --line-soft: #ece8df;
+      --navy: #272a3a;
+      --term: #101410;
+      --violet: #6d6ff1;
+      --violet-deep: #5557d6;
+      --lavender: #b3a6ef;
+      --green: #34a368;
+      --green-dark: #23734a;
+      --grad: linear-gradient(135deg, #6d6ff1 0%, #b3a6ef 100%);
+      --shadow-sm: 0 1px 2px rgba(31, 33, 45, .05), 0 8px 24px rgba(31, 33, 45, .06);
+      --shadow-lg: 0 26px 70px rgba(31, 33, 45, .17);
+      --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, ui-serif, serif;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: var(--sans);
+      line-height: 1.62;
+      background:
+        radial-gradient(920px 520px at 88% -10%, rgba(109,111,241,.11), transparent 60%),
+        radial-gradient(820px 480px at -8% 2%, rgba(52,163,104,.08), transparent 55%),
+        var(--paper);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a { color: inherit; }
+    code { font-family: var(--mono); }
+    .wrap { width: min(1140px, calc(100% - 40px)); margin: 0 auto; }
+    .skip { position: absolute; left: -999px; top: 0; padding: 10px 16px; background: var(--navy); color: #fff; z-index: 20; }
+    .skip:focus { left: 0; }
+
+    header.site-header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      border-bottom: 1px solid rgba(226,222,212,.9);
+      background: rgba(244,242,236,.84);
+      backdrop-filter: saturate(140%) blur(12px);
+    }
+
+    nav { min-height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+    .brand { display: inline-flex; align-items: center; gap: 11px; text-decoration: none; font-weight: 850; font-size: 1.16rem; }
+    .brand img { width: 34px; height: 34px; border-radius: 9px; box-shadow: 0 5px 16px rgba(39,42,58,.18); }
+    .nav-links { display: flex; align-items: center; gap: 4px; }
+    .nav-links a { padding: 8px 11px; border-radius: 8px; color: var(--muted); text-decoration: none; font-size: .93rem; font-weight: 650; }
+    .nav-links a:hover { color: var(--ink); background: var(--line-soft); }
+
+    .hero {
+      min-height: 610px;
+      display: grid;
+      grid-template-columns: minmax(0, 1.04fr) minmax(380px, .96fr);
+      gap: clamp(34px, 5vw, 64px);
+      align-items: center;
+      padding: clamp(52px, 8vw, 92px) 0 64px;
+    }
+
+    .eyebrow { display: inline-flex; align-items: center; gap: 9px; margin: 0 0 22px; padding: 6px 13px 6px 11px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--muted); font-size: .82rem; font-weight: 700; box-shadow: var(--shadow-sm); }
+    .eyebrow i { width: 8px; height: 8px; border-radius: 50%; background: var(--grad); }
+    h1 { max-width: 12ch; margin: 0; font-family: var(--serif); font-weight: 620; font-size: clamp(2.8rem, 5.6vw, 4.9rem); line-height: 1.02; letter-spacing: -.025em; }
+    h1 .accent { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .lead { max-width: 61ch; margin: 26px 0 0; color: var(--muted); font-size: clamp(1.06rem, 1.4vw, 1.23rem); }
+    .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
+    .button { min-height: 48px; display: inline-flex; align-items: center; justify-content: center; gap: 9px; padding: 0 17px; border: 1px solid var(--navy); border-radius: 10px; text-decoration: none; font-weight: 760; }
+    .button.primary { background: var(--navy); color: #fff; box-shadow: var(--shadow-sm); }
+    .button.secondary { background: var(--panel); }
+    .button:hover { transform: translateY(-1px); }
+
+    .command { margin-top: 15px; width: fit-content; max-width: 100%; display: flex; align-items: center; gap: 11px; padding: 11px 14px; border: 1px solid #20222e; border-radius: 10px; background: var(--term); color: #eff5f0; font: 650 .92rem var(--mono); cursor: pointer; box-shadow: var(--shadow-sm); }
+    .command span { color: #8188f4; }
+    .command small { color: #89918d; font: 600 .75rem var(--sans); }
+    .command.copied { border-color: var(--green); }
+
+    .trust { margin: 22px 0 0; display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--muted); font-size: .88rem; }
+    .trust b { color: var(--green-dark); }
+    .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 23px; }
+    .badges img { display: block; height: 22px; }
+
+    .demo-shell { overflow: hidden; border: 1px solid #20222e; border-radius: 16px; background: var(--term); box-shadow: var(--shadow-lg); }
+    .demo-bar { display: flex; align-items: center; gap: 8px; padding: 13px 15px; border-bottom: 1px solid rgba(255,255,255,.08); }
+    .demo-bar i { width: 11px; height: 11px; border-radius: 50%; }
+    .demo-bar i:nth-child(1) { background: #ec6a5e; }
+    .demo-bar i:nth-child(2) { background: #f4bf4f; }
+    .demo-bar i:nth-child(3) { background: #61c554; }
+    .demo-bar span { margin-left: 6px; color: #8d948f; font: 600 .8rem var(--mono); }
+    .demo-shell img { display: block; width: 100%; height: auto; }
+
+    .compat { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: rgba(255,253,249,.66); }
+    .compat .wrap { min-height: 76px; display: flex; align-items: center; gap: 16px 28px; flex-wrap: wrap; }
+    .compat strong { color: var(--muted); font-size: .79rem; letter-spacing: .09em; text-transform: uppercase; }
+    .compat span { font-weight: 720; }
+
+    section.band { padding: clamp(62px, 8vw, 96px) 0; }
+    .section-head { max-width: 65ch; margin-bottom: 42px; }
+    .label { margin: 0; color: var(--violet-deep); font-size: .8rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+    h2 { margin: 12px 0 14px; font-family: var(--serif); font-weight: 620; font-size: clamp(2rem, 3.5vw, 3rem); line-height: 1.08; letter-spacing: -.02em; }
+    .section-head > p:last-child { margin: 0; color: var(--muted); font-size: 1.08rem; }
+
+    .cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
+    .card { padding: 27px 24px; border: 1px solid var(--line); border-radius: 15px; background: var(--panel); box-shadow: var(--shadow-sm); }
+    .card:hover { transform: translateY(-3px); box-shadow: var(--shadow-lg); }
+    .card-icon { width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 16px; border-radius: 12px; color: var(--violet-deep); background: linear-gradient(135deg, rgba(109,111,241,.16), rgba(179,166,239,.24)); }
+    .card h3 { margin: 0 0 8px; font-size: 1.12rem; }
+    .card p { margin: 0; color: var(--muted); }
+
+    .flow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; counter-reset: step; }
+    .step { padding: 26px 24px; border: 1px solid var(--line); border-radius: 15px; background: var(--panel); box-shadow: var(--shadow-sm); }
+    .step::before { counter-increment: step; content: counter(step); width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 15px; border-radius: 50%; background: var(--navy); color: #fff; font-weight: 800; }
+    .step h3 { margin: 0 0 8px; }
+    .step p { margin: 0; color: var(--muted); }
+
+    .two-layer { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+    .layer { padding: 28px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); box-shadow: var(--shadow-sm); }
+    .layer h3 { margin: 0 0 10px; font-size: 1.32rem; }
+    .layer p { color: var(--muted); }
+    .layer ul { margin-bottom: 0; padding-left: 20px; }
+
+    .install-band { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: radial-gradient(700px 360px at 100% 0%, rgba(109,111,241,.09), transparent 60%), rgba(255,253,249,.68); }
+    .install-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 470px); gap: clamp(30px, 5vw, 60px); align-items: center; }
+    .code-card { overflow: hidden; border: 1px solid #20222e; border-radius: 15px; background: var(--term); box-shadow: var(--shadow-lg); }
+    .code-card pre { overflow-x: auto; margin: 0; padding: 22px 24px; color: #e8efe9; font: .92rem/1.8 var(--mono); }
+    .code-card .c { color: #79817d; }
+    .code-card .p { color: #8b91f4; }
+    .code-card .g { color: #69cf8e; }
+
+    .metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+    .metric { padding: 30px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); box-shadow: var(--shadow-sm); }
+    .metric strong { display: block; color: var(--green-dark); font-size: clamp(2.5rem, 5vw, 4rem); line-height: 1; letter-spacing: -.05em; }
+    .metric span { color: var(--muted); }
+
+    .requirements { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 26px; }
+    .req { padding: 16px 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+    .req b { display: block; margin-bottom: 3px; }
+    .req span { color: var(--muted); font-size: .92rem; }
+
+    .cta { padding: clamp(70px, 9vw, 108px) 0; text-align: center; }
+    .cta h2 { max-width: 18ch; margin-left: auto; margin-right: auto; }
+    .cta p { max-width: 60ch; margin: 0 auto 28px; color: var(--muted); font-size: 1.1rem; }
+    .cta .actions { justify-content: center; }
+
+    footer { border-top: 1px solid var(--line); padding: 38px 0 48px; color: var(--muted); }
+    .footer-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+    .footer-links { display: flex; gap: 18px; flex-wrap: wrap; }
+    .footer-links a { text-decoration: none; }
+
+    @media (max-width: 900px) {
+      .hero, .install-grid { grid-template-columns: 1fr; }
+      .hero { min-height: auto; }
+      .cards, .flow, .requirements { grid-template-columns: 1fr; }
+      .two-layer, .metrics { grid-template-columns: 1fr; }
+      .nav-links a:not(:last-child) { display: none; }
+    }
+
+    @media (max-width: 520px) {
+      .wrap { width: min(100% - 26px, 1140px); }
+      .badges { display: none; }
+      h1 { font-size: 2.75rem; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      * { transition: none !important; }
+    }
   </style>
 </head>
 <body>
-<header>
-  <nav>
-    <strong>djobs</strong>
-    <div class="links">
-      <a href="https://github.com/jhuang-tw/djobs">GitHub</a>
-      <a href="https://pypi.org/project/djobs/">PyPI</a>
-      <a href="https://marketplace.visualstudio.com/items?itemName=jhuang-tw.djobs">VS Code</a>
-    </div>
-  </nav>
-  <div class="hero">
-    <div>
-      <h1>Your next AI session should remember yesterday.</h1>
-      <p class="lead">djobs keeps local memory for each Git repository: what you asked for, what failed, what changed, and what should happen next.</p>
-      <div class="actions">
-        <a class="button primary" href="https://marketplace.visualstudio.com/items?itemName=jhuang-tw.djobs">Install for VS Code</a>
-        <a class="button" href="https://github.com/jhuang-tw/djobs">View source</a>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="site-header">
+    <nav class="wrap" aria-label="Primary navigation">
+      <a class="brand" href="https://jhuang-tw.github.io/djobs/">
+        <img src="https://raw.githubusercontent.com/jhuang-tw/djobs/main/vscode-ext/media/icon-128.png" alt="">
+        <span>djobs</span>
+      </a>
+      <div class="nav-links">
+        <a href="#how">How it works</a>
+        <a href="#install">Install</a>
+        <a href="#benchmarks">Benchmarks</a>
+        <a href="https://github.com/jhuang-tw/djobs">GitHub</a>
+      </div>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="wrap hero">
+      <div>
+        <p class="eyebrow"><i></i> Local repository memory over MCP</p>
+        <h1>Your next AI session should <span class="accent">remember yesterday.</span></h1>
+        <p class="lead">djobs lets coding agents recover goals, constraints, failed approaches, progress, and Git changes from a small local memory — then use explicit checkpoint and handoff only when coordinated work actually needs ownership.</p>
+
+        <div class="actions">
+          <a class="button primary" href="https://marketplace.visualstudio.com/items?itemName=jhuang-tw.djobs">Install for VS Code</a>
+          <a class="button secondary" href="https://pypi.org/project/djobs/">View on PyPI</a>
+        </div>
+
+        <button class="command" type="button" data-copy="uvx djobs mcp" aria-label="Copy uvx djobs mcp">
+          <span>$</span> uvx djobs mcp <small>copy</small>
+        </button>
+
+        <div class="trust">
+          <span><b>✓</b> MIT licensed</span>
+          <span><b>✓</b> Local SQLite</span>
+          <span><b>✓</b> Python 3.10–3.14</span>
+          <span><b>✓</b> No hosted account</span>
+        </div>
+
+        <div class="badges" aria-label="Package status">
+          <img src="https://github.com/jhuang-tw/djobs/actions/workflows/ci.yml/badge.svg" alt="CI status">
+          <img src="https://img.shields.io/pypi/v/djobs.svg" alt="PyPI version">
+          <img src="https://img.shields.io/visual-studio-marketplace/v/jhuang-tw.djobs?label=VS%20Code" alt="VS Code Marketplace version">
+          <img src="https://img.shields.io/badge/Python-3.10%E2%80%933.14-3776AB?logo=python&logoColor=white" alt="Python 3.10 to 3.14">
+          <img src="https://img.shields.io/badge/Node.js-20%2B-339933?logo=node.js&logoColor=white" alt="Node.js 20 or newer for extension development">
+        </div>
+      </div>
+
+      <figure class="demo-shell" style="margin:0">
+        <div class="demo-bar"><i></i><i></i><i></i><span>repository recovery</span></div>
+        <img src="demo.svg" alt="Animated djobs checkpoint and crash-recovery demo" loading="eager" decoding="async">
+      </figure>
+    </section>
+
+    <div class="compat">
+      <div class="wrap">
+        <strong>Works locally with</strong>
+        <span>GitHub Copilot</span>
+        <span>Claude Code</span>
+        <span>Codex</span>
+        <span>Gemini CLI</span>
+        <span>Kimi Code</span>
+        <span>Any MCP host</span>
       </div>
     </div>
-    <div class="terminal">Session 1
-You → Keep the public auth API.
-pytest → failed: state normalization removed '+'
-edit → callback parser updated
 
-Session 2
-You → Continue the OAuth fix.
-<b>djobs → goal, failure, progress, and Git changes recovered</b></div>
-  </div>
-</header>
-<main>
-  <section>
-    <h2>Memory that follows the repository, not the chat window.</h2>
-    <div class="grid">
-      <article class="card"><h3>User intent</h3><p>Important requests and constraints are saved as passive data, never silently converted into tasks.</p></article>
-      <article class="card"><h3>Session capsules</h3><p>Before compaction or exit, djobs groups the goal, progress, failures, and next step into a compact local capsule.</p></article>
-      <article class="card"><h3>Relevant recall</h3><p>The current request searches older repository memory, so a useful constraint can rank above newer unrelated activity.</p></article>
-      <article class="card"><h3>Memory controls</h3><p>Inspect, search, forget one item, opt out per prompt, or clear passive memory for the current repository.</p></article>
+    <section class="wrap band" aria-labelledby="why-title">
+      <div class="section-head">
+        <p class="label">Why djobs</p>
+        <h2 id="why-title">Stop paying the restart tax on every new chat.</h2>
+        <p>A coding agent may already know the failed approach, the project constraint, the remaining test, and the exact files it changed. djobs keeps that context attached to the repository instead of the chat window.</p>
+      </div>
+
+      <div class="cards">
+        <article class="card">
+          <span class="card-icon" aria-hidden="true">◉</span>
+          <h3>Local-first memory</h3>
+          <p>Goals, observations, session capsules, and task state stay in local SQLite. No broker, daemon, cloud database, or hosted login.</p>
+        </article>
+        <article class="card">
+          <span class="card-icon" aria-hidden="true">⌕</span>
+          <h3>Relevant recall</h3>
+          <p>The current request searches older memory, so a useful constraint or failed approach can rank above newer unrelated activity.</p>
+        </article>
+        <article class="card">
+          <span class="card-icon" aria-hidden="true">↗</span>
+          <h3>Worktree-aware handoff</h3>
+          <p>Sibling worktrees share passive repository memory while explicit ownership and leases stay isolated to each checkout.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="wrap band" id="how" aria-labelledby="how-title">
+      <div class="section-head">
+        <p class="label">How it works</p>
+        <h2 id="how-title">Capture, search, continue.</h2>
+        <p>Ordinary sessions use passive memory. Exact task ownership remains an explicit action, so observation never silently becomes control.</p>
+      </div>
+
+      <div class="flow">
+        <article class="step"><h3>Observe the session</h3><p>Bounded user intent, tool results, failures, Git changes, and a deterministic session capsule are stored as local data.</p></article>
+        <article class="step"><h3>Search for the request</h3><p><code>sync_workspace(query=...)</code> retrieves the most relevant repository memory under a token budget.</p></article>
+        <article class="step"><h3>Continue with evidence</h3><p>The agent resumes from the useful state and can checkpoint or hand off exact work only when coordination requires it.</p></article>
+      </div>
+    </section>
+
+    <section class="wrap band" aria-labelledby="layers-title">
+      <div class="section-head">
+        <p class="label">Clear boundaries</p>
+        <h2 id="layers-title">Memory is not task ownership.</h2>
+        <p>djobs separates what the repository remembers from who owns a unit of work.</p>
+      </div>
+
+      <div class="two-layer">
+        <article class="layer">
+          <h3>Passive project memory</h3>
+          <p>Best for normal vibe-coding sessions and context recovery.</p>
+          <ul>
+            <li>user goals and constraints</li>
+            <li>successful and failed tool results</li>
+            <li>Git working-tree observations</li>
+            <li>session capsules and memory lifecycle states</li>
+            <li>query-aware recall with unchanged-context suppression</li>
+          </ul>
+        </article>
+        <article class="layer">
+          <h3>Explicit checkpoint and handoff</h3>
+          <p>Best for coordinated tasks that need exact ownership.</p>
+          <ul>
+            <li>checkout-scoped leases</li>
+            <li>bounded completion or release evidence</li>
+            <li>safe worktree isolation</li>
+            <li>no silent prompt-to-task conversion</li>
+            <li>lower-level queue tools available only when requested</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="install-band band" id="install" aria-labelledby="install-title">
+      <div class="wrap install-grid">
+        <div>
+          <p class="label">Install</p>
+          <h2 id="install-title">One install, then open any repository.</h2>
+          <p class="lead">The VS Code extension is the easiest route. Other MCP hosts can launch djobs through <code>uvx</code>. Setup and doctor remain repair tools, not a ritual for every project.</p>
+          <div class="requirements">
+            <div class="req"><b>Python 3.10–3.14</b><span>Tested on Windows, macOS, and Linux</span></div>
+            <div class="req"><b>Node.js 20+</b><span>Only for building the VS Code extension</span></div>
+            <div class="req"><b>SQLite local state</b><span>No external database required</span></div>
+          </div>
+        </div>
+
+        <div class="code-card">
+          <div class="demo-bar"><i></i><i></i><i></i><span>setup</span></div>
+          <pre><code><span class="c"># VS Code / GitHub Copilot</span>
+<span class="g">Install:</span> djobs — Local Agent Memory
+
+<span class="c"># Any MCP host</span>
+<span class="p">uvx</span> djobs mcp
+
+<span class="c"># Manual repair only</span>
+<span class="p">pipx</span> install djobs
+<span class="p">djobs</span> setup
+<span class="p">djobs</span> doctor</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="wrap band" id="benchmarks" aria-labelledby="bench-title">
+      <div class="section-head">
+        <p class="label">Reproducible benchmarks</p>
+        <h2 id="bench-title">Show the payload, not a vague marketing number.</h2>
+        <p>The bundled deterministic fixture compares a full synthetic repository reread with one query-aware recovery call.</p>
+      </div>
+
+      <div class="metrics">
+        <article class="metric"><strong>~7,805</strong><span>estimated tokens to reread the synthetic 18-file fixture</span></article>
+        <article class="metric"><strong>~407</strong><span>estimated tokens for query-aware <code>sync_workspace</code></span></article>
+      </div>
+      <p style="color:var(--muted);margin-top:18px">A 94.8% recovery-payload proxy reduction for this fixture. This is not provider billing, latency, or model-quality measurement. Run <code>python scripts/benchmark_project_memory.py</code> and inspect it yourself.</p>
+    </section>
+
+    <section class="wrap band" aria-labelledby="privacy-title">
+      <div class="section-head">
+        <p class="label">Privacy and control</p>
+        <h2 id="privacy-title">Local, inspectable, and reversible.</h2>
+        <p>State defaults to <code>~/.djobs/global.db</code>. Common credentials are redacted on a best-effort basis, stored text is untrusted data, and failures remain fail-open.</p>
+      </div>
+      <div class="cards">
+        <article class="card"><span class="card-icon" aria-hidden="true">⊘</span><h3>Opt out per prompt</h3><p>Add <code>[djobs:no-memory]</code> when a request should not be stored.</p></article>
+        <article class="card"><span class="card-icon" aria-hidden="true">✓</span><h3>Resolve without erasing</h3><p>Mark memory resolved, superseded, stale, or contradicted while keeping the audit trail.</p></article>
+        <article class="card"><span class="card-icon" aria-hidden="true">⌫</span><h3>Forget or clear</h3><p>Delete one memory or explicitly clear passive memory for the repository family.</p></article>
+      </div>
+    </section>
+
+    <section class="wrap cta">
+      <h2>Give the repository a memory that survives the chat.</h2>
+      <p>Open source, MIT licensed, local by default, and designed for coding agents that need to continue real work without replaying the entire project.</p>
+      <div class="actions">
+        <a class="button primary" href="https://marketplace.visualstudio.com/items?itemName=jhuang-tw.djobs">Install the extension</a>
+        <a class="button secondary" href="https://github.com/jhuang-tw/djobs">Read the source</a>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap footer-row">
+      <a class="brand" href="https://jhuang-tw.github.io/djobs/">
+        <img src="https://raw.githubusercontent.com/jhuang-tw/djobs/main/vscode-ext/media/icon-128.png" alt="">
+        <span>djobs</span>
+      </a>
+      <div class="footer-links">
+        <a href="https://pypi.org/project/djobs/">PyPI</a>
+        <a href="https://marketplace.visualstudio.com/items?itemName=jhuang-tw.djobs">VS Code Marketplace</a>
+        <a href="https://github.com/jhuang-tw/djobs/issues">Issues</a>
+        <a href="https://github.com/jhuang-tw/djobs/blob/main/LICENSE">MIT License</a>
+      </div>
     </div>
-  </section>
-  <section>
-    <h2>One install. No per-project ritual.</h2>
-    <p class="lead">After the MCP is added, the first tool call creates local SQLite memory and installs only the detected host adapter. Open another Git repository and it gets a separate identity automatically.</p>
-  </section>
-  <section>
-    <h2>Reproducible, not a marketing number.</h2>
-    <div class="grid">
-      <article class="card"><div class="metric">~7,805</div><p>estimated tokens for re-reading the bundled synthetic 18-file fixture</p></article>
-      <article class="card"><div class="metric">~407</div><p>estimated tokens for one query-aware <code>sync_workspace</code> recovery</p></article>
-    </div>
-    <p class="muted">A 94.8% recovery-payload proxy reduction in the bundled deterministic fixture. Not provider billing, latency, or model-quality measurement.</p>
-  </section>
-  <section>
-    <h2>Local and inspectable.</h2>
-    <p class="lead">Memory stays in <code>~/.djobs/global.db</code>. Common credentials are redacted on a best-effort basis, stored text is treated as untrusted data, and failures remain fail-open. No cloud account or remote queue is required.</p>
-  </section>
-</main>
-<footer>MIT licensed. Python 3.10+. Source, benchmarks, privacy controls, compatibility details, and issue tracking are in the GitHub repository.</footer>
+  </footer>
+
+  <script>
+    document.querySelectorAll('[data-copy]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const text = button.getAttribute('data-copy');
+        try {
+          await navigator.clipboard.writeText(text);
+          const label = button.querySelector('small');
+          button.classList.add('copied');
+          if (label) label.textContent = 'copied';
+          window.setTimeout(() => {
+            button.classList.remove('copied');
+            if (label) label.textContent = 'copy';
+          }, 1600);
+        } catch (_) {
+          window.prompt('Copy this command:', text);
+        }
+      });
+    });
+  </script>
 </body>
 </html>

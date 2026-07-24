@@ -72,9 +72,7 @@ def test_version_sync_and_release_workflow_cover_every_published_surface() -> No
     sync = (ROOT / "vscode-ext/scripts/sync-version.js").read_text(encoding="utf-8")
     planner = (ROOT / "scripts/prepare_auto_release.py").read_text(encoding="utf-8")
     release = (ROOT / ".github/workflows/publish.yml").read_text(encoding="utf-8")
-    approver = (ROOT / ".github/workflows/approve-release-pr-ci.yml").read_text(
-        encoding="utf-8"
-    )
+    approver = (ROOT / ".github/workflows/approve-release-pr-ci.yml").read_text(encoding="utf-8")
     ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 
     assert "package-lock.json" in sync
@@ -100,8 +98,5 @@ def test_version_sync_and_release_workflow_cover_every_published_surface() -> No
 
     assert "types: [completed]" in approver
     assert "conclusion == 'action_required'" in approver
-    assert (
-        "startsWith(github.event.workflow_run.head_branch, 'automation/release-v')"
-        in approver
-    )
+    assert "startsWith(github.event.workflow_run.head_branch, 'automation/release-v')" in approver
     assert "/actions/runs/${RUN_ID}/approve" in approver

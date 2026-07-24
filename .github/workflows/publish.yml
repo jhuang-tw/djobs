@@ -1,9 +1,8 @@
 name: Release
 
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
+  push:
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -12,13 +11,9 @@ concurrency:
 
 jobs:
   prepare:
-    if: >-
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_branch == 'main') ||
-      github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: write
     outputs:
       release: ${{ steps.plan.outputs.release }}
@@ -30,6 +25,46 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+
+      - name: Wait for this main commit's CI
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 180); do
+            run_json="$(gh run list \
+              --workflow CI \
+              --commit "$TARGET_SHA" \
+              --event push \
+              --limit 1 \
+              --json databaseId,status,conclusion \
+              --jq '.[0] // empty')"
+
+            if [ -z "$run_json" ]; then
+              sleep 5
+              continue
+            fi
+
+            status="$(jq -r '.status' <<<"$run_json")"
+            conclusion="$(jq -r '.conclusion // ""' <<<"$run_json")"
+            run_id="$(jq -r '.databaseId' <<<"$run_json")"
+
+            if [ "$status" = "completed" ]; then
+              if [ "$conclusion" != "success" ]; then
+                echo "CI run $run_id completed with $conclusion" >&2
+                exit 1
+              fi
+              echo "CI run $run_id succeeded for $TARGET_SHA"
+              exit 0
+            fi
+
+            sleep 5
+          done
+
+          echo "Timed out waiting for CI on $TARGET_SHA" >&2
+          exit 1
 
       - name: Synchronize with latest main and tags
         run: |
@@ -45,10 +80,11 @@ jobs:
         if: steps.plan.outputs.release == 'true' && steps.plan.outputs.changed == 'true'
         run: |
           set -euo pipefail
-          python -m pip install -e ".[dev]"
-          python -m pytest -q --tb=short \
-            tests/unit/test_release_surfaces.py \
-            tests/unit/test_prepare_auto_release.py
+          python -m pip install -e ".[dev,pg]"
+          ruff check src tests scripts/prepare_auto_release.py
+          ruff format --check src tests scripts/prepare_auto_release.py
+          mypy
+          python -m pytest -q --tb=short
           git diff --check
 
       - name: Commit generated version and changelog

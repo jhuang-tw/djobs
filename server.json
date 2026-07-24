@@ -1,9 +1,9 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
   "name": "io.github.jhuang-tw/djobs",
-  "title": "djobs — Local Agent Memory",
+  "title": "djobs \u2014 Local Agent Memory",
   "description": "Local project memory that recovers coding goals, failures, progress, and Git changes.",
-  "version": "0.16.0",
+  "version": "0.17.0",
   "repository": {
     "url": "https://github.com/jhuang-tw/djobs",
     "source": "github"
@@ -14,7 +14,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "djobs",
-      "version": "0.16.0",
+      "version": "0.17.0",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"

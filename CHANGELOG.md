@@ -14,6 +14,17 @@ public interfaces may still change between minor versions. Entries below use
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-07-24
+
+### Added
+- `[release]` Compile minimal repository context across worktrees (#21)
+- `[release]` Automate releases after main CI (#22)
+
+### Fixed
+- `[release]` Gate automatic releases on main CI (#23)
+- `[release]` Release automatically without writing protected main (#24)
+
+
 ## [0.16.0] - 2026-07-24
 
 ### Added

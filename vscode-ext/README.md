@@ -1,11 +1,12 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/jhuang-tw/djobs/main/vscode-ext/media/icon-128.png" width="96" alt="djobs logo">
+  <img src="https://raw.githubusercontent.com/jhuang-tw/djobs/main/vscode-ext/media/icon-128.png" width="88" alt="djobs logo">
 </p>
 
 <h1 align="center">djobs — Local Agent Memory</h1>
 
 <p align="center">
-  <strong>Continue the repository instead of explaining it again in every new AI session.</strong>
+  <strong>Local project memory and explicit handoff for AI coding agents.</strong><br>
+  Continue the repository instead of explaining it again in every new AI session.
 </p>
 
 <p align="center">
@@ -16,8 +17,6 @@
   <img alt="Node.js 20+ for development" src="https://img.shields.io/badge/Node.js-20%2B-339933?logo=node.js&logoColor=white">
   <a href="https://github.com/jhuang-tw/djobs/blob/main/LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-blue.svg"></a>
 </p>
-
-![djobs — local project memory for coding agents](https://raw.githubusercontent.com/jhuang-tw/djobs/main/vscode-ext/media/banner.png)
 
 ## What the extension does
 
@@ -41,7 +40,16 @@ The UI stays out of the way after setup.
 - explicit task ownership and handoff evidence when coordinated work needs it.
 
 When the next request arrives, `sync_workspace(query=...)` searches relevant repository memory
-instead of replaying only the newest activity.
+instead of replaying an entire chat history.
+
+## How it works
+
+1. **Capture the session.** Bounded intent, tool results, failures, Git changes, and a session
+   capsule are stored as local data.
+2. **Search for the current request.** `sync_workspace(query=...)` retrieves relevant repository
+   memory under a token budget.
+3. **Continue with evidence.** The agent resumes useful state and uses explicit checkpoint or
+   handoff only when coordinated work needs ownership.
 
 ## Get started
 
@@ -75,41 +83,34 @@ remain available through `djobs-mcp-full` rather than occupying every ordinary A
 - **djobs: Pause djobs** — temporarily disable djobs operations without deleting state.
 - **djobs: Resume djobs** — re-enable djobs.
 
-## Memory control
-
-Ask Copilot naturally:
-
-```text
-What does djobs remember about the login bug?
-Mark the old OAuth failure as resolved by this commit.
-Forget the abandoned Redis approach.
-Clear djobs memory for this repository.
-```
-
-Put `[djobs:no-memory]` in a prompt to skip that prompt. Set
-`DJOBS_CAPTURE_USER_INTENT=0` to disable automatic prompt-intent memory globally.
-
 ## Requirements
 
 | Component | Requirement |
 |---|---|
 | VS Code | 1.101 or newer |
-| Python runtime | Python 3.10–3.14 |
+| Python runtime | Python 3.10+; Python 3.10–3.14 tested in CI |
 | Extension development | Node.js 20+ |
 | Storage | Local SQLite by default |
 | Operating systems | Windows, macOS, Linux |
 
-End users do not need Node.js. Node is only required to build or package the extension from source.
+End users do not need Node.js. Node is required only to build or package the extension.
 
-## Privacy
+## Privacy and control
 
-State stays on the user's machine. Common credentials are redacted on a best-effort basis, stored
-memory is treated as untrusted data, hook failures are fail-open, unrelated settings are preserved,
-and djobs does not upload repository memory or task state.
+- State defaults to `~/.djobs/global.db`.
+- Common credentials are redacted on a best-effort basis.
+- Add `[djobs:no-memory]` to skip one prompt.
+- Set `DJOBS_CAPTURE_USER_INTENT=0` to disable automatic prompt-intent capture.
+- Mark memory resolved, superseded, stale, or contradicted without erasing its audit trail.
+- Hook failures are fail-open, unrelated settings are preserved, and djobs does not upload
+  repository memory or task state.
 
-## Links
-
-- [Full documentation and source](https://github.com/jhuang-tw/djobs)
-- [PyPI package](https://pypi.org/project/djobs/)
-- [Project website](https://jhuang-tw.github.io/djobs/)
-- [Issues](https://github.com/jhuang-tw/djobs/issues)
+<p align="center">
+  <a href="https://github.com/jhuang-tw/djobs"><strong>Source</strong></a>
+  &nbsp;·&nbsp;
+  <a href="https://pypi.org/project/djobs/"><strong>PyPI</strong></a>
+  &nbsp;·&nbsp;
+  <a href="https://jhuang-tw.github.io/djobs/"><strong>Documentation</strong></a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/jhuang-tw/djobs/issues"><strong>Issues</strong></a>
+</p>

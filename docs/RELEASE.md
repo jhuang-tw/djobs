@@ -8,14 +8,14 @@ and immutable release tag use one lockstep version.
 
 A normal change requires only one human pull request:
 
-1. merge the change into `main`;
-2. the `Release` workflow selects a main commit whose `CI` run passed;
-3. it computes the next semantic version and opens an automated
+1. the human PR runs the quick shared preflight;
+2. after merge, `main` runs the full compatibility matrix;
+3. the `Release` workflow selects that validated main commit;
+4. it computes the next semantic version and opens an automated
    `automation/release-vX.Y.Z` pull request;
-4. it explicitly runs the full `CI` workflow on that release commit;
-5. after all required checks pass, it squash-merges the release PR into protected
-   `main` and waits for the merged commit's main CI;
-6. it publishes PyPI and the VS Code Marketplace, then creates the matching immutable
+5. that exact release commit runs the full compatibility matrix once;
+6. after all required checks pass, the workflow squash-merges the release PR;
+7. it publishes PyPI and the VS Code Marketplace, then creates the matching immutable
    tag and GitHub Release.
 
 No follow-up edit to `.github/release.json`, manual version bump, tag, merge, or
@@ -33,6 +33,27 @@ The highest required bump wins. The latest immutable release tag is used as the
 starting version, while the automatically merged release PR makes protected `main`
 match the new published version before any registry upload begins.
 
+## Shared preflight and CI layers
+
+`scripts/preflight.py` is the single local and CI validation entry point. Developers
+run the mutating quick form before pushing:
+
+```bash
+python scripts/preflight.py --profile quick --fix --base-ref origin/main
+```
+
+CI uses the non-mutating `--check` form. Ordinary human PRs run one quick required
+preflight. The full matrix is reserved for `main`, manual verification, and automated
+release PRs. A newer push cancels an obsolete CI run for the same PR.
+
+Full compatibility validation includes:
+
+- Python 3.10 through 3.14;
+- PostgreSQL repository-contract tests;
+- package build and Twine metadata validation;
+- VS Code TypeScript compilation;
+- clean-wheel installation on Windows, macOS, and Linux.
+
 ## Protected-main release PR
 
 The repository rules require every `main` change to use a pull request and pass all
@@ -48,11 +69,9 @@ After source CI succeeds, the workflow updates these files on a deterministic
 - `vscode-ext/package-lock.json` and its root package entry;
 - `CHANGELOG.md` with a dated release section.
 
-GitHub suppresses recursive workflow events created with `GITHUB_TOKEN`, so the
-Release workflow explicitly dispatches `CI` for the release branch. Those checks are
-attached to the release commit and satisfy the same ruleset used by human pull
-requests. No review is required because the ruleset requires checks but specifies zero
-approvals.
+GitHub may gate CI for a pull request created with `GITHUB_TOKEN`. The Release job
+finds the exact pull-request CI run, approves it when required, waits for the full
+matrix and required checks, then squash-merges the PR.
 
 The release commit uses a deterministic timestamp from the selected main commit. A
 retry recreates the same branch commit instead of inventing another version. If `main`
@@ -63,11 +82,15 @@ lets the newer queued Release run create one from the newer main state.
 
 The workflow publishes in this order:
 
-1. merge the checked release PR into `main`;
-2. wait for the merged main commit's CI to pass;
+1. validate the exact release commit through its release PR full matrix;
+2. merge that checked release PR into `main`;
 3. build and publish the Python package to PyPI with trusted publishing;
 4. compile and publish the VS Code extension;
 5. create or update the immutable Git tag and GitHub Release.
+
+The merged release commit differs from the checked PR only by the squash commit
+identity, so the workflow does not dispatch a duplicate full matrix after merging.
+The package and extension publishing jobs still rebuild from the exact merged SHA.
 
 PyPI and Marketplace duplicate versions are treated idempotently. If publication is
 interrupted after the release PR reaches `main`, re-run the `Release` workflow. The

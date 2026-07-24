@@ -34,43 +34,54 @@ jobs:
         id: source
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
           git fetch origin main --tags --force
           source_sha="$(git rev-parse origin/main)"
+          source_message="$(git show -s --format=%s "$source_sha")"
 
-          for attempt in $(seq 1 180); do
-            run_json="$(gh run list \
-              --workflow CI \
-              --commit "$source_sha" \
-              --event push \
-              --limit 1 \
-              --json databaseId,status,conclusion \
-              --jq '.[0] // empty')"
+          # A manual retry may start after the checked release PR is already on
+          # main. That exact commit passed the full release-PR matrix, while its
+          # GITHUB_TOKEN merge intentionally emitted no recursive push CI.
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [[ "$source_message" == chore\(release\):* ]]; then
+            echo "Resuming publication from checked release commit $source_sha."
+          else
+            status=""
+            conclusion=""
+            for attempt in $(seq 1 180); do
+              run_json="$(gh run list \
+                --workflow CI \
+                --commit "$source_sha" \
+                --event push \
+                --limit 1 \
+                --json databaseId,status,conclusion \
+                --jq '.[0] // empty')"
 
-            if [ -z "$run_json" ]; then
-              sleep 5
-              continue
-            fi
-
-            status="$(jq -r '.status' <<<"$run_json")"
-            conclusion="$(jq -r '.conclusion // ""' <<<"$run_json")"
-            run_id="$(jq -r '.databaseId' <<<"$run_json")"
-
-            if [ "$status" = "completed" ]; then
-              if [ "$conclusion" != "success" ]; then
-                echo "CI run $run_id completed with $conclusion" >&2
-                exit 1
+              if [ -z "$run_json" ]; then
+                sleep 5
+                continue
               fi
-              break
+
+              status="$(jq -r '.status' <<<"$run_json")"
+              conclusion="$(jq -r '.conclusion // ""' <<<"$run_json")"
+              run_id="$(jq -r '.databaseId' <<<"$run_json")"
+
+              if [ "$status" = "completed" ]; then
+                if [ "$conclusion" != "success" ]; then
+                  echo "CI run $run_id completed with $conclusion" >&2
+                  exit 1
+                fi
+                break
+              fi
+
+              sleep 5
+            done
+
+            if [ "$status" != "completed" ] || [ "$conclusion" != "success" ]; then
+              echo "Timed out waiting for CI on $source_sha" >&2
+              exit 1
             fi
-
-            sleep 5
-          done
-
-          if [ "${status:-}" != "completed" ]; then
-            echo "Timed out waiting for CI on $source_sha" >&2
-            exit 1
           fi
 
           git checkout -B main "$source_sha"
@@ -89,10 +100,15 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install -e ".[dev,pg]"
-          ruff check src tests scripts/prepare_auto_release.py scripts/extract_release_notes.py
-          ruff format --check src tests scripts/prepare_auto_release.py scripts/extract_release_notes.py
-          mypy
-          python -m pytest -q --tb=short
+          python scripts/preflight.py --profile lint --check \
+            --changed-file CHANGELOG.md \
+            --changed-file src/djobs/__init__.py \
+            --changed-file server.json \
+            --changed-file vscode-ext/package.json \
+            --changed-file vscode-ext/package-lock.json
+          python -m pytest -q --tb=short \
+            tests/unit/test_release_surfaces.py \
+            tests/unit/test_release_site_guards.py
           git diff --check
 
       - name: Create, validate, and merge release PR
@@ -116,6 +132,8 @@ jobs:
             exit 0
           fi
 
+          # The version is already checked into main but the immutable tag is
+          # missing. Resume this same publication without a new PR or bump.
           if [ "$CHANGED" != "true" ]; then
             echo "publish=true" >> "$GITHUB_OUTPUT"
             exit 0
@@ -192,6 +210,8 @@ jobs:
             exit 1
           fi
 
+          status=""
+          conclusion=""
           for attempt in $(seq 1 240); do
             run_json="$(gh api \
               "repos/${{ github.repository }}/actions/runs/${pr_run_id}")"
@@ -213,7 +233,7 @@ jobs:
             sleep 5
           done
 
-          if [ "${status:-}" != "completed" ] || [ "${conclusion:-}" != "success" ]; then
+          if [ "$status" != "completed" ] || [ "$conclusion" != "success" ]; then
             echo "Timed out waiting for release PR CI run $pr_run_id" >&2
             exit 1
           fi
@@ -247,44 +267,9 @@ jobs:
           gh pr merge "$pr_number" --squash --delete-branch
           merged_sha="$(gh pr view "$pr_number" --json mergeCommit --jq .mergeCommit.oid)"
 
-          # Merges performed with GITHUB_TOKEN do not emit a recursive push workflow.
-          # Dispatch CI explicitly on main, then bind the run to the exact merge SHA.
-          gh workflow run ci.yml --ref main
-
-          for attempt in $(seq 1 180); do
-            run_json="$(gh run list \
-              --workflow CI \
-              --commit "$merged_sha" \
-              --event workflow_dispatch \
-              --limit 1 \
-              --json databaseId,status,conclusion \
-              --jq '.[0] // empty')"
-
-            if [ -z "$run_json" ]; then
-              sleep 5
-              continue
-            fi
-
-            status="$(jq -r '.status' <<<"$run_json")"
-            conclusion="$(jq -r '.conclusion // ""' <<<"$run_json")"
-            run_id="$(jq -r '.databaseId' <<<"$run_json")"
-
-            if [ "$status" = "completed" ]; then
-              if [ "$conclusion" != "success" ]; then
-                echo "Merged release CI run $run_id completed with $conclusion" >&2
-                exit 1
-              fi
-              break
-            fi
-
-            sleep 5
-          done
-
-          if [ "${status:-}" != "completed" ]; then
-            echo "Timed out waiting for merged release CI on $merged_sha" >&2
-            exit 1
-          fi
-
+          # The exact release commit passed the full release-PR matrix. The
+          # squash merge changes only commit identity, and publishing jobs
+          # rebuild the artifacts from this merged SHA.
           echo "publish=true" >> "$GITHUB_OUTPUT"
           echo "release_sha=$merged_sha" >> "$GITHUB_OUTPUT"
 
@@ -304,6 +289,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
 
       - name: Check whether PyPI already has this version
         id: existing

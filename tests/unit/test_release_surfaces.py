@@ -111,6 +111,7 @@ def test_version_sync_and_release_workflow_cover_every_published_surface() -> No
     planner = (ROOT / "scripts/prepare_auto_release.py").read_text(encoding="utf-8")
     release = (ROOT / ".github/workflows/publish.yml").read_text(encoding="utf-8")
     ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    preflight = (ROOT / "scripts/preflight.py").read_text(encoding="utf-8")
 
     assert "package-lock.json" in sync
     assert "lock.packages[''].version" in sync
@@ -119,6 +120,9 @@ def test_version_sync_and_release_workflow_cover_every_published_surface() -> No
     assert "select_base_version" in planner
     assert "push:\n    branches: [main]" in release
     assert "workflow_dispatch:" in ci
+    assert "cancel-in-progress: true" in ci
+    assert "scripts/preflight.py" in ci
+    assert "automation/release-v" in ci
     assert "actions: write" in release
     assert "pull-requests: write" in release
     assert 'gh workflow run ci.yml --ref "$release_branch"' not in release
@@ -128,8 +132,8 @@ def test_version_sync_and_release_workflow_cover_every_published_surface() -> No
     assert "gh pr create" in release
     assert "gh pr checks" in release
     assert "gh pr merge" in release
-    assert "gh workflow run ci.yml --ref main" in release
-    assert "--event workflow_dispatch" in release
+    assert "gh workflow run ci.yml --ref main" not in release
+    assert "--event workflow_dispatch" not in release
     assert "scripts/prepare_auto_release.py" in release
     assert "scripts/extract_release_notes.py" in release
     assert "vscode-ext/package-lock.json" in release
@@ -137,4 +141,6 @@ def test_version_sync_and_release_workflow_cover_every_published_surface() -> No
     assert "gh release create" in release
     assert "HEAD:main" not in release
     assert ".github/release.json" not in release
+    assert "profile" in preflight
+    assert "ruff" in preflight
     assert not (ROOT / ".github/workflows/approve-release-pr-ci.yml").exists()

@@ -61,7 +61,8 @@ For another MCP host, add this server once:
 After the MCP is present, normal Vibe Coding needs no per-project command and no setup wizard.
 The first `djobs` tool call creates `~/.djobs/global.db`, identifies the current Git repository,
 and installs only the detected host's passive lifecycle adapter. Opening another repository
-uses a different local memory automatically.
+uses a different local memory automatically. Sibling Git worktrees share passive project memory,
+while explicit task ownership and leases remain isolated to each checkout.
 
 `djobs setup` and `djobs doctor` remain available only for manual repair or diagnostics in
 headless environments.
@@ -80,7 +81,7 @@ Exact duplicate prompts in the same session are ignored. Before context compacti
 session end, djobs creates a deterministic capsule without calling an external model or sending
 repository content anywhere.
 
-## Relevant memory, not just recent memory
+## Relevant and current memory
 
 Agents should call:
 
@@ -88,26 +89,35 @@ Agents should call:
 sync_workspace(query="the user's current request")
 ```
 
-The query searches repository-scoped memory with SQLite FTS5 when available and a portable
-bounded fallback otherwise. Older relevant constraints and failed approaches can therefore
-rank above newer unrelated activity.
+The query searches repository-family memory with SQLite FTS5 when available and a portable
+bounded fallback otherwise. Older relevant constraints and failed approaches can therefore rank
+above newer unrelated activity.
 
-You can also ask the agent naturally:
+The response includes a `context_hash`. A host that persists it can pass
+`known_context_hash="..."` on the next equivalent recovery. When the selected passive memory is
+unchanged, djobs returns no repeated observations while still returning current task state.
+
+A remembered fact can be marked `resolved`, `superseded`, `stale`, or `contradicted`. It remains
+available for audit, but inactive memory is excluded from normal recall and context injection.
+
+You can ask the agent naturally:
 
 ```text
 What does djobs remember about the OAuth bug?
+Mark the old OAuth failure as resolved by this commit.
 Forget the memory about the abandoned Redis experiment.
 Clear djobs memory for this repository.
 ```
 
-The MCP exposes a `memory` tool for `list`, `search`, `forget`, and confirmed `clear` actions.
-Clearing passive memory does not delete explicit tracked tasks.
+The MCP exposes a `memory` tool for `list`, `search`, `status`, `forget`, and confirmed `clear`
+actions. Clearing passive memory does not delete explicit tracked tasks.
 
 Terminal equivalents are available when useful:
 
 ```bash
 djobs memory list
 djobs memory search "OAuth callback"
+djobs memory status MEMORY_ID resolved --resolved-by-commit COMMIT_SHA
 djobs memory forget MEMORY_ID
 djobs memory clear --yes
 ```
@@ -119,14 +129,16 @@ djobs memory clear --yes
   redacted on a best-effort basis before storage.
 - Put `[djobs:no-memory]` in a prompt to skip that prompt.
 - Set `DJOBS_CAPTURE_USER_INTENT=0` to disable automatic prompt-intent memory.
+- Use `memory(action="status", ...)` to deactivate an obsolete fact without deleting its audit
+  history.
 - Use `memory(action="forget", memory_id="...")` to delete one record.
-- Use confirmed `memory(action="clear")` to clear passive memory for the current repository.
+- Use confirmed `memory(action="clear")` to clear passive memory for the repository family.
 - Stored content is always treated as untrusted data, never executable instructions.
 - Hook, search, or storage failures are fail-open and never block the coding request.
 
-## Recovery-payload benchmark
+## Recovery benchmarks
 
-The repository includes a deterministic proxy benchmark:
+The repository includes a deterministic recovery-payload proxy:
 
 ```bash
 python scripts/benchmark_project_memory.py
@@ -142,6 +154,15 @@ With its default synthetic 18-file fixture, the current implementation compares:
 That is a **94.8% recovery-payload proxy reduction** for this fixture. It is intentionally not
 presented as provider billing, latency, or model-quality measurement. The script is included so
 results can be reproduced and challenged instead of treated as a marketing claim.
+
+A second deterministic benchmark checks recovery quality rather than only payload size:
+
+```bash
+python scripts/benchmark_resume_quality.py
+```
+
+It verifies cross-worktree recall, checkout ownership isolation, stale-memory exclusion, and
+unchanged-context replay suppression.
 
 ## Supported local hosts
 
@@ -165,9 +186,9 @@ The normal server deliberately stays small:
 
 | Tool | Purpose |
 |---|---|
-| `sync_workspace(query?, ...)` | Recover relevant goals, failures, capsules, tasks, and Git observations under a token budget. |
-| `memory(action, ...)` | Inspect, search, forget, or explicitly clear passive memory for the current repository. |
-| `checkpoint(summary, ...)` | Explicitly create or resume one tracked unit of work. |
+| `sync_workspace(query?, known_context_hash?, ...)` | Recover relevant goals, failures, capsules, tasks, and Git observations under a token budget; suppress unchanged memory replay. |
+| `memory(action, ...)` | Inspect, search, deactivate, forget, or explicitly clear passive memory for the current repository family. |
+| `checkpoint(summary, ...)` | Explicitly create or resume one checkout-scoped unit of work. |
 | `handoff(task_id, ...)` | Explicitly release or complete tracked work with bounded evidence. |
 | `resume_delta(correlation_id, ...)` | Backward-compatible revision recovery for integrations already storing IDs. |
 
@@ -180,7 +201,7 @@ Passive memory never creates or claims tasks. Ownership changes only through exp
 
 ```text
 checkpoint("Implement parser", path="src/parser.py")
-  -> this session owns one expiring lease
+  -> this checkout owns one expiring lease
 
 handoff(task_id, "Parser updated; edge tests remain", completed=false)
   -> releases the work with evidence for a later session
@@ -201,6 +222,11 @@ This explicit layer is optional for people who only need project memory.
 Repository resolution uses MCP roots, host cwd, the enclosing Git root, and finally process cwd.
 Windows paths, WSL mounts, and common Git Bash spellings resolve to compatible identities.
 
+Passive memory uses a repository-family identity derived from the normalized Git remote and root
+commit, with the Git common directory as a local fallback. This lets sibling worktrees reuse
+project decisions and prior failures. Explicit tasks, leases, and Git snapshots remain scoped to
+the individual checkout, so parallel lanes do not acquire each other's work.
+
 Default database:
 
 ```text
@@ -210,8 +236,8 @@ Default database:
 Override it with `DJOBS_DB`. A repository-specific database is also supported with
 `djobs mcp --db .djobs/state.db`; do not commit the database.
 
-Each repository retains at most 1,000 recent visible observations by default. Git contents are
-hashed for change detection and are not stored as observation text.
+Each repository family retains at most 1,000 recent visible observations by default. Git contents
+are hashed for change detection and are not stored as observation text.
 
 ## Development
 
@@ -226,6 +252,8 @@ ruff check src/ tests/
 ruff format --check src/ tests/
 mypy
 pytest -q
+python scripts/benchmark_project_memory.py
+python scripts/benchmark_resume_quality.py
 python -m build
 python -m twine check dist/*
 

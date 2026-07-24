@@ -4,9 +4,9 @@ import argparse
 import shutil
 import subprocess
 import sys
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
 RUFF_TARGETS = (
@@ -31,8 +31,13 @@ class ChangeSet:
     unknown: bool
 
 
+def _normalize_path(path: str) -> str:
+    normalized = path.replace("\\", "/")
+    return normalized[2:] if normalized.startswith("./") else normalized
+
+
 def _normalized(paths: Iterable[str]) -> tuple[str, ...]:
-    return tuple(sorted({path.replace("\\", "/").lstrip("./") for path in paths if path}))
+    return tuple(sorted({_normalize_path(path) for path in paths if path}))
 
 
 def classify_changes(paths: Iterable[str]) -> ChangeSet:
@@ -112,8 +117,7 @@ def _git_output(*args: str) -> str:
         cwd=ROOT,
         check=True,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
     )
     return result.stdout.strip()
 

@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - ".github/workflows/temp-verify-016.yml"
+      - ".github/verify-016.ready"
 
 permissions:
   contents: write
@@ -30,7 +30,6 @@ jobs:
           import json
           import os
           import time
-          import urllib.error
           import urllib.request
 
           target = "0.16.0"
@@ -131,6 +130,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -f .github/verify-016.ready
           git rm -f .github/workflows/temp-verify-016.yml
           git commit -m "chore: remove temporary 0.16.0 verifier"
           git push origin HEAD:main

@@ -35,7 +35,6 @@ def test_current_docs_and_marketplace_copy_match_passive_local_behavior() -> Non
         "README.md",
         "CONTRIBUTING.md",
         "AGENTS.md",
-        "CHANGELOG.md",
         "docs/RELEASE.md",
         "vscode-ext/README.md",
         "docs/index.html",

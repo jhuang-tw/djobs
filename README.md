@@ -249,19 +249,14 @@ cd djobs
 python -m venv .venv
 # activate the environment
 python -m pip install -e ".[dev,pg]"
+pre-commit install
 
-ruff check src tests scripts/prepare_auto_release.py scripts/extract_release_notes.py
-ruff format --check src tests scripts/prepare_auto_release.py scripts/extract_release_notes.py
-mypy
-pytest -q
-python -m build
-python -m twine check dist/*
+# Applies pinned formatting, lint, type checking, change-aware tests,
+# and the extension build only when extension inputs changed.
+python scripts/preflight.py --profile quick --fix --base-ref origin/main
 
-cd vscode-ext
-# Node.js 20+
-npm ci
-npx tsc -p ./ --noEmit
-npm run compile
+# Optional release-grade local verification.
+python scripts/preflight.py --profile full --check --base-ref origin/main
 ```
 
 See `CONTRIBUTING.md`, `AGENTS.md`, and `docs/RELEASE.md` before changing public behavior.

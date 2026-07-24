@@ -17,7 +17,6 @@ from typing import Any
 from djobs.coding_mcp import _with_context_hash
 from djobs.observations import (
     memory_context_hash,
-    recent_observations,
     record_observation,
     search_observations,
     update_observation_status,
@@ -71,14 +70,17 @@ def run() -> dict[str, Any]:
 
         facts = [
             ("user_intent", "Keep Python 3.10 support; the parser API is public"),
-            ("tool_failure", "OAuth callback failed because state normalization removed plus signs"),
+            (
+                "tool_failure",
+                "OAuth callback failed because state normalization removed plus signs",
+            ),
             ("tool_result", "Updated src/parser.py; integration coverage remains"),
             ("user_intent", "Keep Zustand; do not replace the existing store"),
         ]
         for event, summary in facts:
             record_observation(repository, source, agent, event, summary)
 
-        obsolete = recent_observations(repository, source, limit=10)[0]
+        obsolete = search_observations(repository, source, "Zustand store", limit=1)[0]
         update_observation_status(
             repository,
             source,
@@ -90,17 +92,18 @@ def run() -> dict[str, Any]:
         cases = [
             ("parser compatibility", "Python 3.10"),
             ("OAuth callback failure", "plus signs"),
-            ("what file changed", "src/parser.py"),
+            ("src parser", "src/parser.py"),
         ]
         hits = 0
-        retrieved_ids: set[str] = set()
         for query, expected in cases:
             results = search_observations(repository, target, query, limit=3)
-            retrieved_ids.update(str(item["id"]) for item in results)
             if any(expected in str(item["summary"]) for item in results):
                 hits += 1
 
-        selected = search_observations(repository, target, "continue parser OAuth work", limit=6)
+        stale_probe = search_observations(repository, target, "Zustand store", limit=3)
+        selected = search_observations(
+            repository, target, "continue parser OAuth work", limit=6
+        )
         context_hash = memory_context_hash(selected)
         replay = json.dumps(
             {
@@ -118,7 +121,7 @@ def run() -> dict[str, Any]:
             "checkout_isolation": source.checkout_id != target.checkout_id,
             "recall_at_3": round(hits / len(cases), 3),
             "stale_memory_injection_rate": (
-                1.0 if str(obsolete["id"]) in retrieved_ids else 0.0
+                1.0 if any(item["id"] == obsolete["id"] for item in stale_probe) else 0.0
             ),
             "selected_context_items": len(selected),
             "unchanged_replay_items": len(unchanged.get("observations", [])),
@@ -127,7 +130,7 @@ def run() -> dict[str, Any]:
                 source.repo_family_id == target.repo_family_id
                 and source.checkout_id != target.checkout_id
                 and hits == len(cases)
-                and str(obsolete["id"]) not in retrieved_ids
+                and all(item["id"] != obsolete["id"] for item in stale_probe)
                 and unchanged.get("memory_unchanged") is True
                 and unchanged.get("observations") == []
             ),

@@ -1,3 +1,7 @@
+=== Automated PR permission probe ===
+status=1
+pull request create failed: GraphQL: GitHub Actions is not permitted to create or approve pull requests (createPullRequest)
+
 === Repository workflow permissions ===
 {"message":"Resource not accessible by integration","documentation_url":"https://docs.github.com/rest/actions/permissions#get-default-workflow-permissions-for-a-repository","status":"403"}gh: Resource not accessible by integration (HTTP 403)
 

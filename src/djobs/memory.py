@@ -147,7 +147,8 @@ def memory_action(
                         "requires_confirmation": True,
                         "message": (
                             "Set confirm=true only after the user explicitly asks to clear "
-                            "this repository family's passive memory. Explicit tasks are preserved."
+                            "this repository family's passive memory. "
+                            "Explicit tasks are preserved."
                         ),
                     }
                 )

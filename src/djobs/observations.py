@@ -359,7 +359,7 @@ def claim_context_injection(
 
 
 def _row_to_observation(row: Any, *, score: float | None = None) -> dict[str, Any]:
-    metadata = _metadata_dict(row["metadata_json"] if "metadata_json" in row else "{}")
+    metadata = _metadata_dict(row["metadata_json"])
     item: dict[str, Any] = {
         "id": row["id"],
         "agent": row["agent_type"],

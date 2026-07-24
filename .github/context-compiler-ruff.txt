@@ -1,13 +1,1 @@
-SIM401 Use `row.get("metadata_json", "{}")` instead of an `if` block
-   --> src/djobs/observations.py:362:31
-    |
-361 | def _row_to_observation(row: Any, *, score: float | None = None) -> dict[str, Any]:
-362 |     metadata = _metadata_dict(row["metadata_json"] if "metadata_json" in row else "{}")
-    |                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-363 |     item: dict[str, Any] = {
-364 |         "id": row["id"],
-    |
-help: Replace with `row.get("metadata_json", "{}")`
-
-Found 1 error.
-No fixes available (1 hidden fix can be enabled with the `--unsafe-fixes` option).
+All checks passed!

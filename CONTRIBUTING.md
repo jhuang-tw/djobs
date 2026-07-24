@@ -29,7 +29,7 @@ but the `pg` extra keeps type checking and repository-contract tests complete.
 - `src/djobs/auto_hook.py` — legacy explicit command-checkpoint compatibility only; normal setup must not install it.
 - `src/djobs/core/`, `queue/`, `storage/`, `worker/` — durable queue internals and optional general job execution.
 - `vscode-ext/` — headless native MCP registration, passive adapter setup, and diagnostics.
-- `scripts/prepare_auto_release.py` — deterministic SemVer, manifest, and changelog preparation after main CI.
+- `scripts/prepare_auto_release.py` — deterministic tag-backed SemVer, manifest, and changelog preparation after main CI.
 - `tests/unit/` and `tests/integration/` — behavior and backend contracts.
 - `docs/index.html` — public landing page.
 
@@ -51,27 +51,29 @@ that duplicate those sources.
 ## Versioning and releases
 
 Contributors do not manually edit release versions during ordinary feature work.
-After a change reaches `main` and the main `CI` workflow succeeds, the `Release`
+After a change reaches protected `main` and its `CI` workflow succeeds, the `Release`
 workflow automatically:
 
-- chooses the next semantic version from commits since the latest tag;
-- synchronizes `src/djobs/__init__.py`, `server.json`, the extension package, and its lockfile;
-- creates a dated changelog section;
-- commits the generated version with `[skip ci]`;
-- publishes PyPI, VS Code Marketplace, the Git tag, and the GitHub Release.
+- chooses the next semantic version from commits since the latest immutable tag;
+- creates a temporary release snapshot with synchronized Python, MCP, extension,
+  lockfile, and changelog versions;
+- publishes PyPI and the VS Code Marketplace;
+- creates the matching Git tag and GitHub Release;
+- deletes the temporary release branch after success.
 
 Use `feat:` for a minor release, `!` or a `BREAKING CHANGE:` footer for a major
-release, and any other clear title for a patch release. Do not manually create tags,
-restore `.github/release.json`, or run `node vscode-ext/scripts/sync-version.js`
-unless repairing the release tooling itself.
+release, and any other clear title for a patch release. The latest tag is the
+published-version authority; protected `main` may intentionally retain the previous
+checked-in version. Do not manually create tags, restore `.github/release.json`, or
+run `node vscode-ext/scripts/sync-version.js` unless repairing release tooling.
 
 ## Verification
 
 Run the same gates used by CI before opening a pull request:
 
 ```bash
-ruff check src/ tests/
-ruff format --check src/ tests/
+ruff check src/ tests/ scripts/prepare_auto_release.py
+ruff format --check src/ tests/ scripts/prepare_auto_release.py
 mypy
 pytest -q
 

@@ -35,7 +35,11 @@ jobs:
           text = path.read_text(encoding="utf-8")
           text = text.replace(
               'row["metadata_json"] if "metadata_json" in row.keys() else "{}"',
+              'row["metadata_json"]',
+          )
+          text = text.replace(
               'row["metadata_json"] if "metadata_json" in row else "{}"',
+              'row["metadata_json"]',
           )
           text = text.replace(
               'f"SELECT metadata_json FROM agent_observations WHERE id = ? AND correlation_id IN ({placeholders})",',

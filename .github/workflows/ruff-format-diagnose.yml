@@ -1,31 +1,30 @@
-name: Ruff format diagnose
+name: Apply pinned Ruff formatting
 
 on:
   push:
     branches: [release/layered-recovery-presentation]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  capture:
+  format:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: release/layered-recovery-presentation
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
       - run: pip install pre-commit
-      - name: Apply pinned Ruff formatter
-        run: pre-commit run ruff-format --all-files || true
-      - name: Collect changed files
+      - name: Apply pinned formatter and remove temporary workflow
         run: |
-          git diff --name-only > ruff-formatted-files.txt
-          tar -czf ruff-formatted-files.tar.gz -T ruff-formatted-files.txt
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ruff-formatted-files
-          path: |
-            ruff-formatted-files.txt
-            ruff-formatted-files.tar.gz
+          pre-commit run ruff-format --all-files || true
+          git rm .github/workflows/ruff-format-diagnose.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m 'style: apply pinned Ruff formatting'
+          git push origin HEAD:release/layered-recovery-presentation

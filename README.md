@@ -202,8 +202,9 @@ Privacy controls:
 | Kimi Code | `UserPromptSubmit` | session, tool, compact, end | `~/.kimi-code/config.toml` |
 | Codex | query-aware MCP recovery | native session/tool hooks when available | `~/.codex/hooks.json` |
 
-Python **3.10–3.14** is tested in CI on Windows, macOS, and Linux. Node.js **20+** is used only to
-build and publish the VS Code extension; end users do not need Node to run the Python MCP server.
+Python 3.10+ is supported; Python **3.10–3.14** is tested in CI on Windows, macOS, and Linux.
+Node.js **20+** is used only to build and publish the VS Code extension; end users do not need
+Node to run the Python MCP server.
 
 ## Reproducible recovery benchmarks
 

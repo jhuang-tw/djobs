@@ -83,13 +83,15 @@ def test_version_sync_and_release_workflow_cover_every_published_surface() -> No
     assert "workflow_dispatch:" in ci
     assert "actions: write" in release
     assert "pull-requests: write" in release
-    assert "gh workflow run ci.yml" not in release
+    assert 'gh workflow run ci.yml --ref "$release_branch"' not in release
     assert "--event pull_request" in release
     assert 'if [ "$conclusion" = "action_required" ]; then' in release
     assert "/actions/runs/${pr_run_id}/approve" in release
     assert "gh pr create" in release
     assert "gh pr checks" in release
     assert "gh pr merge" in release
+    assert "gh workflow run ci.yml --ref main" in release
+    assert "--event workflow_dispatch" in release
     assert "scripts/prepare_auto_release.py" in release
     assert "scripts/extract_release_notes.py" in release
     assert "vscode-ext/package-lock.json" in release

@@ -359,7 +359,7 @@ def claim_context_injection(
 
 
 def _row_to_observation(row: Any, *, score: float | None = None) -> dict[str, Any]:
-    metadata = _metadata_dict(row["metadata_json"] if "metadata_json" in row.keys() else "{}")
+    metadata = _metadata_dict(row["metadata_json"] if "metadata_json" in row else "{}")
     item: dict[str, Any] = {
         "id": row["id"],
         "agent": row["agent_type"],
@@ -534,7 +534,10 @@ def update_observation_status(
         try:
             cursor.execute("BEGIN IMMEDIATE")
             row = cursor.execute(
-                f"SELECT metadata_json FROM agent_observations WHERE id = ? AND correlation_id IN ({placeholders})",
+                (
+                    "SELECT metadata_json FROM agent_observations "
+                    f"WHERE id = ? AND correlation_id IN ({placeholders})"
+                ),
                 (memory_id, *scopes),
             ).fetchone()
             if row is None:
@@ -821,7 +824,9 @@ def capture_repository_snapshot(repo: Any, workspace: Any, agent: Any) -> bool:
                 INSERT INTO repository_snapshots (workspace_id, digest, summary, updated_at)
                 VALUES (?, ?, ?, ?)
                 ON CONFLICT(workspace_id) DO UPDATE SET
-                    digest = excluded.digest, summary = excluded.summary, updated_at = excluded.updated_at
+                    digest = excluded.digest,
+                    summary = excluded.summary,
+                    updated_at = excluded.updated_at
                 """,
                 (checkout_id, digest, summary, now),
             )

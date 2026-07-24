@@ -535,9 +535,7 @@ def record_session_capsule(
         for row in rows
         if row["event_type"] in {"tool_result", "repository_change"}
     ]
-    failures = [
-        clean(row["summary"], 220) for row in rows if row["event_type"] == "tool_failure"
-    ]
+    failures = [clean(row["summary"], 220) for row in rows if row["event_type"] == "tool_failure"]
     goal = intents[-1] if intents else "Continue the repository work recorded in this session."
     parts = [f"Goal: {goal}"]
     if progress:
@@ -573,8 +571,7 @@ def forget_observation(repo: Any, workspace: Any, memory_id: str) -> bool:
     placeholders = ",".join("?" for _ in workspace.correlation_ids)
     with repo._lock:
         cursor = repo._connection.execute(
-            f"DELETE FROM agent_observations WHERE id = ? "
-            f"AND correlation_id IN ({placeholders})",
+            f"DELETE FROM agent_observations WHERE id = ? AND correlation_id IN ({placeholders})",
             (memory_id, *workspace.correlation_ids),
         )
         repo._connection.commit()

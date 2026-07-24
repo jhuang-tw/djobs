@@ -127,9 +127,7 @@ def _copilot_document(database: Path, mode: str) -> dict[str, Any]:
         "version": 1,
         "hooks": {
             "SessionStart": [_copilot_handler("session-start", database, mode)],
-            "UserPromptSubmit": [
-                _copilot_handler("user-prompt", database, mode, output="silent")
-            ],
+            "UserPromptSubmit": [_copilot_handler("user-prompt", database, mode, output="silent")],
             "PostToolUse": [
                 _copilot_handler(
                     "post",

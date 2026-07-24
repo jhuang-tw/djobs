@@ -1,0 +1,139 @@
+name: Apply fast CI patches
+
+on:
+  push:
+    branches: [perf/fast-preflight-ci]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: perf/fast-preflight-ci
+      - name: Apply exact text patches
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          readme = Path("README.md")
+          text = readme.read_text(encoding="utf-8")
+          old = '''ruff check src tests scripts/prepare_auto_release.py scripts/extract_release_notes.py
+          ruff format --check src tests scripts/prepare_auto_release.py scripts/extract_release_notes.py
+          mypy
+          pytest -q
+          python -m build
+          python -m twine check dist/*
+
+          cd vscode-ext
+          # Node.js 20+
+          npm ci
+          npx tsc -p ./ --noEmit
+          npm run compile'''
+          new = '''# Applies pinned formatting, lint, type checking, change-aware tests,
+          # and the extension build only when extension inputs changed.
+          python scripts/preflight.py --profile quick --fix --base-ref origin/main
+
+          # Optional release-grade local verification.
+          python scripts/preflight.py --profile full --check --base-ref origin/main'''
+          if old not in text:
+              raise SystemExit("README development command block was not found")
+          readme.write_text(text.replace(old, new), encoding="utf-8")
+
+          changelog = Path("CHANGELOG.md")
+          text = changelog.read_text(encoding="utf-8")
+          marker = "## [Unreleased]\n"
+          entry = '''## [Unreleased]
+
+          ### Changed
+          - `[release]` Added one pinned local/CI preflight command, fast change-aware pull-request checks, cancellation of obsolete runs, cached tool setup, and full compatibility validation only on `main` and automated release PRs.
+          - `[release]` Removed the duplicate full CI dispatch after a release PR merge; the exact release commit is fully validated before merge and rebuilt by the publishing jobs.
+          '''
+          if text.count(marker) != 1:
+              raise SystemExit("Unexpected Unreleased changelog structure")
+          changelog.write_text(text.replace(marker, entry, 1), encoding="utf-8")
+
+          release = Path(".github/workflows/publish.yml")
+          text = release.read_text(encoding="utf-8")
+          old_validation = '''          python -m pip install -e ".[dev,pg]"
+                    ruff check src tests scripts/prepare_auto_release.py scripts/extract_release_notes.py
+                    ruff format --check src tests scripts/prepare_auto_release.py scripts/extract_release_notes.py
+                    mypy
+                    python -m pytest -q --tb=short
+                    git diff --check'''
+          new_validation = '''          python -m pip install -e ".[dev,pg]"
+                    python scripts/preflight.py --profile lint --check \\
+                      --changed-file CHANGELOG.md \\
+                      --changed-file src/djobs/__init__.py \\
+                      --changed-file server.json \\
+                      --changed-file vscode-ext/package.json \\
+                      --changed-file vscode-ext/package-lock.json
+                    python -m pytest -q --tb=short \\
+                      tests/unit/test_release_surfaces.py \\
+                      tests/unit/test_release_site_guards.py
+                    git diff --check'''
+          if old_validation not in text:
+              raise SystemExit("Release validation block was not found")
+          text = text.replace(old_validation, new_validation, 1)
+
+          old_post_merge = '''          # Merges performed with GITHUB_TOKEN do not emit a recursive push workflow.
+                    # Dispatch CI explicitly on main, then bind the run to the exact merge SHA.
+                    gh workflow run ci.yml --ref main
+
+                    for attempt in $(seq 1 180); do
+                      run_json="$(gh run list \\
+                        --workflow CI \\
+                        --commit "$merged_sha" \\
+                        --event workflow_dispatch \\
+                        --limit 1 \\
+                        --json databaseId,status,conclusion \\
+                        --jq '.[0] // empty')"
+
+                      if [ -z "$run_json" ]; then
+                        sleep 5
+                        continue
+                      fi
+
+                      status="$(jq -r '.status' <<<"$run_json")"
+                      conclusion="$(jq -r '.conclusion // ""' <<<"$run_json")"
+                      run_id="$(jq -r '.databaseId' <<<"$run_json")"
+
+                      if [ "$status" = "completed" ]; then
+                        if [ "$conclusion" != "success" ]; then
+                          echo "Merged release CI run $run_id completed with $conclusion" >&2
+                          exit 1
+                        fi
+                        break
+                      fi
+
+                      sleep 5
+                    done
+
+                    if [ "${status:-}" != "completed" ]; then
+                      echo "Timed out waiting for merged release CI on $merged_sha" >&2
+                      exit 1
+                    fi
+
+                    echo "publish=true" >> "$GITHUB_OUTPUT"
+                    echo "release_sha=$merged_sha" >> "$GITHUB_OUTPUT"'''
+          new_post_merge = '''          # The exact release commit already passed the full PR matrix. The squash
+                    # merge changes only commit identity, while publish jobs rebuild artifacts
+                    # from this merged SHA. Do not dispatch the same full matrix a second time.
+                    echo "publish=true" >> "$GITHUB_OUTPUT"
+                    echo "release_sha=$merged_sha" >> "$GITHUB_OUTPUT"'''
+          if old_post_merge not in text:
+              raise SystemExit("Post-merge CI block was not found")
+          release.write_text(text.replace(old_post_merge, new_post_merge, 1), encoding="utf-8")
+          PY
+      - name: Commit patches and remove helper
+        run: |
+          git rm .github/workflows/apply-fast-ci-patches.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add README.md CHANGELOG.md .github/workflows/publish.yml
+          git commit -m 'perf: finish shared preflight and release CI split'
+          git push origin HEAD:perf/fast-preflight-ci

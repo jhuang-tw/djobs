@@ -72,6 +72,7 @@ def test_version_sync_and_release_workflow_cover_every_published_surface() -> No
     sync = (ROOT / "vscode-ext/scripts/sync-version.js").read_text(encoding="utf-8")
     planner = (ROOT / "scripts/prepare_auto_release.py").read_text(encoding="utf-8")
     release = (ROOT / ".github/workflows/publish.yml").read_text(encoding="utf-8")
+    ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
 
     assert "package-lock.json" in sync
     assert "lock.packages[''].version" in sync
@@ -79,14 +80,16 @@ def test_version_sync_and_release_workflow_cover_every_published_surface() -> No
     assert 'server["version"] = version' in planner
     assert "select_base_version" in planner
     assert "push:\n    branches: [main]" in release
-    assert "gh run list" in release
-    assert "--workflow CI" in release
-    assert 'conclusion" != "success"' in release
+    assert "workflow_dispatch:" in ci
+    assert "actions: write" in release
+    assert "pull-requests: write" in release
+    assert "gh workflow run ci.yml" in release
+    assert "gh pr create" in release
+    assert "gh pr checks" in release
+    assert "gh pr merge" in release
     assert "scripts/prepare_auto_release.py" in release
     assert "vscode-ext/package-lock.json" in release
     assert "automation/release-v" in release
-    assert "git push --force origin" in release
     assert "gh release create" in release
-    assert "git push origin --delete" in release
     assert "HEAD:main" not in release
     assert ".github/release.json" not in release

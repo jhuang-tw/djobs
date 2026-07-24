@@ -359,7 +359,8 @@ def resolve_agent_session(
     safe_type = "".join(char for char in detected_type if char.isalnum() or char in "-_")
     safe_type = safe_type or "agent"
     safe_session = hashlib.sha256(detected_session.encode("utf-8")).hexdigest()[:16]
-    suffix = workspace.checkout_id.rsplit(":", 1)[-1][:10]
+    checkout_id = workspace.checkout_id or workspace.workspace_id
+    suffix = checkout_id.rsplit(":", 1)[-1][:10]
     return AgentSession(
         agent_type=safe_type,
         session_id=detected_session,

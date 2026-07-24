@@ -13,7 +13,7 @@ from djobs.handoff import ensure_shared_queue
 from djobs.handoff import handoff as _handoff
 from djobs.handoff import sync_workspace as _sync_workspace
 from djobs.memory import memory_action as _memory_action
-from djobs.observations import MemoryStatus, memory_context_hash
+from djobs.observations import memory_context_hash
 from djobs.zero_touch import bootstrap_first_call
 
 _server = FastMCP(
@@ -139,12 +139,11 @@ async def memory(
     """
 
     bootstrap = bootstrap_first_call(context)
-    memory_status = cast(MemoryStatus | None, status)
     return _memory_action(
         action,
         query=query,
         memory_id=memory_id,
-        status=memory_status,
+        status=status,
         replacement_id=replacement_id,
         resolved_by_commit=resolved_by_commit,
         confirm=confirm,

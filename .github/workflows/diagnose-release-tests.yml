@@ -19,11 +19,17 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.13'
-      - run: python -m pip install -e ".[dev,pg]"
-      - run: python -m pytest -q --tb=short > .release-pytest-diagnostics.txt 2>&1 || true
-      - run: |
+      - name: Reproduce the pull request merge ref
+        run: |
+          git fetch origin refs/pull/22/merge:refs/heads/pr-22-merge
+          git worktree add /tmp/djobs-pr-merge pr-22-merge
+          cd /tmp/djobs-pr-merge
+          python -m pip install -e ".[dev,pg]"
+          python -m pytest -q --tb=short > "$GITHUB_WORKSPACE/.release-pytest-diagnostics.txt" 2>&1 || true
+      - name: Commit diagnostics
+        run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add .release-pytest-diagnostics.txt
-          git commit -m 'test: capture final release diagnostics' || exit 0
+          git commit -m 'test: capture merge-ref release diagnostics' || exit 0
           git push origin HEAD:feat/automatic-release-pipeline

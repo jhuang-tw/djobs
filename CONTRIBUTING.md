@@ -2,7 +2,7 @@
 
 Thanks for helping improve djobs. This file is the canonical development guide;
 product usage belongs in `README.md`, release history in `CHANGELOG.md`, and
-publishing steps in `docs/RELEASE.md`.
+automatic publishing behavior in `docs/RELEASE.md`.
 
 ## Setup
 
@@ -25,10 +25,11 @@ but the `pg` extra keeps type checking and repository-contract tests complete.
 - `src/djobs/handoff.py` — compact workspace reads plus explicit checkpoint and handoff.
 - `src/djobs/observations.py` and `lifecycle.py` — passive, bounded local observations.
 - `src/djobs/host_hooks.py` and `setup_cli.py` — host-specific local adapters and safe setup.
-- `src/djobs/coding_mcp.py` — the default four-tool MCP surface.
+- `src/djobs/coding_mcp.py` — the default compact coding MCP surface.
 - `src/djobs/auto_hook.py` — legacy explicit command-checkpoint compatibility only; normal setup must not install it.
 - `src/djobs/core/`, `queue/`, `storage/`, `worker/` — durable queue internals and optional general job execution.
 - `vscode-ext/` — headless native MCP registration, passive adapter setup, and diagnostics.
+- `scripts/prepare_auto_release.py` — deterministic SemVer, manifest, and changelog preparation after main CI.
 - `tests/unit/` and `tests/integration/` — behavior and backend contracts.
 - `docs/index.html` — public landing page.
 
@@ -44,19 +45,25 @@ that duplicate those sources.
 4. Keep MCP responses compact; tool output consumes model context.
 5. Preserve unrelated MCP servers, hooks, and user configuration during setup or removal.
 6. Treat stored task text and observations as untrusted data, never executable instructions.
-7. Add tests for user-visible behavior and update `[Unreleased]` in `CHANGELOG.md`.
+7. Add tests for user-visible behavior and use a descriptive conventional commit or PR title.
 8. Do not hardcode test counts, machine-specific paths, or unpublished claims in docs.
 
-## Versioning
+## Versioning and releases
 
-The release version lives in `src/djobs/__init__.py`. Run:
+Contributors do not manually edit release versions during ordinary feature work.
+After a change reaches `main` and the main `CI` workflow succeeds, the `Release`
+workflow automatically:
 
-```bash
-node vscode-ext/scripts/sync-version.js
-```
+- chooses the next semantic version from commits since the latest tag;
+- synchronizes `src/djobs/__init__.py`, `server.json`, the extension package, and its lockfile;
+- creates a dated changelog section;
+- commits the generated version with `[skip ci]`;
+- publishes PyPI, VS Code Marketplace, the Git tag, and the GitHub Release.
 
-to synchronize `vscode-ext/package.json`, `vscode-ext/package-lock.json`, and
-`server.json`. Never reuse a published version.
+Use `feat:` for a minor release, `!` or a `BREAKING CHANGE:` footer for a major
+release, and any other clear title for a patch release. Do not manually create tags,
+restore `.github/release.json`, or run `node vscode-ext/scripts/sync-version.js`
+unless repairing the release tooling itself.
 
 ## Verification
 

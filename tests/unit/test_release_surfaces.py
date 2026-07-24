@@ -68,11 +68,17 @@ def test_current_docs_and_marketplace_copy_match_passive_local_behavior() -> Non
     assert "resume_delta" in combined
 
 
-def test_version_sync_and_release_workflow_cover_package_lock() -> None:
+def test_version_sync_and_release_workflow_cover_every_published_surface() -> None:
     sync = (ROOT / "vscode-ext/scripts/sync-version.js").read_text(encoding="utf-8")
+    planner = (ROOT / "scripts/prepare_auto_release.py").read_text(encoding="utf-8")
     release = (ROOT / ".github/workflows/publish.yml").read_text(encoding="utf-8")
 
     assert "package-lock.json" in sync
     assert "lock.packages[''].version" in sync
+    assert 'lock.setdefault("packages", {}).setdefault("", {})["version"] = version' in planner
+    assert 'server["version"] = version' in planner
+    assert "workflow_run:" in release
+    assert "scripts/prepare_auto_release.py" in release
     assert "vscode-ext/package-lock.json" in release
-    assert "root package does not match" in release
+    assert "[skip ci]" in release
+    assert ".github/release.json" not in release

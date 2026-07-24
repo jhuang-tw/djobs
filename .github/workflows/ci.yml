@@ -41,7 +41,18 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[dev]"
-      - run: pytest -q --tb=short
+      - name: Run tests
+        shell: bash
+        run: |
+          set -o pipefail
+          pytest -q --tb=short 2>&1 | tee pytest-${{ matrix.python-version }}.log
+      - name: Upload failed test log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-${{ matrix.python-version }}-failure
+          path: pytest-${{ matrix.python-version }}.log
+          if-no-files-found: error
 
   test-postgres:
     runs-on: ubuntu-latest

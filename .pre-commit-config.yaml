@@ -1,54 +1,25 @@
-# pre-commit — runs the same gates as CI before a push ever leaves your
-# machine, so you never wait for a red CI run to find a lint/type/test break.
-# This file is the single source of truth shared by local hooks and CI
-# (.github/workflows/ci.yml).
+# The pre-push hook and GitHub CI call the same Python entry point. The hook
+# applies the pinned formatter first and aborts when it changes files, so a
+# developer fixes/stages formatting before spending time on remote CI.
 #
-# One-time setup per clone (from the repo root):
-#     pip install -e ".[dev,pg]"     # installs pre-commit + tools + psycopg
-#     pre-commit install             # wires up the pre-push hook
+# One-time setup per clone:
+#     python -m pip install -e ".[dev,pg]"
+#     pre-commit install
 #
-# If you previously enabled the fallback shell hook, unset it first so
-# pre-commit can manage the hooks:
-#     git config --unset core.hooksPath
+# Run on demand:
+#     python scripts/preflight.py --profile quick --fix --base-ref origin/main
 #
-# Run on demand:   pre-commit run --all-files
-# Bypass (rare):   git push --no-verify
+# Bypass is intentionally possible for emergencies with `git push --no-verify`,
+# but CI still performs the non-mutating check form.
 
-# Installing only wires up the pre-push hook, so the gates run on `git push`
-# (not on every commit). Hooks are left stage-unrestricted so you can also run
-# them manually with `pre-commit run --all-files`.
 default_install_hook_types: [pre-push]
 
 repos:
-  # Lint + format — pinned, isolated environment so the tool version never
-  # drifts from CI regardless of what is installed in your local venv. This
-  # is what fixes the "ruff 3.10 vs 3.13" class of problems.
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.14
-    hooks:
-      - id: ruff-check
-        args: [--config, pyproject.toml]
-        files: ^(src|tests)/|^scripts/prepare_auto_release\.py$
-      - id: ruff-format
-        args: [--check, --config, pyproject.toml]
-        files: ^(src|tests)/|^scripts/prepare_auto_release\.py$
-
-  # Type check + tests — run in the project's own environment so psycopg and
-  # mcp types resolve. These reuse whatever "python -m" resolves to, exactly
-  # like CI (which does `pip install -e ".[dev,pg]"`).
   - repo: local
     hooks:
-      - id: mypy
-        name: mypy
-        entry: python -m mypy
-        language: system
-        types: [python]
-        pass_filenames: false
-        files: ^src/djobs/|^scripts/prepare_auto_release\.py$
-
-      - id: pytest
-        name: pytest
-        entry: python -m pytest -q --tb=short
+      - id: djobs-preflight
+        name: djobs quick preflight
+        entry: python scripts/preflight.py --profile quick --fix --base-ref origin/main
         language: system
         pass_filenames: false
         always_run: true

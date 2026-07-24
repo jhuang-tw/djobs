@@ -14,6 +14,12 @@ public interfaces may still change between minor versions. Entries below use
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-07-24
+
+### Added
+- `[release]` Add layered recovery tiers and verified-task efficiency (#38)
+
+
 ### Added
 - `[core]` Added layered `sync_workspace` recovery tiers: a minimal `resume` capsule for normal continuation, compact `evidence`, and full `audit` detail. The MCP defaults to `resume` while direct Python callers retain the prior audit-shaped default for compatibility.
 - `[core]` Extended `djobs gain` with verified-task efficiency metrics, including first-pass verified rate, repair attempts, average attempts, cycle-time proxy, and estimated context tokens per verified task.

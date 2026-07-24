@@ -29,6 +29,16 @@ def test_python_change_requires_python_validation() -> None:
     assert changes.unknown is False
 
 
+def test_dotfile_paths_keep_their_leading_dot() -> None:
+    changes = preflight.classify_changes(
+        ["./.github/workflows/ci.yml", ".pre-commit-config.yaml"]
+    )
+
+    assert changes.paths == (".github/workflows/ci.yml", ".pre-commit-config.yaml")
+    assert changes.python is True
+    assert changes.unknown is False
+
+
 def test_extension_readme_does_not_compile_extension() -> None:
     changes = preflight.classify_changes(["vscode-ext/README.md"])
 

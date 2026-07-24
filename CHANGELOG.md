@@ -14,6 +14,18 @@ public interfaces may still change between minor versions. Entries below use
 
 ## [Unreleased]
 
+### Added
+- `[core]` Added layered `sync_workspace` recovery tiers: a minimal `resume` capsule for normal continuation, compact `evidence`, and full `audit` detail. The MCP defaults to `resume` while direct Python callers retain the prior audit-shaped default for compatibility.
+- `[core]` Extended `djobs gain` with verified-task efficiency metrics, including first-pass verified rate, repair attempts, average attempts, cycle-time proxy, and estimated context tokens per verified task.
+
+### Changed
+- `[core]` Session capsule metadata now remains structurally available to recovery instead of forcing agents to parse a single summary string.
+- `[core]` Reuse the process-local SQLite queue for repeated calls to the same database, while safely closing the old handle when configuration changes.
+
+### Fixed
+- `[core]` Normalize WSL `/mnt/<drive>/...` paths to the matching Windows repository identity even when djobs itself runs on Windows.
+- `[release]` Close benchmark SQLite handles before temporary-directory cleanup so the recovery benchmark is reproducible on Windows.
+
 ## [0.17.2] - 2026-07-24
 
 ### Fixed

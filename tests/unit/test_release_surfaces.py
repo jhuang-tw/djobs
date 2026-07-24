@@ -68,6 +68,44 @@ def test_current_docs_and_marketplace_copy_match_passive_local_behavior() -> Non
     assert "resume_delta" in combined
 
 
+def test_public_surfaces_share_layered_recovery_positioning() -> None:
+    paths = ("README.md", "vscode-ext/README.md", "docs/index.html")
+    surfaces = {path: (ROOT / path).read_text(encoding="utf-8").lower() for path in paths}
+    required = (
+        "local project memory and explicit handoff for ai coding agents.",
+        "continue the repository instead of explaining it again in every new ai session.",
+        'context_tier="resume"',
+        "python 3.10",
+        "node.js 20+",
+        "1.101",
+        "~224",
+        "97.1%",
+        "djobs gain",
+        "sync_workspace",
+        "memory",
+        "checkpoint",
+        "handoff",
+        "resume_delta",
+    )
+
+    for path, text in surfaces.items():
+        for marker in required:
+            assert marker in text, f"{path} is missing shared public marker: {marker}"
+
+    for path in ("README.md", "vscode-ext/README.md"):
+        text = surfaces[path]
+        assert "banner.png" not in text
+        assert text.count("icon-128.png") == 1
+
+    html = surfaces["docs/index.html"]
+    icon_tag = (
+        '<img src="https://raw.githubusercontent.com/jhuang-tw/djobs/main/'
+        'vscode-ext/media/icon-128.png"'
+    )
+    assert "banner.png" not in html
+    assert html.count(icon_tag) == 1
+
+
 def test_version_sync_and_release_workflow_cover_every_published_surface() -> None:
     sync = (ROOT / "vscode-ext/scripts/sync-version.js").read_text(encoding="utf-8")
     planner = (ROOT / "scripts/prepare_auto_release.py").read_text(encoding="utf-8")

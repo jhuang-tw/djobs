@@ -184,6 +184,10 @@ def _git_output(path: str, *args: str, timeout: float = 2.0) -> str | None:
 
 def _git_root(path: str) -> str:
     normalized = normalize_path(path)
+    mounted_alias = _mounted_windows_alias(normalized)
+    if mounted_alias is not None and os.name == "nt":
+        normalized = mounted_alias
+        path = mounted_alias
     if _is_windows_path(normalized) and os.name != "nt":
         return normalized
 

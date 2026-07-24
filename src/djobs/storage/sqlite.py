@@ -64,6 +64,12 @@ class SQLiteJobRepository:
         initialize_schema(connection)
         return cls(connection)
 
+    def close(self) -> None:
+        """Release the SQLite handle so temporary databases can be removed on Windows."""
+
+        with self._lock:
+            self._connection.close()
+
     def create_job(self, job: Job) -> Job:
         with self._lock:
             self._connection.execute(

@@ -159,3 +159,10 @@ def test_context_hash_suppresses_unchanged_memory_replay() -> None:
     changed = json.loads(_with_context_hash(raw, "different"))
     assert changed["memory_unchanged"] is False
     assert changed["observations"] == observations
+
+    resume = {"goal": "Keep the public API", "next": "run focused tests"}
+    resume_raw = json.dumps({"ok": True, "resume": resume, "tasks": []})
+    resume_hash = memory_context_hash(resume)
+    resume_unchanged = json.loads(_with_context_hash(resume_raw, resume_hash))
+    assert resume_unchanged["memory_unchanged"] is True
+    assert resume_unchanged["resume"] == {}

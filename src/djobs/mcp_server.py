@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -60,6 +61,24 @@ _server = FastMCP(
 
 _queue: QueueService | None = None
 _db_path: str = os.environ.get("DJOBS_DB") or "djobs_mcp.db"
+_configure_lock = threading.Lock()
+
+
+def _database_key(path: str) -> str:
+    return os.path.normcase(os.path.abspath(os.path.expanduser(path)))
+
+
+def close_configured_queue() -> None:
+    """Close and forget the process-global queue without deleting durable state."""
+
+    global _queue
+    with _configure_lock:
+        current = _queue
+        _queue = None
+        if current is not None:
+            close = getattr(current._repository, "close", None)
+            if callable(close):
+                close()
 
 
 def configure(db_path: str | None = None) -> QueueService:
@@ -69,10 +88,19 @@ def configure(db_path: str | None = None) -> QueueService:
     (for a shared global queue), falling back to the workspace-local default.
     """
     global _queue, _db_path
-    _db_path = db_path or os.environ.get("DJOBS_DB") or "djobs_mcp.db"
-    repo = SQLiteJobRepository.from_path(_db_path)
-    _queue = QueueService(repo)
-    return _queue
+    requested = db_path or os.environ.get("DJOBS_DB") or "djobs_mcp.db"
+    with _configure_lock:
+        if _queue is not None and _database_key(_db_path) == _database_key(requested):
+            return _queue
+        previous = _queue
+        if previous is not None:
+            close = getattr(previous._repository, "close", None)
+            if callable(close):
+                close()
+        _db_path = requested
+        repo = SQLiteJobRepository.from_path(_db_path)
+        _queue = QueueService(repo)
+        return _queue
 
 
 def _get_queue() -> QueueService:

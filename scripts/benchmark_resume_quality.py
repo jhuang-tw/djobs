@@ -113,7 +113,7 @@ def run() -> dict[str, Any]:
         )
         unchanged = json.loads(_with_context_hash(replay, context_hash))
 
-        return {
+        result = {
             "benchmark": "deterministic multi-session recovery quality",
             "worktree_family_match": source.repo_family_id == target.repo_family_id,
             "checkout_isolation": source.checkout_id != target.checkout_id,
@@ -133,6 +133,8 @@ def run() -> dict[str, Any]:
                 and unchanged.get("observations") == []
             ),
         }
+        repository.close()
+        return result
 
 
 def main() -> int:

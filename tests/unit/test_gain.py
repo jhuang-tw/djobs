@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -70,6 +70,48 @@ def test_gain_splits_automatic_and_workflow_savings(tmp_path: Path) -> None:
         "pytest -q tests/unit/test_parser.py"
     )
     assert repo.get_job(automatic.id) is not None
+
+
+def test_gain_reports_verified_task_efficiency_and_repairs(tmp_path: Path) -> None:
+    db = tmp_path / "gain.db"
+    _, queue = _queue(db)
+    correlation_id = "workspace-efficiency"
+
+    first_pass = queue.submit(
+        "coding-checkpoint",
+        {"summary": "Implement parser validation"},
+        correlation_id=correlation_id,
+        max_attempts=2,
+    )
+    claimed = queue.claim("worker-one")
+    assert claimed is not None and claimed.id == first_pass.id
+    queue.complete(first_pass.id, evidence="focused validation passed")
+
+    repaired = queue.submit(
+        "coding-checkpoint",
+        {"summary": "Repair integration binding"},
+        correlation_id=correlation_id,
+        max_attempts=3,
+    )
+    claimed = queue.claim("worker-two")
+    assert claimed is not None and claimed.id == repaired.id
+    now = datetime.now(timezone.utc)
+    queue.retry_or_dead_letter(repaired.id, "first validation failed", now=now)
+    queue.promote_due_retries(now=now + timedelta(hours=1))
+    claimed_again = queue.claim("worker-two")
+    assert claimed_again is not None and claimed_again.id == repaired.id
+    queue.complete(repaired.id, evidence="repair passed validation")
+
+    report = build_gain_report(db, correlation_id, now=now + timedelta(hours=1))
+    efficiency = report["all_time"]["verified_task_efficiency"]
+
+    assert efficiency["verified_tasks"] == 2
+    assert efficiency["first_pass_verified_tasks"] == 1
+    assert efficiency["first_pass_verified_percent"] == 50.0
+    assert efficiency["repair_attempts"] == 1
+    assert efficiency["average_attempts_per_verified_task"] == 1.5
+    assert efficiency["cost_per_verified_task"]["estimated_context_tokens"] > 0
+    assert efficiency["cost_per_verified_task"]["average_cycle_seconds"] >= 0
 
 
 def test_gain_filters_by_workspace(tmp_path: Path) -> None:

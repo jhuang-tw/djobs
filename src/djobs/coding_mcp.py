@@ -21,7 +21,9 @@ _server = FastMCP(
     instructions=(
         "Zero-touch local repository memory. Call sync_workspace(query=current_request) near "
         "the start of repository work so relevant prior intent, failures, session capsules, "
-        "and Git changes are recovered under a token budget. Persist context_hash and pass it "
+        "and Git changes are recovered under a token budget. Use context_tier=resume for the "
+        "smallest continuation capsule, evidence for compact supporting facts, or audit only "
+        "when identifiers and timestamps are genuinely needed. Persist context_hash and pass it "
         "as known_context_hash on the next recovery to avoid replaying unchanged memory. The "
         "first MCP call initializes local state and the detected host adapter automatically. "
         "Use memory to inspect, search, update lifecycle status, forget, or explicitly clear "
@@ -76,14 +78,24 @@ def _with_context_hash(raw: str, known_context_hash: str | None) -> str:
         return raw
     if not isinstance(result, dict) or not result.get("ok"):
         return raw
+    resume = result.get("resume")
     observations = result.get("observations")
-    selected = cast(list[dict[str, Any]], observations) if isinstance(observations, list) else []
+    selected: Any
+    if isinstance(resume, dict) and resume:
+        selected = resume
+    elif isinstance(observations, list):
+        selected = cast(list[dict[str, Any]], observations)
+    else:
+        selected = []
     context_hash = memory_context_hash(selected)
     unchanged = bool(known_context_hash) and known_context_hash == context_hash
     result["context_hash"] = context_hash
     result["memory_unchanged"] = unchanged
     if unchanged:
-        result["observations"] = []
+        if isinstance(result.get("resume"), dict):
+            result["resume"] = {}
+        if isinstance(result.get("observations"), list):
+            result["observations"] = []
         counts = result.get("counts")
         if isinstance(counts, dict):
             counts["observations"] = 0
@@ -98,11 +110,13 @@ async def sync_workspace(
     token_budget: int = 500,
     max_items: int = 6,
     known_context_hash: str | None = None,
+    context_tier: Literal["resume", "evidence", "audit"] = "resume",
 ) -> str:
     """Recover compact repository memory ranked for the current request.
 
     Persist the returned ``context_hash``. Passing it back as ``known_context_hash``
     suppresses identical passive memory while still returning current task state.
+    Start with ``resume``; request ``evidence`` or ``audit`` only for deeper inspection.
     """
 
     bootstrap = bootstrap_first_call(context)
@@ -113,6 +127,7 @@ async def sync_workspace(
         query=query,
         token_budget=token_budget,
         max_items=max_items,
+        context_tier=context_tier,
     )
     return _with_context_hash(raw, known_context_hash)
 

@@ -84,8 +84,8 @@ def test_changelog_current_section_has_release_notes() -> None:
     )
     assert match is not None
     body = match.group("body").strip()
-    assert len(body) > 120
-    assert re.search(r"^### ", body, re.MULTILINE)
+    assert re.search(r"^### (Added|Changed|Fixed|Performance)$", body, re.MULTILINE)
+    assert re.search(r"^- `\[release\]` \S.+$", body, re.MULTILINE)
 
 
 def test_marketplace_metadata_matches_product_positioning() -> None:

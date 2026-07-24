@@ -1,0 +1,34 @@
+name: Format context compiler branch
+
+on:
+  push:
+    branches: [feat/context-compiler-017]
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/context-compiler-017
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: python -m pip install ruff==0.15.14
+      - run: ruff check --fix --config pyproject.toml src tests scripts/benchmark_resume_quality.py
+      - run: ruff format --config pyproject.toml src tests scripts/benchmark_resume_quality.py
+      - name: Commit formatting
+        run: |
+          if git diff --quiet; then
+            exit 0
+          fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src tests scripts/benchmark_resume_quality.py
+          git commit -m 'style: apply context compiler formatting'
+          git push origin HEAD:feat/context-compiler-017

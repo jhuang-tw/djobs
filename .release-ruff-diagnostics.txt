@@ -1,0 +1,25 @@
+RUF005 Consider iterable unpacking instead of concatenation
+  --> tests/unit/test_prepare_auto_release.py:21:16
+   |
+19 | def test_commit_types_select_highest_required_bump() -> None:
+20 |     fixes = (Commit("a" * 40, "fix: avoid duplicate replay", ""),)
+21 |     features = fixes + (Commit("b" * 40, "feat(memory): share worktree context", ""),)
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+22 |     breaking = features + (Commit("c" * 40, "refactor!: replace the public queue contract", ""),)
+   |
+help: Replace with iterable unpacking
+
+RUF005 Consider iterable unpacking instead of concatenation
+  --> tests/unit/test_prepare_auto_release.py:22:16
+   |
+20 |     fixes = (Commit("a" * 40, "fix: avoid duplicate replay", ""),)
+21 |     features = fixes + (Commit("b" * 40, "feat(memory): share worktree context", ""),)
+22 |     breaking = features + (Commit("c" * 40, "refactor!: replace the public queue contract", ""),)
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+23 |
+24 |     assert classify_bump(fixes) == "patch"
+   |
+help: Replace with iterable unpacking
+
+Found 2 errors.
+No fixes available (2 hidden fixes can be enabled with the `--unsafe-fixes` option).

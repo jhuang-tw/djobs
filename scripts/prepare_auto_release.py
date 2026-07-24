@@ -13,10 +13,11 @@ import json
 import os
 import re
 import subprocess
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Literal
+from typing import Literal
 
 ROOT = Path(__file__).resolve().parents[1]
 INIT_PATH = ROOT / "src" / "djobs" / "__init__.py"

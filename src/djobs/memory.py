@@ -6,7 +6,7 @@ import argparse
 import json
 import math
 import os
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from djobs.handoff import _resolve
 from djobs.observations import (
@@ -162,7 +162,10 @@ def main(argv: list[str] | None = None) -> int:
     clear_parser = subparsers.add_parser("clear", help="Clear passive memory for this repo")
     clear_parser.add_argument("--yes", action="store_true", help="Confirm destructive clear")
     args = parser.parse_args(argv)
-    action = args.action or "list"
+    raw_action = args.action or "list"
+    if raw_action not in {"list", "search", "forget", "clear"}:
+        parser.error(f"unsupported memory action: {raw_action}")
+    action = cast(MemoryAction, raw_action)
     result = memory_action(
         action,
         query=getattr(args, "query", None),

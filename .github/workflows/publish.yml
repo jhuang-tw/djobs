@@ -89,8 +89,8 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install -e ".[dev,pg]"
-          ruff check src tests scripts/prepare_auto_release.py
-          ruff format --check src tests scripts/prepare_auto_release.py
+          ruff check src tests scripts/prepare_auto_release.py scripts/extract_release_notes.py
+          ruff format --check src tests scripts/prepare_auto_release.py scripts/extract_release_notes.py
           mypy
           python -m pytest -q --tb=short
           git diff --check
@@ -190,7 +190,7 @@ jobs:
           fi
 
           checks_ready=false
-          for attempt in $(seq 1 60); do
+          for attempt in $(seq 1 120); do
             set +e
             checks_output="$(gh pr checks "$pr_number" --required 2>&1)"
             checks_status=$?
@@ -363,13 +363,7 @@ jobs:
       - name: Prepare release body from CHANGELOG.md
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
-        run: |
-          awk -v version="$VERSION" '
-            $0 ~ "^## \\[" version "\\] - " { in_section=1; next }
-            in_section && /^## \\[/ { exit }
-            in_section { print }
-          ' CHANGELOG.md > release_body.md
-          test -s release_body.md
+        run: python scripts/extract_release_notes.py "$VERSION" release_body.md
 
       - name: Create or update immutable GitHub Release
         env:

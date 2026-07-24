@@ -77,11 +77,16 @@ def test_version_sync_and_release_workflow_cover_every_published_surface() -> No
     assert "lock.packages[''].version" in sync
     assert 'lock.setdefault("packages", {}).setdefault("", {})["version"] = version' in planner
     assert 'server["version"] = version' in planner
+    assert "select_base_version" in planner
     assert "push:\n    branches: [main]" in release
     assert "gh run list" in release
     assert "--workflow CI" in release
     assert 'conclusion" != "success"' in release
     assert "scripts/prepare_auto_release.py" in release
     assert "vscode-ext/package-lock.json" in release
-    assert "[skip ci]" in release
+    assert "automation/release-v" in release
+    assert "git push --force origin" in release
+    assert "gh release create" in release
+    assert "git push origin --delete" in release
+    assert "HEAD:main" not in release
     assert ".github/release.json" not in release

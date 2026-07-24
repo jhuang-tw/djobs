@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import subprocess
 import uuid
 from contextlib import suppress
@@ -19,12 +20,20 @@ _PROCESS_SESSION_ID = uuid.uuid4().hex
 
 @dataclass(frozen=True)
 class Workspace:
-    """Canonical identity for one repository opened by an MCP client."""
+    """Canonical identity for one repository checkout opened by an MCP client.
+
+    ``workspace_id``/``checkout_id`` remain checkout-scoped so explicit task
+    ownership never leaks across worktrees. ``repo_family_id`` is stable across
+    worktrees and compatible clones and is used by passive project memory.
+    """
 
     root: str
     workspace_id: str
     correlation_ids: tuple[str, ...]
     source: str
+    repo_family_id: str = ""
+    checkout_id: str = ""
+    memory_correlation_ids: tuple[str, ...] = ()
 
     @property
     def name(self) -> str:
@@ -129,6 +138,11 @@ def _workspace_id(identity: str) -> str:
     return f"repo:{digest}"
 
 
+def _family_id(identity: str) -> str:
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+    return f"family:{digest}"
+
+
 def _cross_shell_aliases(path: str | os.PathLike[str]) -> set[str]:
     """Return path spellings used by native Windows, WSL, and Git Bash.
 
@@ -151,6 +165,23 @@ def _is_windows_path(path: str) -> bool:
     return len(path) >= 2 and path[1] == ":" and PureWindowsPath(path).drive != ""
 
 
+def _git_output(path: str, *args: str, timeout: float = 2.0) -> str | None:
+    normalized = normalize_path(path)
+    if _is_windows_path(normalized) and os.name != "nt":
+        return None
+    try:
+        result = subprocess.run(
+            ["git", "-C", path, *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return result.stdout.strip() if result.returncode == 0 and result.stdout.strip() else None
+
+
 def _git_root(path: str) -> str:
     normalized = normalize_path(path)
     if _is_windows_path(normalized) and os.name != "nt":
@@ -162,18 +193,9 @@ def _git_root(path: str) -> str:
     if candidate.is_file():
         candidate = candidate.parent
 
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(candidate), "rev-parse", "--show-toplevel"],
-            capture_output=True,
-            text=True,
-            timeout=2,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        result = None
-    if result is not None and result.returncode == 0 and result.stdout.strip():
-        return normalize_path(result.stdout.strip())
+    resolved = _git_output(str(candidate), "rev-parse", "--show-toplevel")
+    if resolved:
+        return normalize_path(resolved)
 
     current = candidate
     for parent in (current, *current.parents):
@@ -193,16 +215,52 @@ def _select_root(roots: list[str], cwd: str | None) -> str | None:
     return roots[0]
 
 
+def _normalize_remote(remote: str) -> str:
+    """Normalize common HTTPS/SSH/scp Git remotes into one family key."""
+
+    value = remote.strip().replace("\\", "/")
+    scp_match = re.match(r"^(?:[^@]+@)?([^:]+):(.+)$", value)
+    if scp_match and "://" not in value:
+        value = f"ssh://{scp_match.group(1)}/{scp_match.group(2)}"
+    parsed = urlparse(value)
+    if parsed.scheme and parsed.netloc:
+        host = (parsed.hostname or parsed.netloc).casefold()
+        path = parsed.path.strip("/")
+        value = f"{host}/{path}"
+    value = value.removesuffix(".git").rstrip("/")
+    return value.casefold()
+
+
+def _repository_family_identity(root: str, checkout_identity: str) -> str:
+    remote = _git_output(root, "config", "--get", "remote.origin.url")
+    roots = _git_output(root, "rev-list", "--max-parents=0", "--all", timeout=5.0)
+    root_commit = sorted(roots.splitlines())[0] if roots else ""
+    common_dir = _git_output(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
+
+    if remote:
+        identity = f"remote:{_normalize_remote(remote)}"
+        if root_commit:
+            identity += f"|root:{root_commit}"
+        return identity
+    if common_dir:
+        identity = f"common:{path_key(common_dir)}"
+        if root_commit:
+            identity += f"|root:{root_commit}"
+        return identity
+    return f"checkout:{checkout_identity}"
+
+
 def resolve_workspace(
     *,
     roots: list[Any] | tuple[Any, ...] | None = None,
     cwd: str | os.PathLike[str] | None = None,
     server_cwd: str | os.PathLike[str] | None = None,
 ) -> Workspace:
-    """Resolve a repository in MCP priority order.
+    """Resolve a checkout plus a repository-family identity.
 
-    Priority is MCP client roots, request/client cwd, Git root, then server cwd.
-    Every filesystem candidate is folded back to its Git root when possible.
+    Explicit tasks remain checkout-scoped. Passive memory is written to a stable
+    repository-family scope so sibling worktrees and compatible clones can reuse
+    architecture decisions and prior failures without sharing live ownership.
     """
 
     root_candidates = [value for item in roots or () if (value := _root_value(item))]
@@ -222,7 +280,9 @@ def resolve_workspace(
 
     canonical = normalize_path(root)
     identity = path_key(canonical)
-    workspace_id = _workspace_id(identity)
+    checkout_id = _workspace_id(identity)
+    family_identity = _repository_family_identity(canonical, identity)
+    repo_family_id = _family_id(family_identity)
 
     # Reads remain compatible with old clients that stored request cwd, a Git
     # subdirectory, alternate shell spellings, or the old deterministic hash.
@@ -236,16 +296,20 @@ def resolve_workspace(
     for value in legacy_candidates:
         aliases.update(_cross_shell_aliases(value))
 
-    compatible: set[str] = {workspace_id, canonical, identity}
+    compatible: set[str] = {checkout_id, canonical, identity}
     for alias in aliases:
         compatible.update(correlation_id_variants(alias))
-        # Before cross-shell normalization, deterministic IDs were derived from
-        # each native spelling. Retain those hashes so upgrades do not hide work.
         compatible.add(_workspace_id(alias.casefold() if _is_windows_path(alias) else alias))
+
+    memory_compatible = set(compatible)
+    memory_compatible.add(repo_family_id)
     return Workspace(
         root=canonical,
-        workspace_id=workspace_id,
+        workspace_id=checkout_id,
+        checkout_id=checkout_id,
+        repo_family_id=repo_family_id,
         correlation_ids=tuple(sorted(compatible)),
+        memory_correlation_ids=tuple(sorted(memory_compatible)),
         source=source,
     )
 
@@ -295,7 +359,7 @@ def resolve_agent_session(
     safe_type = "".join(char for char in detected_type if char.isalnum() or char in "-_")
     safe_type = safe_type or "agent"
     safe_session = hashlib.sha256(detected_session.encode("utf-8")).hexdigest()[:16]
-    suffix = workspace.workspace_id.rsplit(":", 1)[-1][:10]
+    suffix = workspace.checkout_id.rsplit(":", 1)[-1][:10]
     return AgentSession(
         agent_type=safe_type,
         session_id=detected_session,

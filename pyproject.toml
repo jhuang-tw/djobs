@@ -40,9 +40,11 @@ Issues = "https://github.com/jhuang-tw/djobs/issues"
 dev = [
     "pytest>=8.0",
     "PyYAML>=6.0",
-    "ruff>=0.4",
+    "ruff==0.15.14",
     "mypy>=1.10",
     "pre-commit>=3.5",
+    "build>=1.2",
+    "twine>=5.0",
 ]
 pg = [
     "psycopg[binary]>=3.1",
@@ -97,7 +99,12 @@ select = [
 
 [tool.mypy]
 python_version = "3.10"
-files = ["src/djobs", "scripts/prepare_auto_release.py"]
+files = [
+    "src/djobs",
+    "scripts/prepare_auto_release.py",
+    "scripts/extract_release_notes.py",
+    "scripts/preflight.py",
+]
 ignore_missing_imports = true
 warn_unused_ignores = true
 warn_redundant_casts = true

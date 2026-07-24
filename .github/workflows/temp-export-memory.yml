@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - ".github/project-memory.patch.gz.b64"
+      - ".github/project-memory.ready"
 
 permissions:
   contents: write
@@ -22,10 +22,11 @@ jobs:
       - name: Apply verified patch and remove temporary files
         run: |
           set -euo pipefail
-          base64 --decode .github/project-memory.patch.gz.b64 | gzip --decompress > /tmp/project-memory.patch
+          cat .github/project-memory.patch.gz.b64.part-* | base64 --decode | gzip --decompress > /tmp/project-memory.patch
           git apply --check /tmp/project-memory.patch
           git apply /tmp/project-memory.patch
-          rm -f .github/project-memory.patch.gz.b64
+          rm -f .github/project-memory.patch.gz.b64.part-*
+          rm -f .github/project-memory.ready
           rm -f .github/workflows/temp-export-memory.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

@@ -26,8 +26,32 @@ jobs:
         with:
           python-version: "3.13"
       - run: python -m pip install ruff==0.15.14
-      - name: Apply safe Ruff fixes
+      - name: Apply bounded source fixes
         run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/djobs/observations.py")
+          text = path.read_text(encoding="utf-8")
+          text = text.replace(
+              'row["metadata_json"] if "metadata_json" in row.keys() else "{}"',
+              'row["metadata_json"] if "metadata_json" in row else "{}"',
+          )
+          text = text.replace(
+              'f"SELECT metadata_json FROM agent_observations WHERE id = ? AND correlation_id IN ({placeholders})",',
+              '(\n'
+              '                    "SELECT metadata_json FROM agent_observations "\n'
+              '                    f"WHERE id = ? AND correlation_id IN ({placeholders})"\n'
+              '                ),',
+          )
+          text = text.replace(
+              "                    digest = excluded.digest, summary = excluded.summary, updated_at = excluded.updated_at",
+              "                    digest = excluded.digest,\n"
+              "                    summary = excluded.summary,\n"
+              "                    updated_at = excluded.updated_at",
+          )
+          path.write_text(text, encoding="utf-8")
+          PY
           ruff check --fix --config pyproject.toml src tests scripts/benchmark_resume_quality.py || true
           ruff format --config pyproject.toml src tests scripts/benchmark_resume_quality.py
       - name: Capture remaining diagnostics
@@ -37,7 +61,7 @@ jobs:
           mypy > .github/context-compiler-mypy.txt 2>&1 || true
       - name: Commit formatting and diagnostics
         run: |
-          if git diff --quiet && git ls-files --error-unmatch .github/context-compiler-ruff.txt .github/context-compiler-mypy.txt >/dev/null 2>&1; then
+          if git diff --quiet; then
             exit 0
           fi
           git config user.name github-actions[bot]

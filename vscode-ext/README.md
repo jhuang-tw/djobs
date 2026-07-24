@@ -14,8 +14,9 @@ sidebar, dashboard, polling loop, remote service, or cloud database.
 - actual Git working-tree changes;
 - a compact session capsule before context compaction or exit.
 
-When the next request arrives, `sync_workspace(query=...)` searches relevant memories instead
-of returning only the newest activity.
+When the next request arrives, `sync_workspace(query=..., context_tier="resume")` searches
+relevant memories and returns only the smallest continuation capsule by default. Supporting
+evidence and audit identifiers remain available on demand.
 
 ## Zero-touch start
 
@@ -28,7 +29,7 @@ needs repair, or diagnostics find a damaged installation.
 
 ## Five compact tools
 
-- `sync_workspace(query?, ...)` recovers relevant goals, failures, capsules, tasks, and Git changes.
+- `sync_workspace(query?, context_tier?, ...)` recovers layered resume, evidence, or audit context.
 - `memory(...)` lists, searches, forgets, or explicitly clears passive repository memory.
 - `checkpoint(...)` deliberately creates or resumes one tracked task and claims its lease.
 - `handoff(...)` explicitly releases or completes tracked work with bounded evidence.

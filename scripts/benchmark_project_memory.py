@@ -19,6 +19,7 @@ from typing import Any
 
 from djobs import lifecycle
 from djobs.handoff import sync_workspace
+from djobs.mcp_server import close_configured_queue
 
 
 def estimate_tokens(text: str) -> int:
@@ -105,45 +106,56 @@ def seed_memory(root: Path) -> None:
 
 
 def run(file_count: int) -> dict[str, Any]:
+    previous_db = os.environ.get("DJOBS_DB")
     with tempfile.TemporaryDirectory(prefix="djobs-memory-benchmark-") as temp:
-        temp_root = Path(temp)
-        root = temp_root / "project"
-        files = create_fixture(root, file_count)
-        os.environ["DJOBS_DB"] = str(temp_root / "memory.db")
-        seed_memory(root)
+        try:
+            temp_root = Path(temp)
+            root = temp_root / "project"
+            files = create_fixture(root, file_count)
+            os.environ["DJOBS_DB"] = str(temp_root / "memory.db")
+            seed_memory(root)
 
-        baseline = "\n".join(path.read_text(encoding="utf-8") for path in files)
-        query = "Continue the OAuth callback fix. What failed and what constraint must remain?"
-        memory = sync_workspace(
-            cwd=str(root),
-            agent_type="copilot",
-            session_id="new-session",
-            query=query,
-            max_items=6,
-            token_budget=650,
-        )
-        decoded = json.loads(memory)
-        baseline_tokens = estimate_tokens(baseline)
-        memory_tokens = estimate_tokens(memory)
-        reduction = 0.0 if baseline_tokens == 0 else 1 - memory_tokens / baseline_tokens
-        return {
-            "benchmark": "deterministic recovery-payload proxy",
-            "disclaimer": "Not provider billing, latency, or model-quality measurement.",
-            "fixture_files": len(files),
-            "query": query,
-            "baseline": {
-                "strategy": "re-read every synthetic source file",
-                "estimated_tokens": baseline_tokens,
-                "minimum_file_read_calls": len(files),
-            },
-            "djobs": {
-                "strategy": "one query-aware sync_workspace call",
-                "estimated_tokens": memory_tokens,
-                "mcp_calls": 1,
-                "returned_memories": len(decoded.get("observations", [])),
-            },
-            "proxy_reduction_percent": round(reduction * 100, 1),
-        }
+            baseline = "\n".join(path.read_text(encoding="utf-8") for path in files)
+            query = "Continue the OAuth callback fix. What failed and what constraint must remain?"
+            memory = sync_workspace(
+                cwd=str(root),
+                agent_type="copilot",
+                session_id="new-session",
+                query=query,
+                max_items=6,
+                token_budget=650,
+                context_tier="resume",
+            )
+            decoded = json.loads(memory)
+            baseline_tokens = estimate_tokens(baseline)
+            memory_tokens = estimate_tokens(memory)
+            reduction = 0.0 if baseline_tokens == 0 else 1 - memory_tokens / baseline_tokens
+            return {
+                "benchmark": "deterministic recovery-payload proxy",
+                "disclaimer": "Not provider billing, latency, or model-quality measurement.",
+                "fixture_files": len(files),
+                "query": query,
+                "baseline": {
+                    "strategy": "re-read every synthetic source file",
+                    "estimated_tokens": baseline_tokens,
+                    "minimum_file_read_calls": len(files),
+                },
+                "djobs": {
+                    "strategy": "one query-aware sync_workspace call",
+                    "estimated_tokens": memory_tokens,
+                    "mcp_calls": 1,
+                    "returned_memories": sum(
+                        1 for value in dict(decoded.get("resume") or {}).values() if value
+                    ),
+                },
+                "proxy_reduction_percent": round(reduction * 100, 1),
+            }
+        finally:
+            close_configured_queue()
+            if previous_db is None:
+                os.environ.pop("DJOBS_DB", None)
+            else:
+                os.environ["DJOBS_DB"] = previous_db
 
 
 def main() -> int:

@@ -118,7 +118,10 @@ def _query_jobs(
     repo: SQLiteJobRepository,
     correlation_id: str | None,
 ) -> list[Any]:
-    columns = "id, type, status, payload_json, correlation_id, last_error, created_at, updated_at"
+    columns = (
+        "id, type, status, payload_json, correlation_id, last_error, "
+        "attempt, max_attempts, started_at, created_at, updated_at"
+    )
     with repo._lock:
         if correlation_id is None:
             return list(
@@ -172,6 +175,14 @@ def _record_from_row(
         if success is not None
         else _parse_dt(row["updated_at"]) or _parse_dt(row["created_at"])
     )
+    created_at = _parse_dt(row["created_at"])
+    cycle_seconds = (
+        max(0.0, (event_at - created_at).total_seconds())
+        if completed and event_at is not None and created_at is not None
+        else None
+    )
+    attempts = max(1, int(row["attempt"] or 0)) if completed else int(row["attempt"] or 0)
+    repair_attempts = max(0, attempts - 1) if completed else 0
     return {
         "id": row["id"],
         "type": row["type"],
@@ -181,10 +192,52 @@ def _record_from_row(
         "label": _task_label(row["type"], payload),
         "completed": completed,
         "event_at": event_at,
+        "attempts": attempts,
+        "repair_attempts": repair_attempts,
+        "first_pass_verified": completed and repair_attempts == 0,
+        "cycle_seconds": cycle_seconds,
         "estimated_without_djobs_tokens": replay_tokens,
         "estimated_with_djobs_tokens": durable_tokens if completed else 0,
         "estimated_saved_tokens": saved_tokens,
         "protected_context_tokens": durable_tokens,
+    }
+
+
+def _verified_task_efficiency(records: list[dict[str, Any]]) -> dict[str, Any]:
+    verified = [
+        record
+        for record in records
+        if record["completed"] and record["source"] == "durable_workflow"
+    ]
+    count = len(verified)
+    first_pass = sum(1 for record in verified if record["first_pass_verified"])
+    total_attempts = sum(int(record["attempts"]) for record in verified)
+    repair_attempts = sum(int(record["repair_attempts"]) for record in verified)
+    cycle_values = [
+        float(record["cycle_seconds"])
+        for record in verified
+        if record["cycle_seconds"] is not None
+    ]
+    context_tokens = sum(int(record["estimated_with_djobs_tokens"]) for record in verified)
+    saved_tokens = sum(int(record["estimated_saved_tokens"]) for record in verified)
+    return {
+        "verified_tasks": count,
+        "first_pass_verified_tasks": first_pass,
+        "first_pass_verified_percent": round((first_pass / count) * 100, 1) if count else 0.0,
+        "total_attempts": total_attempts,
+        "repair_attempts": repair_attempts,
+        "average_attempts_per_verified_task": round(total_attempts / count, 2) if count else 0.0,
+        "average_cycle_seconds": round(sum(cycle_values) / len(cycle_values), 3)
+        if cycle_values
+        else 0.0,
+        "cost_per_verified_task": {
+            "estimated_context_tokens": round(context_tokens / count, 1) if count else 0.0,
+            "estimated_saved_tokens": round(saved_tokens / count, 1) if count else 0.0,
+            "average_attempts": round(total_attempts / count, 2) if count else 0.0,
+            "average_cycle_seconds": round(sum(cycle_values) / len(cycle_values), 3)
+            if cycle_values
+            else 0.0,
+        },
     }
 
 
@@ -207,6 +260,7 @@ def _summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
         "estimated_with_djobs_tokens": with_djobs,
         "estimated_saved_tokens": saved,
         "estimated_saved_percent": percent,
+        "verified_task_efficiency": _verified_task_efficiency(completed),
         "sources": sources,
     }
 
@@ -382,6 +436,22 @@ def print_gain_report(
     print(
         f"  durable workflows {_format_tokens(workflow['estimated_saved_tokens']):>10} "
         f"({workflow['completed_records']} completed tasks)"
+    )
+
+    efficiency = all_time["verified_task_efficiency"]
+    cost = efficiency["cost_per_verified_task"]
+    print("\nVerified task efficiency")
+    print(
+        f"  first-pass verified {efficiency['first_pass_verified_tasks']}/"
+        f"{efficiency['verified_tasks']} ({efficiency['first_pass_verified_percent']:.1f}%)"
+    )
+    print(
+        f"  repair attempts     {efficiency['repair_attempts']} total, "
+        f"{efficiency['average_attempts_per_verified_task']:.2f} attempts/task"
+    )
+    print(
+        f"  cost per task       {cost['estimated_context_tokens']:.1f} context tokens, "
+        f"{cost['average_cycle_seconds']:.3f}s cycle proxy"
     )
 
     recoverable = report["recoverable"]

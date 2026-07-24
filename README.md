@@ -86,12 +86,22 @@ repository content anywhere.
 Agents should call:
 
 ```text
-sync_workspace(query="the user's current request")
+sync_workspace(query="the user's current request", context_tier="resume")
 ```
 
 The query searches repository-family memory with SQLite FTS5 when available and a portable
 bounded fallback otherwise. Older relevant constraints and failed approaches can therefore rank
 above newer unrelated activity.
+
+Recovery is layered so ordinary sessions do not pay for audit detail they do not need:
+
+- `resume` returns the smallest continuation capsule: goal, constraints, recent progress,
+  failures, next step, current tasks, and Git state;
+- `evidence` adds compact supporting observations without IDs and timestamps;
+- `audit` adds full memory identifiers and timestamps for diagnosis or lifecycle updates.
+
+The MCP defaults to `resume`. Direct Python integrations keep the prior audit-shaped default for
+backward compatibility and may opt into a smaller tier explicitly.
 
 The response includes a `context_hash`. A host that persists it can pass
 `known_context_hash="..."` on the next equivalent recovery. When the selected passive memory is
@@ -149,9 +159,9 @@ With its default synthetic 18-file fixture, the current implementation compares:
 | Recovery strategy | Estimated context | Minimum calls |
 |---|---:|---:|
 | Re-read every synthetic source file | ~7,805 tokens | 18 file reads |
-| Query-aware `sync_workspace` | ~407 tokens | 1 MCP call |
+| Query-aware `sync_workspace` resume tier | ~224 tokens | 1 MCP call |
 
-That is a **94.8% recovery-payload proxy reduction** for this fixture. It is intentionally not
+That is a **97.1% recovery-payload proxy reduction** for this fixture. It is intentionally not
 presented as provider billing, latency, or model-quality measurement. The script is included so
 results can be reproduced and challenged instead of treated as a marketing claim.
 
@@ -163,6 +173,21 @@ python scripts/benchmark_resume_quality.py
 
 It verifies cross-worktree recall, checkout ownership isolation, stale-memory exclusion, and
 unchanged-context replay suppression.
+
+## Measure verified-task efficiency
+
+Token reduction alone can hide repeated repairs. `djobs gain` now reports both savings and
+workflow efficiency:
+
+```bash
+djobs gain
+djobs gain --history
+djobs gain --format json
+```
+
+The report includes first-pass verified rate, repair attempts, average attempts per verified task,
+cycle-time proxy, and estimated context tokens per verified task. These are local workflow
+proxies derived from durable task state, not provider billing or exact model-call telemetry.
 
 ## Supported local hosts
 
@@ -186,7 +211,7 @@ The normal server deliberately stays small:
 
 | Tool | Purpose |
 |---|---|
-| `sync_workspace(query?, known_context_hash?, ...)` | Recover relevant goals, failures, capsules, tasks, and Git observations under a token budget; suppress unchanged memory replay. |
+| `sync_workspace(query?, context_tier="resume", known_context_hash?, ...)` | Recover a layered continuation capsule, compact evidence, or audit detail under a token budget; suppress unchanged memory replay. |
 | `memory(action, ...)` | Inspect, search, deactivate, forget, or explicitly clear passive memory for the current repository family. |
 | `checkpoint(summary, ...)` | Explicitly create or resume one checkout-scoped unit of work. |
 | `handoff(task_id, ...)` | Explicitly release or complete tracked work with bounded evidence. |

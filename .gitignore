@@ -71,3 +71,7 @@ NOTES.md
 
 # Stray local tags / desktop sync archives
 *.zip
+
+# Local AutoGPT control state and uv's untracked developer lock.
+.autogpt/
+uv.lock

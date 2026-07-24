@@ -379,6 +379,10 @@ def _row_to_observation(row: Any, *, score: float | None = None) -> dict[str, An
     ):
         if metadata.get(field) not in (None, "", []):
             item[field] = metadata[field]
+    if row["event_type"] == "session_capsule":
+        for field in ("goal", "progress", "failures", "next"):
+            if metadata.get(field) not in (None, "", []):
+                item[field] = metadata[field]
     if score is not None:
         item["score"] = round(float(score), 4)
     return item
@@ -494,19 +498,25 @@ def search_observations(
     return [_row_to_observation(row, score=score) for score, row in scored[:capped]]
 
 
-def memory_context_hash(observations: list[dict[str, Any]]) -> str:
+def memory_context_hash(memory: Any) -> str:
     """Hash only model-relevant memory fields for no-op context recovery."""
 
-    payload = [
-        {
-            "id": item.get("id"),
-            "status": item.get("status"),
-            "event": item.get("event"),
-            "summary": item.get("summary"),
-            "commit_sha": item.get("commit_sha"),
-        }
-        for item in observations
-    ]
+    if isinstance(memory, dict):
+        payload: Any = memory
+    elif isinstance(memory, list):
+        payload = [
+            {
+                "id": item.get("id"),
+                "status": item.get("status"),
+                "event": item.get("event"),
+                "summary": item.get("summary"),
+                "commit_sha": item.get("commit_sha"),
+            }
+            for item in memory
+            if isinstance(item, dict)
+        ]
+    else:
+        payload = []
     encoded = json.dumps(
         payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode()

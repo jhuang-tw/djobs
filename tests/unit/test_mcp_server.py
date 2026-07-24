@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 
 import pytest
 
@@ -17,6 +18,7 @@ from djobs.mcp_server import (
     audit_log,
     check_task,
     claim_task,
+    close_configured_queue,
     complete_task,
     configure,
     enqueue_task,
@@ -38,6 +40,24 @@ def _fresh_db(tmp_path):
     db = str(tmp_path / "test_mcp.db")
     configure(db)
     return db
+
+
+def test_configure_reuses_same_database_and_closes_on_switch(tmp_path):
+    first_path = str(tmp_path / "first.db")
+    second_path = str(tmp_path / "second.db")
+
+    first = configure(first_path)
+    reused = configure(str((tmp_path / "." / "first.db").resolve()))
+    assert reused is first
+
+    second = configure(second_path)
+    assert second is not first
+    with pytest.raises(sqlite3.ProgrammingError):
+        first._repository._connection.execute("SELECT 1")
+
+    close_configured_queue()
+    with pytest.raises(sqlite3.ProgrammingError):
+        second._repository._connection.execute("SELECT 1")
 
 
 class TestEnqueueTask:

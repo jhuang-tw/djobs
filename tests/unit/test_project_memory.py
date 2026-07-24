@@ -178,6 +178,79 @@ def test_sync_workspace_query_returns_relevant_memory(memory_env) -> None:
     assert any("Do not replace Zustand" in item["summary"] for item in result["observations"])
 
 
+def test_sync_workspace_supports_layered_resume_evidence_and_audit(memory_env) -> None:
+    root, _database, _repository = memory_env
+    payload = {"cwd": str(root), "session_id": "layered"}
+    lifecycle.user_prompt_submit(
+        {**payload, "prompt": "Fix OAuth callback and preserve plus signs in state"},
+        agent_type="copilot",
+    )
+    lifecycle.post_tool_failure(
+        {
+            **payload,
+            "tool_name": "bash",
+            "tool_input": {"command": "pytest tests/test_auth.py"},
+            "error": "state normalization still failed",
+        },
+        agent_type="copilot",
+    )
+    lifecycle.post_tool_use(
+        {
+            **payload,
+            "tool_name": "edit",
+            "tool_input": {"file_path": "src/auth.py"},
+            "tool_response": {"success": True, "message": "updated callback parser"},
+        },
+        agent_type="copilot",
+    )
+    lifecycle.pre_compact(
+        {**payload, "trigger": "auto", "next": "run the focused auth test"},
+        agent_type="copilot",
+    )
+
+    resume = json.loads(
+        sync_workspace(
+            cwd=str(root),
+            agent_type="copilot",
+            session_id="resume-reader",
+            query="continue OAuth callback",
+            context_tier="resume",
+        )
+    )
+    assert resume["context_tier"] == "resume"
+    assert "observations" not in resume
+    assert "OAuth callback" in resume["resume"]["goal"]
+    assert any("callback parser" in item for item in resume["resume"]["progress"])
+    assert any("state normalization" in item for item in resume["resume"]["failures"])
+
+    evidence = json.loads(
+        sync_workspace(
+            cwd=str(root),
+            agent_type="copilot",
+            session_id="evidence-reader",
+            query="continue OAuth callback",
+            context_tier="evidence",
+        )
+    )
+    assert evidence["context_tier"] == "evidence"
+    assert evidence["observations"]
+    assert "id" not in evidence["observations"][0]
+    assert "created_at" not in evidence["observations"][0]
+
+    audit = json.loads(
+        sync_workspace(
+            cwd=str(root),
+            agent_type="copilot",
+            session_id="audit-reader",
+            query="continue OAuth callback",
+            context_tier="audit",
+        )
+    )
+    assert audit["context_tier"] == "audit"
+    assert audit["observations"][0]["id"]
+    assert audit["observations"][0]["created_at"]
+
+
 def test_memory_forget_and_clear_preserve_explicit_tasks(memory_env) -> None:
     root, _database, _repository = memory_env
     lifecycle.user_prompt_submit(

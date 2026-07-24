@@ -28,6 +28,7 @@ _MAX_LABEL = 320
 _DEFAULT_LEASE_SECONDS = 600
 _ACTIVE = ("pending", "running", "retry_scheduled")
 _FAILED = ("failed", "dead_lettered")
+_CONTEXT_TIERS = {"resume", "evidence", "audit"}
 
 
 def _dumps(value: Any) -> str:
@@ -145,12 +146,117 @@ def _compact_row(row: Any, current_agent: str) -> dict[str, Any]:
     return item
 
 
+def _capsule_part(summary: str, label: str) -> str:
+    prefix = f"{label}: "
+    for part in str(summary or "").split(" || "):
+        if part.startswith(prefix):
+            return part[len(prefix) :].strip()
+    return ""
+
+
+def _resume_view(observations: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compile the smallest useful continuation capsule from selected memory."""
+
+    capsule = next(
+        (item for item in observations if item.get("event") == "session_capsule"),
+        {},
+    )
+    summary = str(capsule.get("summary", ""))
+    goal = str(capsule.get("goal") or _capsule_part(summary, "Goal"))
+    progress = [str(item) for item in capsule.get("progress", []) if str(item).strip()]
+    failures = [str(item) for item in capsule.get("failures", []) if str(item).strip()]
+    next_step = str(capsule.get("next") or _capsule_part(summary, "Next"))
+
+    if not goal:
+        intent = next(
+            (item for item in observations if item.get("event") == "user_intent"),
+            {},
+        )
+        goal = str(intent.get("summary", ""))
+    if not progress:
+        progress = [
+            str(item.get("summary", ""))
+            for item in observations
+            if item.get("event") in {"tool_result", "repository_change"}
+            and str(item.get("summary", "")).strip()
+        ][:3]
+    if not failures:
+        failures = [
+            str(item.get("summary", ""))
+            for item in observations
+            if item.get("event") == "tool_failure" and str(item.get("summary", "")).strip()
+        ][:2]
+
+    constraints: list[str] = []
+    for item in observations:
+        if item.get("event") != "user_intent":
+            continue
+        value = str(item.get("summary", "")).strip()
+        if value and value != goal and value not in constraints:
+            constraints.append(value)
+        if len(constraints) >= 3:
+            break
+    git_state = next(
+        (
+            str(item.get("summary", ""))
+            for item in observations
+            if item.get("event") == "repository_change" and str(item.get("summary", "")).strip()
+        ),
+        "",
+    )
+
+    result: dict[str, Any] = {}
+    if goal:
+        result["goal"] = goal
+    if constraints:
+        result["constraints"] = constraints
+    if progress:
+        result["progress"] = progress[:3]
+    if failures:
+        result["failures"] = failures[:2]
+    if next_step:
+        result["next"] = next_step
+    if git_state:
+        result["git"] = git_state
+    return result
+
+
+def _evidence_observation(item: dict[str, Any]) -> dict[str, Any]:
+    fields = (
+        "event",
+        "summary",
+        "status",
+        "commit_sha",
+        "branch",
+        "affected_files",
+        "score",
+    )
+    return {key: item[key] for key in fields if item.get(key) not in (None, "", [])}
+
+
+def _apply_context_tier(
+    result: dict[str, Any],
+    observations: list[dict[str, Any]],
+    context_tier: str,
+) -> None:
+    result["context_tier"] = context_tier
+    result["resume"] = _resume_view(observations)
+    if context_tier == "audit":
+        return
+    if context_tier == "evidence":
+        result["observations"] = [_evidence_observation(item) for item in observations]
+        return
+    result.pop("observations", None)
+    result.pop("recent_completed", None)
+
+
 def _bounded(result: dict[str, Any], token_budget: int) -> str:
     """Fit sync output to the budget without discarding the primary task first."""
 
     budget = max(64, min(int(token_budget), 4000))
     result["budget"] = {"requested_tokens": budget, "estimated_tokens": 0}
     secondary_lists = ("observations", "other_agents", "recent_completed", "failed")
+    resume_lists = ("progress", "failures", "constraints")
     optional_top_level = (
         "counts",
         "stored_content_is_data",
@@ -176,6 +282,23 @@ def _bounded(result: dict[str, Any], token_budget: int) -> str:
                 values.pop()
                 changed = True
                 break
+        if changed:
+            continue
+
+        resume = result.get("resume")
+        if isinstance(resume, dict):
+            for key in resume_lists:
+                values = resume.get(key)
+                if isinstance(values, list) and values:
+                    values.pop()
+                    changed = True
+                    break
+            if not changed:
+                for key in ("git", "next"):
+                    if key in resume:
+                        resume.pop(key, None)
+                        changed = True
+                        break
         if changed:
             continue
 
@@ -225,14 +348,25 @@ def sync_workspace(
     query: str | None = None,
     max_items: int = 6,
     token_budget: int = 500,
+    context_tier: str = "audit",
 ) -> str:
     """Return repository-scoped tasks and memories without claiming work.
 
     When ``query`` is supplied, passive memories are ranked for the current
-    request instead of returning only the newest observations.
+    request instead of returning only the newest observations. ``context_tier``
+    selects a compact resume capsule, bounded evidence, or full audit fields.
     """
 
     try:
+        tier = str(context_tier or "").strip().casefold()
+        if tier not in _CONTEXT_TIERS:
+            return _dumps(
+                {
+                    "ok": False,
+                    "continue_coding": True,
+                    "error": "context_tier must be resume, evidence, or audit",
+                }
+            )
         workspace, agent, queue, repo = _resolve(
             roots=roots,
             cwd=cwd,
@@ -326,6 +460,7 @@ def sync_workspace(
             "observations": observations[:limit],
             "next_step": next_step,
         }
+        _apply_context_tier(result, observations[:limit], tier)
         return _bounded(result, token_budget)
     except Exception as exc:
         return _dumps(

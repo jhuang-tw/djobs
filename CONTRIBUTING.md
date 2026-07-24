@@ -55,17 +55,19 @@ After a change reaches protected `main` and its `CI` workflow succeeds, the `Rel
 workflow automatically:
 
 - chooses the next semantic version from commits since the latest immutable tag;
-- creates a temporary release snapshot with synchronized Python, MCP, extension,
+- opens an `automation/release-vX.Y.Z` PR with synchronized Python, MCP, extension,
   lockfile, and changelog versions;
+- explicitly runs the full CI matrix on the release commit;
+- squash-merges the release PR after every required check passes;
+- waits for the merged main commit's CI;
 - publishes PyPI and the VS Code Marketplace;
-- creates the matching Git tag and GitHub Release;
-- deletes the temporary release branch after success.
+- creates the matching Git tag and GitHub Release.
 
 Use `feat:` for a minor release, `!` or a `BREAKING CHANGE:` footer for a major
-release, and any other clear title for a patch release. The latest tag is the
-published-version authority; protected `main` may intentionally retain the previous
-checked-in version. Do not manually create tags, restore `.github/release.json`, or
-run `node vscode-ext/scripts/sync-version.js` unless repairing release tooling.
+release, and any other clear title for a patch release. After a successful release,
+protected `main`, the immutable tag, PyPI, and the Marketplace all carry the same
+version. Do not manually create tags, restore `.github/release.json`, or run
+`node vscode-ext/scripts/sync-version.js` unless repairing the release tooling itself.
 
 ## Verification
 

@@ -3,14 +3,7 @@
 ........................................................................ [ 39%]
 ........................................................................ [ 52%]
 ........................................................................ [ 65%]
-......................................................................F. [ 79%]
+........................................................................ [ 79%]
 ........................................................................ [ 92%]
 ..........................................                               [100%]
-=================================== FAILURES ===================================
-__________ test_version_sync_and_release_workflow_cover_package_lock ___________
-tests/unit/test_release_surfaces.py:78: in test_version_sync_and_release_workflow_cover_package_lock
-    assert "root package does not match" in release
-E   AssertionError: assert 'root package does not match' in 'name: Release\n\non:\n  workflow_run:\n    workflows: [CI]\n    types: [completed]\n  workflow_dispatch:\n\nconcurren... needs.prepare.outputs.release_sha }}\n          body_path: release_body.md\n          generate_release_notes: false\n'
-=========================== short test summary info ============================
-FAILED tests/unit/test_release_surfaces.py::test_version_sync_and_release_workflow_cover_package_lock - AssertionError: assert 'root package does not match' in 'name: Release\n\non:\n  workflow_run:\n    workflows: [CI]\n    types: [completed]\n  workflow_dispatch:\n\nconcurren... needs.prepare.outputs.release_sha }}\n          body_path: release_body.md\n          generate_release_notes: false\n'
-1 failed, 527 passed, 18 skipped in 29.12s
+528 passed, 18 skipped in 33.45s

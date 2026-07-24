@@ -87,8 +87,8 @@ remain available through `djobs-mcp-full` rather than occupying every ordinary A
 ## Efficiency metrics
 
 The bundled recovery benchmark estimates **~224 tokens** for one `resume` recovery versus
-about **7,805 tokens** for rereading the synthetic 18-file fixture, a **97.1% payload proxy
-reduction**. This is not provider billing or model-quality measurement.
+**~7,805 tokens** for rereading the synthetic 18-file fixture, a **97.1% payload proxy reduction**.
+This is not provider billing or model-quality measurement.
 
 `djobs gain` also reports first-pass verified rate, repair attempts, average attempts per verified
 task, cycle-time proxy, and estimated context tokens per verified task.

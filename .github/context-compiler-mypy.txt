@@ -1,2 +1,1 @@
-src/djobs/coding_mcp.py:142: error: Redundant cast to "Literal['active', 'resolved', 'superseded', 'stale', 'contradicted'] | None"  [redundant-cast]
-Found 1 error in 1 file (checked 50 source files)
+Success: no issues found in 50 source files

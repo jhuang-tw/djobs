@@ -1,6 +1,9 @@
 name: Temporary project-memory export
 
 on:
+  pull_request:
+    branches:
+      - main
   push:
     branches:
       - feature/project-memory-core
@@ -20,5 +23,3 @@ jobs:
           name: djobs-project-memory-source
           path: djobs-source.zip
           retention-days: 1
-
-# temporary export trigger

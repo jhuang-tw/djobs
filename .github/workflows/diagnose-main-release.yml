@@ -22,6 +22,12 @@ jobs:
         run: |
           set -euo pipefail
           {
+            echo '=== Repository workflow permissions ==='
+            gh api repos/${{ github.repository }}/actions/permissions/workflow || true
+            echo
+            echo '=== Rules applying to main ==='
+            gh api repos/${{ github.repository }}/rules/branches/main || true
+            echo
             echo '=== Release runs ==='
             gh run list --workflow Release --branch main --limit 10 \
               --json databaseId,displayTitle,event,headSha,status,conclusion,createdAt,updatedAt,url
@@ -45,5 +51,5 @@ jobs:
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add .release-main-diagnostics.txt
-          git commit -m 'test: capture main release failure diagnostics'
+          git commit -m 'test: capture release PR permission diagnostics'
           git push origin HEAD:fix/release-run-failure

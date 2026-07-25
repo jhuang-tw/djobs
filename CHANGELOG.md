@@ -14,6 +14,12 @@ public interfaces may still change between minor versions. Entries below use
 
 ## [Unreleased]
 
+## [0.18.2] - 2026-07-25
+
+### Changed
+- `[release]` Make local agent memory the primary djobs product (#42)
+
+
 ## [0.18.1] - 2026-07-24
 
 ### Performance

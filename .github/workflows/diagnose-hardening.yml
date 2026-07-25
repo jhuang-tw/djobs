@@ -1,0 +1,43 @@
+name: Diagnose v0.18.3 hardening
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    if: github.head_ref == 'fix/v0.18.3-production-hardening' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Capture transformation failure
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import textwrap
+          source = Path('.github/workflows/apply-v0183-hardening.yml').read_text(encoding='utf-8')
+          start = "          cat > /tmp/apply_hardening.py <<'PY'\n"
+          end = "\n          PY\n          python /tmp/apply_hardening.py"
+          block = source.split(start, 1)[1].split(end, 1)[0]
+          Path('/tmp/apply_hardening.py').write_text(textwrap.dedent(block), encoding='utf-8')
+          PY
+          set +e
+          python /tmp/apply_hardening.py > hardening-output.txt 2> hardening-error.txt
+          status=$?
+          set -e
+          printf 'exit_code=%s\n' "$status" > HARDENING_DIAGNOSTIC.txt
+          cat hardening-output.txt >> HARDENING_DIAGNOSTIC.txt
+          cat hardening-error.txt >> HARDENING_DIAGNOSTIC.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add HARDENING_DIAGNOSTIC.txt
+          git commit -m "chore: capture hardening diagnostic"
+          git push origin "HEAD:${{ github.head_ref }}"

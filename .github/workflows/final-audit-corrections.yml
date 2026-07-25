@@ -2,21 +2,21 @@ name: Final audit corrections
 
 # One-shot validation for the final skeptical-user review; removed after success.
 on:
-  pull_request:
-    branches: [main]
+  push:
+    branches: [fix/v0.18.3-production-hardening-v2]
 
 permissions:
   contents: write
 
 jobs:
   correct:
-    if: github.head_ref == 'fix/v0.18.3-production-hardening-v2' && github.actor != 'github-actions[bot]'
+    if: github.ref == 'refs/heads/fix/v0.18.3-production-hardening-v2' && github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.head_ref }}
+          ref: fix/v0.18.3-production-hardening-v2
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/setup-python@v5
@@ -166,4 +166,4 @@ def test_gain_table_uses_heuristic_language(
           git add src/djobs/observations.py src/djobs/gain.py tests/unit/test_lifecycle.py tests/unit/test_gain.py
           git diff --cached --check
           git commit -m "fix: preserve bounded capsule detail and calibrate gain output"
-          git push origin "HEAD:${{ github.head_ref }}"
+          git push origin "HEAD:fix/v0.18.3-production-hardening-v2"

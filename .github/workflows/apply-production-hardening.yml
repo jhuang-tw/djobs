@@ -99,6 +99,25 @@ jobs:
               text = text.replace(old, new, 1)
           path.write_text(text, encoding='utf-8')
           PY
+
+          # The old guard asserted the release-PR-only optimization. The hardened
+          # contract is now that every PR runs the real gates.
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('tests/unit/test_release_surfaces.py')
+          text = path.read_text(encoding='utf-8')
+          old = '    assert "automation/release-v" in ci\n'
+          new = (
+              '    assert \'FULL_CI: "true"\' in ci\n'
+              '    assert "if: github.event_name != \'pull_request\'" not in ci\n'
+              '    assert "test-postgres:" in ci\n'
+              '    assert "installed-smoke:" in ci\n'
+          )
+          if old not in text:
+              raise RuntimeError('expected release-surface CI assertion is missing')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
       - name: Validate and commit
         shell: bash
         run: |

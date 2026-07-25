@@ -17,11 +17,24 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const mcpDidChange = new vscode.EventEmitter<void>();
   context.subscriptions.push(mcpDidChange);
 
+  const runTrusted = async (action: () => Promise<void>): Promise<void> => {
+    if (!vscode.workspace.isTrusted) {
+      await vscode.window.showWarningMessage(
+        'Trust this workspace before djobs launches Python or changes local agent configuration.',
+      );
+      return;
+    }
+    await action();
+  };
+
   if (nativeMcp) {
     context.subscriptions.push(
       vscode.lm.registerMcpServerDefinitionProvider('djobsServerProvider', {
         onDidChangeMcpServerDefinitions: mcpDidChange.event,
         provideMcpServerDefinitions: async () => {
+          if (!vscode.workspace.isTrusted) {
+            return [];
+          }
           if (client.hasMcpJsonDjobsServer() && !client.detectDeadMcpInterpreter()) {
             return [];
           }
@@ -46,25 +59,33 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   context.subscriptions.push(
     vscode.commands.registerCommand('djobs.setup', async () => {
-      await runDjobsSetup(context, client, nativeMcp, mcpDidChange);
+      await runTrusted(async () => runDjobsSetup(context, client, nativeMcp, mcpDidChange));
     }),
     vscode.commands.registerCommand('djobs.diagnose', async () => {
-      await runDiagnostics(client, output, nativeMcp);
+      await runTrusted(async () => runDiagnostics(client, output, nativeMcp));
     }),
     vscode.commands.registerCommand('djobs.memory', async () => {
-      await runValueCommand(client, output, ['memory', 'list'], 'Repository Memory');
+      await runTrusted(async () => runValueCommand(
+        client,
+        output,
+        ['memory', 'list'],
+        'Repository Memory',
+      ));
     }),
     vscode.commands.registerCommand('djobs.gain', async () => {
-      await runValueCommand(client, output, ['gain'], 'Memory Gain');
+      await runTrusted(async () => runValueCommand(client, output, ['gain'], 'Memory Gain'));
     }),
     vscode.commands.registerCommand('djobs.receipt', async () => {
-      await runValueCommand(client, output, ['receipt'], 'Work Receipt');
+      await runTrusted(async () => runValueCommand(client, output, ['receipt'], 'Work Receipt'));
     }),
     vscode.commands.registerCommand('djobs.pause', async () => {
-      await runPauseCommand(client, true);
+      await runTrusted(async () => runPauseCommand(client, true));
     }),
     vscode.commands.registerCommand('djobs.unpause', async () => {
-      await runPauseCommand(client, false);
+      await runTrusted(async () => runPauseCommand(client, false));
+    }),
+    vscode.workspace.onDidGrantWorkspaceTrust(() => {
+      mcpDidChange.fire();
     }),
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (

@@ -1,0 +1,65 @@
+name: Run v0.18.3 production hardening
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  run-hardening:
+    if: github.head_ref == 'fix/v0.18.3-production-hardening' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: vscode-ext/package-lock.json
+
+      - name: Extract and apply audited transformation
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import textwrap
+
+          source = Path('.github/workflows/apply-v0183-hardening.yml').read_text(encoding='utf-8')
+          start = "          cat > /tmp/apply_hardening.py <<'PY'\n"
+          end = "\n          PY\n          python /tmp/apply_hardening.py"
+          block = source.split(start, 1)[1].split(end, 1)[0]
+          Path('/tmp/apply_hardening.py').write_text(textwrap.dedent(block), encoding='utf-8')
+          PY
+          python /tmp/apply_hardening.py
+          rm .github/workflows/apply-v0183-hardening.yml
+          rm .github/workflows/run-v0183-hardening.yml
+
+      - name: Install validation dependencies
+        run: python -m pip install -e ".[dev,pg]"
+
+      - name: Run full production preflight
+        run: python scripts/preflight.py --profile full --check --base-ref origin/main
+
+      - name: Commit validated hardening
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix: harden automatic memory recovery and PR gates"
+          git push origin "HEAD:${{ github.head_ref }}"

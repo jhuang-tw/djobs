@@ -36,14 +36,49 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           import textwrap
+
           source = Path('/tmp/source.yml').read_text(encoding='utf-8')
           start = "          cat > /tmp/apply_hardening.py <<'PY'\n"
           end = "\n          PY\n          python /tmp/apply_hardening.py"
           block = textwrap.dedent(source.split(start, 1)[1].split(end, 1)[0])
-          block = block.replace('tests/unit/test_cross_agent_lifecycle.py', 'tests/unit/test_lifecycle.py')
+          block = block.replace(
+              'tests/unit/test_cross_agent_lifecycle.py',
+              'tests/unit/test_lifecycle.py',
+          )
           Path('/tmp/apply_hardening.py').write_text(block, encoding='utf-8')
           PY
           python /tmp/apply_hardening.py
+
+          # The audited source transformation embedded _metadata_json one scope too deep.
+          # Normalize that generated helper back to module scope before validation.
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/djobs/observations.py')
+          lines = path.read_text(encoding='utf-8').splitlines()
+          start = next(
+              index
+              for index, line in enumerate(lines)
+              if line.lstrip().startswith('def _metadata_json(')
+          )
+          end = next(
+              index
+              for index in range(start + 1, len(lines))
+              if lines[index].startswith('def _memory_status(')
+          )
+          indent = len(lines[start]) - len(lines[start].lstrip())
+          if indent <= 0:
+              raise RuntimeError('_metadata_json was expected to require scope normalization')
+          prefix = ' ' * indent
+          for index in range(start, end):
+              if lines[index].startswith(prefix):
+                  lines[index] = lines[index][indent:]
+              elif lines[index].strip():
+                  raise RuntimeError(
+                      f'inconsistent indentation while normalizing _metadata_json at line {index + 1}'
+                  )
+          path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+          PY
       - name: Validate and commit
         shell: bash
         run: |
@@ -63,6 +98,7 @@ jobs:
             git push origin "HEAD:${{ github.head_ref }}"
             exit "$status"
           fi
+          rm -f HARDENING_DIAGNOSTIC.txt
           rm .github/workflows/apply-production-hardening.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

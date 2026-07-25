@@ -118,25 +118,44 @@ jobs:
       - name: Validate and commit
         shell: bash
         run: |
-          python -m pip install -e ".[dev,pg]"
-          python -m ruff format src tests scripts/prepare_auto_release.py scripts/extract_release_notes.py scripts/preflight.py
-          set +e
-          python scripts/preflight.py --profile full --check --base-ref origin/main > /tmp/preflight-output.txt 2>&1
-          status=$?
-          set -e
-          if [ "$status" -ne 0 ]; then
-            printf 'exit_code=%s\n' "$status" > HARDENING_DIAGNOSTIC.txt
-            cat /tmp/preflight-output.txt >> HARDENING_DIAGNOSTIC.txt
+          diagnose() {
+            code=$?
+            trap - ERR
+            set +e
+            git reset
+            {
+              printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+              printf 'exit_code=%s\n\n' "$code"
+              echo 'git status:'
+              git status --short
+              echo
+              echo 'working-tree diff check:'
+              git diff --check || true
+              echo
+              echo 'cached diff check:'
+              git diff --cached --check || true
+              echo
+              echo 'preflight output:'
+              cat /tmp/preflight-output.txt 2>/dev/null || true
+            } > HARDENING_DIAGNOSTIC.txt
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add HARDENING_DIAGNOSTIC.txt
-            git commit -m "chore: capture hardening diagnostic"
+            git commit --allow-empty -m "chore: capture hardening diagnostic"
             git push origin "HEAD:${{ github.head_ref }}"
-            exit "$status"
-          fi
+            exit "$code"
+          }
+          trap diagnose ERR
+          set -Eeuo pipefail
+
+          python -m pip install -e ".[dev,pg]"
+          python -m ruff format src tests scripts/prepare_auto_release.py scripts/extract_release_notes.py scripts/preflight.py
+          python scripts/preflight.py --profile full --check --base-ref origin/main > /tmp/preflight-output.txt 2>&1
+
           rm -f HARDENING_DIAGNOSTIC.txt
           rm .github/workflows/apply-production-hardening.yml
           rm .github/scripts/calibrate_hardening_docs.py
+          git diff --check
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A

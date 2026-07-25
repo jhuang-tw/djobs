@@ -14,6 +14,12 @@ public interfaces may still change between minor versions. Entries below use
 
 ## [Unreleased]
 
+## [0.18.3] - 2026-07-26
+
+### Fixed
+- `[release]` Production hardening and documentation calibration (#48)
+
+
 ### Fixed
 - `[core]` Pause now suppresses automatic capture, snapshots, session capsules, first-call bootstrap, and workspace recovery without blocking manual inspection or deletion.
 - `[core]` Recovery reads prior memory before persisting the current prompt, preventing the current request from ranking as its own history.

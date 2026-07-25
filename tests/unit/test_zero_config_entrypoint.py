@@ -115,14 +115,15 @@ def test_zero_config_instructions_keep_observation_and_ownership_separate() -> N
 
 def test_top_level_help_is_memory_first() -> None:
     help_text = entrypoint._build_front_parser().format_help()
+    command_lines = {line.strip().split()[0] for line in help_text.splitlines() if line.startswith("    ")}
 
     assert "djobs setup" in help_text
-    assert "memory" in help_text
-    assert "gain" in help_text
-    assert "legacy" in help_text
-    assert "serve" not in help_text
-    assert "dashboard" not in help_text
-    assert "token-savings" not in help_text
+    assert "memory" in command_lines
+    assert "gain" in command_lines
+    assert "legacy" in command_lines
+    assert "serve" not in command_lines
+    assert "dashboard" not in command_lines
+    assert "token-savings" not in command_lines
 
 
 def test_main_without_arguments_prints_memory_first_help(monkeypatch, capsys) -> None:

@@ -28,12 +28,12 @@ def test_concurrent_host_hook_updates_preserve_valid_config(tmp_path: Path) -> N
         encoding="utf-8",
     )
 
-    errors: list[BaseException] = []
+    errors: list[Exception] = []
 
     def install() -> None:
         try:
             install_host_hooks("codex", tmp_path / "memory.db", home=tmp_path)
-        except BaseException as exc:  # pragma: no cover - surfaced by the assertion below
+        except Exception as exc:  # pragma: no cover - surfaced by the assertion below
             errors.append(exc)
 
     threads = [threading.Thread(target=install) for _ in range(8)]

@@ -118,13 +118,15 @@ jobs:
       - name: Validate and commit
         shell: bash
         run: |
+          ORIGINAL_HEAD=$(git rev-parse HEAD)
           diagnose() {
             code=$?
             trap - ERR
             set +e
-            git reset --mixed "$GITHUB_SHA"
+            git reset --mixed "$ORIGINAL_HEAD"
             {
               printf 'run_id=%s\n' "$GITHUB_RUN_ID"
+              printf 'original_head=%s\n' "$ORIGINAL_HEAD"
               printf 'exit_code=%s\n\n' "$code"
               echo 'git status:'
               git status --short

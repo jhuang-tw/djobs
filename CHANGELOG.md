@@ -14,6 +14,12 @@ public interfaces may still change between minor versions. Entries below use
 
 ## [Unreleased]
 
+## [0.18.4] - 2026-07-26
+
+### Fixed
+- `[release]` Harden workspace trust and host config updates (#51)
+
+
 ## [0.18.3] - 2026-07-26
 
 ### Fixed

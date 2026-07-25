@@ -1,0 +1,704 @@
+name: Apply v0.18.3 production hardening
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  apply-hardening:
+    if: github.head_ref == 'fix/v0.18.3-production-hardening' && github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: vscode-ext/package-lock.json
+
+      - name: Apply audited hardening changes
+        shell: bash
+        run: |
+          cat > /tmp/apply_hardening.py <<'PY'
+          from __future__ import annotations
+
+          from pathlib import Path
+
+          ROOT = Path.cwd()
+
+
+          def replace_once(relative: str, old: str, new: str) -> None:
+              path = ROOT / relative
+              text = path.read_text(encoding="utf-8")
+              if old not in text:
+                  raise RuntimeError(f"expected snippet missing in {relative}: {old[:120]!r}")
+              path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+
+          def append_once(relative: str, marker: str, addition: str) -> None:
+              path = ROOT / relative
+              text = path.read_text(encoding="utf-8")
+              if marker in text:
+                  return
+              path.write_text(text.rstrip() + "\n\n" + addition.strip() + "\n", encoding="utf-8")
+
+
+          # ---------------------------------------------------------------------------
+          # Pause must be a real automatic-capture/recovery gate.
+          # ---------------------------------------------------------------------------
+          replace_once(
+              "src/djobs/lifecycle.py",
+              "from djobs.handoff import _resolve, sync_workspace\n",
+              "from djobs.core.pause import is_paused\n"
+              "from djobs.handoff import _resolve, sync_workspace\n",
+          )
+          replace_once(
+              "src/djobs/lifecycle.py",
+              "from djobs.observations import (\n"
+              "    capture_repository_snapshot,\n"
+              "    claim_context_injection,\n"
+              "    clean,\n"
+              "    record_observation,\n"
+              "    record_session_capsule,\n"
+              "    record_unique_session_observation,\n"
+              "    reset_context_injection,\n"
+              ")\n",
+              "from djobs.observations import (\n"
+              "    capture_repository_snapshot,\n"
+              "    claim_context_injection,\n"
+              "    clean,\n"
+              "    record_observation,\n"
+              "    record_session_capsule,\n"
+              "    record_unique_session_observation,\n"
+              "    reset_context_injection,\n"
+              ")\n"
+              "from djobs.workspace import shared_db_path\n",
+          )
+          replace_once(
+              "src/djobs/lifecycle.py",
+              '_NO_MEMORY_MARKERS = ("[djobs:no-memory]", "<djobs:no-memory>")\n\n\n',
+              '_NO_MEMORY_MARKERS = ("[djobs:no-memory]", "<djobs:no-memory>")\n\n\n'
+              "def automatic_memory_paused() -> bool:\n"
+              '    """Return whether automatic capture and recovery are paused."""\n\n'
+              "    return is_paused(shared_db_path())\n\n\n",
+          )
+          replace_once(
+              "src/djobs/lifecycle.py",
+              "def _observe_tool(payload: dict[str, Any], *, agent_type: str, failed: bool) -> dict[str, Any]:\n"
+              "    try:\n",
+              "def _observe_tool(payload: dict[str, Any], *, agent_type: str, failed: bool) -> dict[str, Any]:\n"
+              "    if automatic_memory_paused():\n"
+              "        return {}\n"
+              "    try:\n",
+          )
+          replace_once(
+              "src/djobs/lifecycle.py",
+              'def session_start(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]:\n'
+              '    """Inject compact repository state without claiming or creating any task."""\n\n'
+              "    try:\n",
+              'def session_start(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]:\n'
+              '    """Inject compact repository state without claiming or creating any task."""\n\n'
+              "    if automatic_memory_paused():\n"
+              "        return {}\n"
+              "    try:\n",
+          )
+          replace_once(
+              "src/djobs/lifecycle.py",
+              'def prepare_prompt_context(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]:\n'
+              '    """Reset once-per-session prompt injection for clients lacking startup injection."""\n\n'
+              "    try:\n",
+              'def prepare_prompt_context(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]:\n'
+              '    """Reset once-per-session prompt injection for clients lacking startup injection."""\n\n'
+              "    if automatic_memory_paused():\n"
+              "        return {}\n"
+              "    try:\n",
+          )
+          replace_once(
+              "src/djobs/lifecycle.py",
+              'def prompt_context(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]:\n'
+              '    """Record current intent and return relevant read-only context once per session."""\n\n'
+              "    user_prompt_submit(payload, agent_type=agent_type)\n"
+              "    context = session_start(payload, agent_type=agent_type)\n",
+              'def prompt_context(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]:\n'
+              '    """Recover prior context, then store the current intent for the next request."""\n\n'
+              "    if automatic_memory_paused():\n"
+              "        return {}\n"
+              "    context = session_start(payload, agent_type=agent_type)\n"
+              "    # Read-before-write prevents the current prompt from masquerading as historical memory.\n"
+              "    user_prompt_submit(payload, agent_type=agent_type)\n",
+          )
+          replace_once(
+              "src/djobs/lifecycle.py",
+              "def pre_compact(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]:\n"
+              "    try:\n",
+              "def pre_compact(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]:\n"
+              "    if automatic_memory_paused():\n"
+              "        return {}\n"
+              "    try:\n",
+          )
+          replace_once(
+              "src/djobs/lifecycle.py",
+              "def session_end(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]:\n"
+              "    try:\n",
+              "def session_end(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]:\n"
+              "    if automatic_memory_paused():\n"
+              "        return {}\n"
+              "    try:\n",
+          )
+          replace_once(
+              "src/djobs/lifecycle.py",
+              'def user_prompt_submit(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]:\n'
+              '    """Store bounded user intent as passive memory, never as task ownership."""\n\n'
+              "    prompt = _prompt_text(payload)\n",
+              'def user_prompt_submit(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]:\n'
+              '    """Store bounded user intent as passive memory, never as task ownership."""\n\n'
+              "    if automatic_memory_paused():\n"
+              "        return {}\n"
+              "    prompt = _prompt_text(payload)\n",
+          )
+
+          replace_once(
+              "src/djobs/coding_mcp.py",
+              "from djobs.handoff import sync_workspace as _sync_workspace\n",
+              "from djobs.handoff import sync_workspace as _sync_workspace\n"
+              "from djobs.lifecycle import automatic_memory_paused\n",
+          )
+          replace_once(
+              "src/djobs/coding_mcp.py",
+              "    bootstrap = bootstrap_first_call(context)\n",
+              "    if automatic_memory_paused():\n"
+              "        return json.dumps(\n"
+              "            {\n"
+              '                "ok": True,\n'
+              '                "paused": True,\n'
+              '                "memory_suppressed": True,\n'
+              '                "continue_coding": True,\n'
+              '                "message": "djobs is paused; automatic recovery was skipped.",\n'
+              "            },\n"
+              "            ensure_ascii=False,\n"
+              '            separators=(",", ":"),\n'
+              "        )\n"
+              "    bootstrap = bootstrap_first_call(context)\n",
+          )
+
+          replace_once(
+              "src/djobs/zero_touch.py",
+              "from djobs.handoff import ensure_shared_queue\n",
+              "from djobs.core.pause import is_paused\n"
+              "from djobs.handoff import ensure_shared_queue\n",
+          )
+          replace_once(
+              "src/djobs/zero_touch.py",
+              "    database = shared_db_path().expanduser()\n"
+              "    host = detect_host(context)\n"
+              '    key = (str(database.resolve(strict=False)), host or "unknown")\n',
+              "    database = shared_db_path().expanduser()\n"
+              "    host = detect_host(context)\n"
+              "    if is_paused(database):\n"
+              '        return BootstrapResult(status="paused", host=host, database=str(database))\n'
+              '    key = (str(database.resolve(strict=False)), host or "unknown")\n',
+          )
+
+          replace_once(
+              "src/djobs/entrypoint.py",
+              '    if command in {"mcp", "pause", "unpause", "receipt"}:\n'
+              "        _run_cli(argv)\n"
+              "        return\n",
+              '    if command in {"pause", "unpause"}:\n'
+              '        if not any(item == "--db" or item.startswith("--db=") for item in rest):\n'
+              "            from djobs.workspace import shared_db_path\n\n"
+              '            rest = [*rest, "--db", str(shared_db_path())]\n'
+              "        _run_cli([command, *rest])\n"
+              "        return\n\n"
+              '    if command in {"mcp", "receipt"}:\n'
+              "        _run_cli(argv)\n"
+              "        return\n",
+          )
+
+          # ---------------------------------------------------------------------------
+          # Preserve structured capsule fields under bounded metadata storage.
+          # ---------------------------------------------------------------------------
+          replace_once(
+              "src/djobs/observations.py",
+              "_MAX_METADATA = 1000\n",
+              "_MAX_METADATA = 1000\n"
+              "_MAX_CAPSULE_METADATA = 2400\n",
+          )
+          replace_once(
+              "src/djobs/observations.py",
+              "def _metadata_json(metadata: dict[str, Any] | None) -> str:\n"
+              '    """Serialize bounded metadata without ever producing invalid JSON."""\n\n'
+              "    normalized = dict(metadata or {})\n"
+              '    normalized.setdefault("memory_status", "active")\n'
+              '    normalized.setdefault("stored_as_data", True)\n'
+              '    raw = json.dumps(normalized, ensure_ascii=False, separators=(",", ":"), default=str)\n'
+              "    if len(raw) <= _MAX_METADATA:\n"
+              "        return raw\n"
+              "    preview_limit = max(80, _MAX_METADATA - 120)\n"
+              "    return json.dumps(\n"
+              "        {\n"
+              '            "truncated": True,\n'
+              '            "preview": clean(raw, preview_limit),\n'
+              '            "memory_status": normalized.get("memory_status", "active"),\n'
+              '            "stored_as_data": True,\n'
+              "        },\n"
+              "        ensure_ascii=False,\n"
+              '        separators=(",", ":"),\n'
+              "    )\n",
+              """def _capsule_metadata_json(metadata: dict[str, Any], limit: int) -> str:
+              # Bound capsule metadata field-by-field without discarding its schema.
+              original_progress = metadata.get("progress")
+              original_failures = metadata.get("failures")
+              original_sources = metadata.get("source_event_ids")
+              progress_values = original_progress if isinstance(original_progress, list) else []
+              failure_values = original_failures if isinstance(original_failures, list) else []
+              source_values = original_sources if isinstance(original_sources, list) else []
+
+              capsule: dict[str, Any] = {
+                  "capsule_schema": 1,
+                  "memory_status": metadata.get("memory_status", "active"),
+                  "stored_as_data": True,
+                  "reason": clean(metadata.get("reason"), 80),
+                  "goal": clean(metadata.get("goal"), 320),
+                  "progress": [clean(item, 180) for item in progress_values[-3:] if clean(item, 180)],
+                  "failures": [clean(item, 180) for item in failure_values[-2:] if clean(item, 180)],
+                  "next": clean(metadata.get("next"), 220),
+                  "source_event_ids": [clean(item, 64) for item in source_values[-8:] if clean(item, 64)],
+              }
+              truncated_fields: set[str] = set()
+              if len(progress_values) > len(capsule["progress"]):
+                  truncated_fields.add("progress")
+              if len(failure_values) > len(capsule["failures"]):
+                  truncated_fields.add("failures")
+              if len(source_values) > len(capsule["source_event_ids"]):
+                  truncated_fields.add("source_event_ids")
+
+              def render() -> str:
+                  payload = dict(capsule)
+                  if truncated_fields:
+                      payload["truncated_fields"] = sorted(truncated_fields)
+                  return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
+
+              raw = render()
+              while len(raw) > limit:
+                  sources = capsule["source_event_ids"]
+                  progress = capsule["progress"]
+                  failures = capsule["failures"]
+                  if sources:
+                      sources.pop(0)
+                      truncated_fields.add("source_event_ids")
+                  elif len(progress) > 1:
+                      progress.pop(0)
+                      truncated_fields.add("progress")
+                  elif len(failures) > 1:
+                      failures.pop(0)
+                      truncated_fields.add("failures")
+                  else:
+                      candidates: list[tuple[int, str, int | None]] = []
+                      for key in ("goal", "next", "reason"):
+                          value = capsule.get(key)
+                          if isinstance(value, str) and len(value) > 32:
+                              candidates.append((len(value), key, None))
+                      for key in ("progress", "failures"):
+                          values = capsule.get(key)
+                          if isinstance(values, list):
+                              for index, value in enumerate(values):
+                                  if isinstance(value, str) and len(value) > 32:
+                                      candidates.append((len(value), key, index))
+                      if not candidates:
+                          break
+                      length, key, index = max(candidates)
+                      new_limit = max(32, int(length * 0.75))
+                      if index is None:
+                          capsule[key] = clean(capsule[key], new_limit)
+                      else:
+                          capsule[key][index] = clean(capsule[key][index], new_limit)
+                      truncated_fields.add(key)
+                  raw = render()
+
+              if len(raw) > limit:
+                  capsule.update(
+                      {
+                          "reason": clean(capsule.get("reason"), 48),
+                          "goal": clean(capsule.get("goal"), 80),
+                          "progress": [],
+                          "failures": [],
+                          "next": clean(capsule.get("next"), 80),
+                          "source_event_ids": [],
+                      }
+                  )
+                  truncated_fields.update({"goal", "progress", "failures", "next", "source_event_ids"})
+                  raw = render()
+              return raw
+
+
+              def _metadata_json(metadata: dict[str, Any] | None, *, limit: int | None = None) -> str:
+                  # Serialize bounded metadata without ever producing invalid JSON.
+                  resolved_limit = _MAX_METADATA if limit is None else max(200, int(limit))
+                  normalized = dict(metadata or {})
+                  normalized.setdefault("memory_status", "active")
+                  normalized.setdefault("stored_as_data", True)
+                  if normalized.get("capsule_schema") == 1:
+                      return _capsule_metadata_json(normalized, resolved_limit)
+                  raw = json.dumps(normalized, ensure_ascii=False, separators=(",", ":"), default=str)
+                  if len(raw) <= resolved_limit:
+                      return raw
+                  preview_limit = max(80, resolved_limit - 120)
+                  return json.dumps(
+                      {
+                          "truncated": True,
+                          "preview": clean(raw, preview_limit),
+                          "memory_status": normalized.get("memory_status", "active"),
+                          "stored_as_data": True,
+                      },
+                      ensure_ascii=False,
+                      separators=(",", ":"),
+                  )
+              """,
+          )
+          replace_once(
+              "src/djobs/observations.py",
+              "    metadata: dict[str, Any] | None = None,\n"
+              "    created_at: str | None = None,\n"
+              ") -> str:\n",
+              "    metadata: dict[str, Any] | None = None,\n"
+              "    metadata_limit: int | None = None,\n"
+              "    created_at: str | None = None,\n"
+              ") -> str:\n",
+          )
+          replace_once(
+              "src/djobs/observations.py",
+              "            _metadata_json(normalized_metadata),\n",
+              "            _metadata_json(normalized_metadata, limit=metadata_limit),\n",
+          )
+          replace_once(
+              "src/djobs/observations.py",
+              "    metadata: dict[str, Any] | None = None,\n"
+              ") -> None:\n"
+              "    ensure_schema(repo)\n",
+              "    metadata: dict[str, Any] | None = None,\n"
+              "    metadata_limit: int | None = None,\n"
+              ") -> None:\n"
+              "    ensure_schema(repo)\n",
+          )
+          replace_once(
+              "src/djobs/observations.py",
+              "                tool_name=tool_name,\n"
+              "                metadata=metadata,\n"
+              "            )\n",
+              "                tool_name=tool_name,\n"
+              "                metadata=metadata,\n"
+              "                metadata_limit=metadata_limit,\n"
+              "            )\n",
+          )
+          replace_once(
+              "src/djobs/observations.py",
+              '        metadata={\n'
+              '            "reason": clean(reason, 80),\n'
+              '            "goal": goal,\n'
+              '            "progress": progress[-5:],\n'
+              '            "failures": failures[-3:],\n'
+              '            "next": clean(next_hint, 240) if next_hint else None,\n'
+              '            "source_event_ids": [str(row["id"]) for row in rows[-20:]],\n'
+              "        },\n"
+              "    )\n",
+              '        metadata={\n'
+              '            "capsule_schema": 1,\n'
+              '            "reason": clean(reason, 80),\n'
+              '            "goal": goal,\n'
+              '            "progress": progress[-5:],\n'
+              '            "failures": failures[-3:],\n'
+              '            "next": clean(next_hint, 240) if next_hint else None,\n'
+              '            "source_event_ids": [str(row["id"]) for row in rows[-20:]],\n'
+              "        },\n"
+              "        metadata_limit=_MAX_CAPSULE_METADATA,\n"
+              "    )\n",
+          )
+
+          # ---------------------------------------------------------------------------
+          # Stop false-green PR checks: every PR runs the real compatibility/package gates.
+          # ---------------------------------------------------------------------------
+          replace_once(
+              ".github/workflows/ci.yml",
+              "env:\n"
+              "  FULL_CI: ${{ github.event_name != 'pull_request' || startsWith(github.head_ref, 'automation/release-v') }}\n",
+              "env:\n"
+              '  FULL_CI: "true"\n',
+          )
+          replace_once(
+              ".github/workflows/ci.yml",
+              "          profile=lint\n"
+              '          if [ "$EVENT_NAME" = "pull_request" ] && [[ "$HEAD_REF" != automation/release-v* ]]; then\n'
+              "            profile=quick\n"
+              "          fi\n"
+              '          python scripts/preflight.py --profile "$profile" --check --base-ref origin/main \\\n'
+              "            2>&1 | tee preflight.log\n",
+              "          python scripts/preflight.py --profile lint --check --base-ref origin/main \\\n"
+              "            2>&1 | tee preflight.log\n",
+          )
+          for snippet in (
+              "  typecheck:\n    if: github.event_name != 'pull_request' || startsWith(github.head_ref, 'automation/release-v')\n",
+              "  test-postgres:\n    if: github.event_name != 'pull_request' || startsWith(github.head_ref, 'automation/release-v')\n",
+              "  extension:\n    if: github.event_name != 'pull_request' || startsWith(github.head_ref, 'automation/release-v')\n",
+          ):
+              replace_once(".github/workflows/ci.yml", snippet, snippet.split("\n    if:", 1)[0] + "\n")
+
+          # ---------------------------------------------------------------------------
+          # Regression tests.
+          # ---------------------------------------------------------------------------
+          replace_once(
+              "tests/unit/test_cross_agent_lifecycle.py",
+              "from djobs import handoff, lifecycle, observations\n",
+              "from djobs import handoff, lifecycle, observations\n"
+              "from djobs.core.pause import set_paused\n",
+          )
+          append_once(
+              "tests/unit/test_cross_agent_lifecycle.py",
+              "def test_pause_stops_automatic_capture_and_recovery",
+              r"""def test_pause_stops_automatic_capture_and_recovery(
+              tmp_path: Path,
+              monkeypatch: pytest.MonkeyPatch,
+          ) -> None:
+              root = _git_repo(tmp_path / "project")
+              database = tmp_path / "shared.db"
+              repository, queue = _queue(database)
+              monkeypatch.setattr(handoff, "configure", lambda _path: queue)
+              monkeypatch.setenv("DJOBS_DB", str(database))
+              set_paused(database, True)
+
+              payload = {
+                  "cwd": str(root),
+                  "session_id": "paused-session",
+                  "prompt": "This prompt must not be stored while paused",
+              }
+              assert lifecycle.prompt_context(payload, agent_type="codex") == {}
+              assert (
+                  lifecycle.post_tool_use(
+                      {
+                          "cwd": str(root),
+                          "session_id": "paused-session",
+                          "tool_name": "write_file",
+                          "tool_response": {"success": True, "output": "done"},
+                      },
+                      agent_type="codex",
+                  )
+                  == {}
+              )
+              assert lifecycle.session_end(payload, agent_type="codex") == {}
+
+              count = repository._connection.execute(
+                  "SELECT COUNT(*) FROM agent_observations"
+              ).fetchone()[0]
+              assert count == 0
+
+
+          def test_prompt_context_reads_history_before_storing_current_prompt(
+              tmp_path: Path,
+              monkeypatch: pytest.MonkeyPatch,
+          ) -> None:
+              root = _git_repo(tmp_path / "project")
+              database = tmp_path / "shared.db"
+              repository, queue = _queue(database)
+              monkeypatch.setattr(handoff, "configure", lambda _path: queue)
+              monkeypatch.setenv("DJOBS_DB", str(database))
+              workspace = resolve_workspace(cwd=str(root))
+              historical_agent = resolve_agent_session(
+                  workspace,
+                  agent_type="codex",
+                  session_id="historical-session",
+              )
+              observations.record_observation(
+                  repository,
+                  workspace,
+                  historical_agent,
+                  "tool_failure",
+                  "OAuth callback plus-sign normalization failed in the previous session",
+              )
+
+              current_prompt = "Continue OAuth callback plus-sign recovery CURRENT-REQUEST-ONLY"
+              context = lifecycle.prompt_context(
+                  {
+                      "cwd": str(root),
+                      "session_id": "current-session",
+                      "prompt": current_prompt,
+                  },
+                  agent_type="codex",
+              )
+
+              assert "previous session" in context["additionalContext"]
+              assert "CURRENT-REQUEST-ONLY" not in context["additionalContext"]
+              stored = repository._connection.execute(
+                  "SELECT summary FROM agent_observations WHERE event_type = 'user_intent'"
+              ).fetchall()
+              assert current_prompt in {row["summary"] for row in stored}
+
+
+          def test_large_session_capsule_keeps_structured_fields(
+              tmp_path: Path,
+              monkeypatch: pytest.MonkeyPatch,
+          ) -> None:
+              root = _git_repo(tmp_path / "project")
+              database = tmp_path / "shared.db"
+              repository, _queue_service = _queue(database)
+              monkeypatch.setenv("DJOBS_DB", str(database))
+              workspace = resolve_workspace(cwd=str(root))
+              agent = resolve_agent_session(workspace, agent_type="codex", session_id="large-capsule")
+
+              observations.record_observation(
+                  repository,
+                  workspace,
+                  agent,
+                  "user_intent",
+                  "Preserve the public API while completing a deliberately large hardening session",
+              )
+              for index in range(8):
+                  observations.record_observation(
+                      repository,
+                      workspace,
+                      agent,
+                      "tool_result",
+                      f"progress {index}: " + ("implementation evidence " * 20),
+                  )
+              for index in range(5):
+                  observations.record_observation(
+                      repository,
+                      workspace,
+                      agent,
+                      "tool_failure",
+                      f"failure {index}: " + ("diagnostic detail " * 20),
+                  )
+
+              assert observations.record_session_capsule(
+                  repository,
+                  workspace,
+                  agent,
+                  reason="test-large-capsule",
+                  next_hint="Run the complete compatibility matrix and inspect every failure " * 10,
+              )
+              row = repository._connection.execute(
+                  "SELECT metadata_json FROM agent_observations "
+                  "WHERE event_type = 'session_capsule' ORDER BY created_at DESC LIMIT 1"
+              ).fetchone()
+              metadata = json.loads(row["metadata_json"])
+
+              assert len(row["metadata_json"]) <= observations._MAX_CAPSULE_METADATA
+              assert metadata["capsule_schema"] == 1
+              assert isinstance(metadata["goal"], str) and metadata["goal"]
+              assert isinstance(metadata["progress"], list)
+              assert isinstance(metadata["failures"], list)
+              assert "next" in metadata
+              assert isinstance(metadata["source_event_ids"], list)
+              assert metadata["truncated_fields"]
+          """,
+          )
+
+          append_once(
+              "tests/unit/test_zero_touch_bootstrap.py",
+              "def test_paused_bootstrap_is_side_effect_free",
+              r"""def test_paused_bootstrap_is_side_effect_free(monkeypatch, tmp_path: Path) -> None:
+              from djobs.core.pause import set_paused
+
+              database = tmp_path / "memory.db"
+              monkeypatch.setenv("DJOBS_DB", str(database))
+              monkeypatch.setenv("DJOBS_AGENT_TYPE", "copilot")
+              set_paused(database, True)
+              calls: list[str] = []
+              monkeypatch.setattr(zero_touch, "ensure_shared_queue", lambda: calls.append("queue"))
+              monkeypatch.setattr(
+                  zero_touch,
+                  "install_host_hooks",
+                  lambda *_args, **_kwargs: calls.append("hooks"),
+              )
+              zero_touch.reset_bootstrap_state()
+
+              result = zero_touch.bootstrap_first_call(home=tmp_path)
+
+              assert result.status == "paused"
+              assert calls == []
+
+
+          def test_minimal_sync_tool_reports_pause_before_bootstrap(monkeypatch, tmp_path: Path) -> None:
+              import asyncio
+              import json
+
+              from djobs import coding_mcp
+              from djobs.core.pause import set_paused
+
+              database = tmp_path / "memory.db"
+              monkeypatch.setenv("DJOBS_DB", str(database))
+              set_paused(database, True)
+              monkeypatch.setattr(
+                  coding_mcp,
+                  "bootstrap_first_call",
+                  lambda _context: (_ for _ in ()).throw(AssertionError("must not bootstrap while paused")),
+              )
+
+              result = json.loads(asyncio.run(coding_mcp.sync_workspace(None, query="continue")))
+
+              assert result == {
+                  "ok": True,
+                  "paused": True,
+                  "memory_suppressed": True,
+                  "continue_coding": True,
+                  "message": "djobs is paused; automatic recovery was skipped.",
+              }
+          """,
+          )
+
+          append_once(
+              "tests/unit/test_zero_config_entrypoint.py",
+              "def test_top_level_pause_defaults_to_shared_memory_database",
+              r"""def test_top_level_pause_defaults_to_shared_memory_database(
+              monkeypatch,
+              tmp_path: Path,
+          ) -> None:
+              database = tmp_path / "global.db"
+              monkeypatch.setenv("DJOBS_DB", str(database))
+              captured: list[str] = []
+
+              def fake_run_cli(argv: list[str], *, prog: str = "djobs") -> None:
+                  del prog
+                  captured.extend(argv)
+
+              monkeypatch.setattr(entrypoint, "_run_cli", fake_run_cli)
+              monkeypatch.setattr(sys, "argv", ["djobs", "pause"])
+
+              entrypoint.main()
+
+              assert captured == ["pause", "--db", str(database)]
+          """,
+          )
+          PY
+          python /tmp/apply_hardening.py
+          rm .github/workflows/apply-v0183-hardening.yml
+
+      - name: Install validation dependencies
+        run: python -m pip install -e ".[dev,pg]"
+
+      - name: Run full production preflight
+        run: python scripts/preflight.py --profile full --check --base-ref origin/main
+
+      - name: Commit validated hardening
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix: harden automatic memory recovery and PR gates"
+          git push origin "HEAD:${{ github.head_ref }}"

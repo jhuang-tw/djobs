@@ -15,6 +15,7 @@ def test_payload_fixture_is_reproducible_and_explicitly_labeled() -> None:
 
     assert result["benchmark"] == "deterministic payload-size regression fixture"
     assert "Not provider billing" in result["disclaimer"]
+    assert "end-to-end savings" in result["disclaimer"]
     assert "modern agents" in result["disclaimer"]
     assert "proxy_reduction_percent" not in result
     assert result["serialized_payload_ratio"] < 1

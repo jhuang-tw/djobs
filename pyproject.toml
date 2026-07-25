@@ -9,7 +9,16 @@ description = "Local project memory that helps coding agents continue work acros
 requires-python = ">=3.10"
 license = "MIT"
 readme = "README.md"
-keywords = ["ai-agent", "coding-agent", "local-agent-memory", "repository-memory", "cross-agent-handoff", "passive-hooks", "context-recovery", "resumable-workflow", "mcp", "model-context-protocol", "copilot", "claude-code", "codex", "gemini", "kimi-code", "multi-agent", "workflow-state", "sqlite"]
+keywords = [
+    "ai-agent",
+    "coding-agent",
+    "local-agent-memory",
+    "repository-memory",
+    "context-recovery",
+    "cross-agent-handoff",
+    "model-context-protocol",
+    "sqlite",
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -23,7 +32,6 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries",
     "Topic :: Software Development :: Quality Assurance",
-    "Topic :: System :: Distributed Computing",
 ]
 
 dependencies = [

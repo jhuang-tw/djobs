@@ -280,7 +280,7 @@ def _exclusive_config(path: Path) -> Iterator[None]:
                     lock.unlink()
                 continue
             if time.monotonic() >= deadline:
-                raise TimeoutError(f"timed out waiting to update {path}")
+                raise TimeoutError(f"timed out waiting to update {path}") from None
             time.sleep(0.05)
 
     try:

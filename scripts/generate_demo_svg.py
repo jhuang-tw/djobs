@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate an animated terminal SVG from the migration demo.
 
-Runs ``examples/run_migration_demo.py``, captures every line with a
+Runs ``examples/legacy_queue/run_migration_demo.py``, captures every line with a
 timestamp, then renders a dark-themed terminal SVG with CSS animations
 (line-by-line reveal + auto-scroll).  Pure Python, no external tools.
 
@@ -55,7 +55,7 @@ def capture_demo() -> list[tuple[float, str]]:
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUNBUFFERED"] = "1"
 
-    cmd = [sys.executable, str(Path("examples/run_migration_demo.py"))]
+    cmd = [sys.executable, str(Path("examples/legacy_queue/run_migration_demo.py"))]
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
@@ -255,7 +255,7 @@ def main() -> None:
     print(f"Captured {len(raw)} lines")
 
     # Prepend a shell prompt for realism
-    raw.insert(0, (0.0, "$ python examples/run_migration_demo.py"))
+    raw.insert(0, (0.0, "$ python examples/legacy_queue/run_migration_demo.py"))
 
     lines = clean_paths(raw)
     lines = retime(lines)

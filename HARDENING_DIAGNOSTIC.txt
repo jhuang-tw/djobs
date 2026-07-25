@@ -1,0 +1,48 @@
+exit_code=1
+Changed paths:
+  - .github/workflows/apply-production-hardening.yml
+
+==> /opt/hostedtoolcache/Python/3.13.14/x64/bin/python -m ruff format --check src tests scripts/prepare_auto_release.py scripts/extract_release_notes.py scripts/preflight.py
+114 files already formatted
+
+==> /opt/hostedtoolcache/Python/3.13.14/x64/bin/python -m ruff check src tests scripts/prepare_auto_release.py scripts/extract_release_notes.py scripts/preflight.py
+F821 Undefined name `_metadata_json`
+   --> src/djobs/observations.py:291:13
+    |
+289 |             clean(tool_name, 80) or None,
+290 |             clean(summary, _MAX_SUMMARY),
+291 |             _metadata_json(normalized_metadata, limit=metadata_limit),
+    |             ^^^^^^^^^^^^^^
+292 |             created_at or datetime.now(timezone.utc).isoformat(),
+293 |         ),
+    |
+
+F821 Undefined name `_metadata_json`
+   --> src/djobs/observations.py:657:18
+    |
+655 |             cursor.execute(
+656 |                 "UPDATE agent_observations SET metadata_json = ? WHERE id = ?",
+657 |                 (_metadata_json(metadata), memory_id),
+    |                  ^^^^^^^^^^^^^^
+658 |             )
+659 |             repo._connection.commit()
+    |
+
+Found 2 errors.
+Traceback (most recent call last):
+  File "/home/runner/work/djobs/djobs/scripts/preflight.py", line 261, in <module>
+    raise SystemExit(main())
+                     ~~~~^^
+  File "/home/runner/work/djobs/djobs/scripts/preflight.py", line 245, in main
+    run_format_and_lint(fix=args.fix)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/home/runner/work/djobs/djobs/scripts/preflight.py", line 182, in run_format_and_lint
+    _run([sys.executable, "-m", "ruff", "check", *RUFF_TARGETS])
+    ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/runner/work/djobs/djobs/scripts/preflight.py", line 111, in _run
+    subprocess.run(command, cwd=cwd, env=env, check=True)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/hostedtoolcache/Python/3.13.14/x64/lib/python3.13/subprocess.py", line 577, in run
+    raise CalledProcessError(retcode, process.args,
+                             output=stdout, stderr=stderr)
+subprocess.CalledProcessError: Command '['/opt/hostedtoolcache/Python/3.13.14/x64/bin/python', '-m', 'ruff', 'check', 'src', 'tests', 'scripts/prepare_auto_release.py', 'scripts/extract_release_notes.py', 'scripts/preflight.py']' returned non-zero exit status 1.

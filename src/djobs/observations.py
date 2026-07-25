@@ -27,6 +27,7 @@ from djobs.storage.schema import (
 
 _MAX_SUMMARY = 500
 _MAX_METADATA = 1000
+_MAX_CAPSULE_METADATA = 2400
 _MAX_OBSERVATIONS_PER_WORKSPACE = 1000
 _MAX_CONTEXT_MARKERS_PER_WORKSPACE = 256
 _HASH_CHUNK_SIZE = 64 * 1024
@@ -68,16 +69,105 @@ def _metadata_dict(raw: Any) -> dict[str, Any]:
     return decoded if isinstance(decoded, dict) else {}
 
 
-def _metadata_json(metadata: dict[str, Any] | None) -> str:
-    """Serialize bounded metadata without ever producing invalid JSON."""
+def _capsule_metadata_json(metadata: dict[str, Any], limit: int) -> str:
+    # Bound capsule metadata field-by-field without discarding its schema.
+    original_progress = metadata.get("progress")
+    original_failures = metadata.get("failures")
+    original_sources = metadata.get("source_event_ids")
+    progress_values = original_progress if isinstance(original_progress, list) else []
+    failure_values = original_failures if isinstance(original_failures, list) else []
+    source_values = original_sources if isinstance(original_sources, list) else []
 
+    capsule: dict[str, Any] = {
+        "capsule_schema": 1,
+        "memory_status": metadata.get("memory_status", "active"),
+        "stored_as_data": True,
+        "reason": clean(metadata.get("reason"), 80),
+        "goal": clean(metadata.get("goal"), 320),
+        "progress": [clean(item, 180) for item in progress_values[-3:] if clean(item, 180)],
+        "failures": [clean(item, 180) for item in failure_values[-2:] if clean(item, 180)],
+        "next": clean(metadata.get("next"), 220),
+        "source_event_ids": [clean(item, 64) for item in source_values[-8:] if clean(item, 64)],
+    }
+    truncated_fields: set[str] = set()
+    if len(progress_values) > len(capsule["progress"]):
+        truncated_fields.add("progress")
+    if len(failure_values) > len(capsule["failures"]):
+        truncated_fields.add("failures")
+    if len(source_values) > len(capsule["source_event_ids"]):
+        truncated_fields.add("source_event_ids")
+
+    def render() -> str:
+        payload = dict(capsule)
+        if truncated_fields:
+            payload["truncated_fields"] = sorted(truncated_fields)
+        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
+
+    raw = render()
+    while len(raw) > limit:
+        sources = capsule["source_event_ids"]
+        progress = capsule["progress"]
+        failures = capsule["failures"]
+        if sources:
+            sources.pop(0)
+            truncated_fields.add("source_event_ids")
+        elif len(progress) > 1:
+            progress.pop(0)
+            truncated_fields.add("progress")
+        elif len(failures) > 1:
+            failures.pop(0)
+            truncated_fields.add("failures")
+        else:
+            candidates: list[tuple[int, str, int | None]] = []
+            for key in ("goal", "next", "reason"):
+                value = capsule.get(key)
+                if isinstance(value, str) and len(value) > 32:
+                    candidates.append((len(value), key, None))
+            for key in ("progress", "failures"):
+                values = capsule.get(key)
+                if isinstance(values, list):
+                    for item_index, value in enumerate(values):
+                        if isinstance(value, str) and len(value) > 32:
+                            candidates.append((len(value), key, item_index))
+            if not candidates:
+                break
+            length, key, selected_index = max(candidates)
+            new_limit = max(32, int(length * 0.75))
+            if selected_index is None:
+                capsule[key] = clean(capsule[key], new_limit)
+            else:
+                capsule[key][selected_index] = clean(capsule[key][selected_index], new_limit)
+            truncated_fields.add(key)
+        raw = render()
+
+    if len(raw) > limit:
+        capsule.update(
+            {
+                "reason": clean(capsule.get("reason"), 48),
+                "goal": clean(capsule.get("goal"), 80),
+                "progress": [],
+                "failures": [],
+                "next": clean(capsule.get("next"), 80),
+                "source_event_ids": [],
+            }
+        )
+        truncated_fields.update({"goal", "progress", "failures", "next", "source_event_ids"})
+        raw = render()
+    return raw
+
+
+def _metadata_json(metadata: dict[str, Any] | None, *, limit: int | None = None) -> str:
+    # Serialize bounded metadata without ever producing invalid JSON.
+    resolved_limit = _MAX_METADATA if limit is None else max(200, int(limit))
     normalized = dict(metadata or {})
     normalized.setdefault("memory_status", "active")
     normalized.setdefault("stored_as_data", True)
+    if normalized.get("capsule_schema") == 1:
+        return _capsule_metadata_json(normalized, resolved_limit)
     raw = json.dumps(normalized, ensure_ascii=False, separators=(",", ":"), default=str)
-    if len(raw) <= _MAX_METADATA:
+    if len(raw) <= resolved_limit:
         return raw
-    preview_limit = max(80, _MAX_METADATA - 120)
+    preview_limit = max(80, resolved_limit - 120)
     return json.dumps(
         {
             "truncated": True,
@@ -176,6 +266,7 @@ def _insert_observation(
     *,
     tool_name: str | None = None,
     metadata: dict[str, Any] | None = None,
+    metadata_limit: int | None = None,
     created_at: str | None = None,
 ) -> str:
     memory_id = uuid.uuid4().hex
@@ -198,7 +289,7 @@ def _insert_observation(
             clean(event_type, 80),
             clean(tool_name, 80) or None,
             clean(summary, _MAX_SUMMARY),
-            _metadata_json(normalized_metadata),
+            _metadata_json(normalized_metadata, limit=metadata_limit),
             created_at or datetime.now(timezone.utc).isoformat(),
         ),
     )
@@ -215,6 +306,7 @@ def record_observation(
     *,
     tool_name: str | None = None,
     metadata: dict[str, Any] | None = None,
+    metadata_limit: int | None = None,
 ) -> None:
     ensure_schema(repo)
     with repo._lock:
@@ -229,6 +321,7 @@ def record_observation(
                 summary,
                 tool_name=tool_name,
                 metadata=metadata,
+                metadata_limit=metadata_limit,
             )
             repo._connection.commit()
         except Exception:
@@ -634,6 +727,7 @@ def record_session_capsule(
         "session_capsule",
         clean(" || ".join(parts), _MAX_SUMMARY),
         metadata={
+            "capsule_schema": 1,
             "reason": clean(reason, 80),
             "goal": goal,
             "progress": progress[-5:],
@@ -641,6 +735,7 @@ def record_session_capsule(
             "next": clean(next_hint, 240) if next_hint else None,
             "source_event_ids": [str(row["id"]) for row in rows[-20:]],
         },
+        metadata_limit=_MAX_CAPSULE_METADATA,
     )
     return True
 

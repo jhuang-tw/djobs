@@ -174,7 +174,8 @@ def test_gain_cli_json_defaults_to_current_workspace(
     result = json.loads(capsys.readouterr().out)
     assert result["scope"] == str(tmp_path)
     assert result["all_time"]["completed_records"] == 1
-    assert "provider billing data" in result["assumptions"]["note"]
+    assert "provider usage or billing data" in result["assumptions"]["note"]
+    assert "Modern agents" in result["assumptions"]["note"]
 
 
 def test_gain_rejects_invalid_estimation_parameters(tmp_path: Path) -> None:

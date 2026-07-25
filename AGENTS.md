@@ -32,8 +32,8 @@ The command applies the pinned formatter first and stops when formatting changes
 file. Review and stage those changes, then rerun. Use `--profile full --check` only
 when a release-grade local pass is required.
 
-Ordinary PRs run the quick preflight once. Full Python, PostgreSQL, package, extension,
-and three-OS installation validation runs on `main` and automated release PRs. A
-change is complete only after relevant tests and CI are green, current Markdown and
-published metadata match the code, and temporary migration or validation files are
-removed.
+Every pull request runs the real Python, PostgreSQL, package, extension, and three-OS
+installation gates before merge; required job names must not be no-op placeholders.
+A change is complete only after those checks are green, current Markdown and published
+metadata match the code, benchmark copy states its assumptions, and temporary migration
+or validation files are removed.

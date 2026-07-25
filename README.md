@@ -32,8 +32,11 @@ djobs doctor
 djobs memory list
 ```
 
-A healthy first run does **not** require a project-local `.vscode/mcp.json`. The extension and
-`djobs setup` use user-level registration, while the shared local database is created on first use.
+A healthy first run does **not** require a project-local `.vscode/mcp.json`. `djobs setup`
+explicitly configures user-level host adapters. The VS Code extension can register MCP natively and,
+on the first MCP call, may create `~/.djobs/global.db` and configure the detected Copilot adapter.
+Those are local user-level changes rather than a read-only probe; use `djobs doctor` to inspect them
+and `djobs remove copilot` to remove the managed adapter.
 
 After an agent session records work, `djobs memory list` shows what can be recovered:
 
@@ -88,7 +91,7 @@ always remains authoritative.
 | `djobs memory status ID stale` | Retire outdated memory without erasing its audit trail |
 | `djobs memory forget ID` | Delete one memory item |
 | `djobs memory clear --yes` | Clear passive memory for this repository family |
-| `djobs gain` | Inspect recovery savings and verified-task efficiency |
+| `djobs gain` | Inspect heuristic recovery and verified-task efficiency estimates |
 | `djobs pause` / `djobs unpause` | Temporarily disable or resume automatic behavior |
 | `djobs receipt` | Show an evidence-backed work summary |
 
@@ -184,8 +187,12 @@ djobs remove claude
   on a best-effort basis before storage.
 - Add `[djobs:no-memory]` to skip one prompt.
 - Set `DJOBS_CAPTURE_USER_INTENT=0` to disable automatic prompt-intent capture.
+- Run `djobs pause` to stop automatic prompt/tool capture, session capsules, repository snapshots,
+  first-call bootstrap, and `sync_workspace` recovery. Manual memory inspection and deletion remain
+  available; pausing deletes nothing.
 - Mark memory `resolved`, `superseded`, `stale`, or `contradicted` when it should stop influencing
-  normal recovery.
+  normal recovery. Inactive observations remain locally inspectable only while retained by bounded
+  storage; djobs is not a permanent audit archive.
 - Use `forget` for one item or `clear --yes` for passive memory in the repository family. Explicit
   checkpoint tasks are preserved by memory clear.
 - Hook, search, and storage failures are fail-open and must not block the coding request.
@@ -211,17 +218,20 @@ python scripts/benchmark_project_memory.py
 python scripts/benchmark_resume_quality.py
 ```
 
-| Recovery strategy | Estimated context | Minimum calls |
+| Fixture path | Simple serialized-text estimate | Minimum calls |
 |---|---:|---:|
 | Re-read every bundled synthetic source file | ~7,805 tokens | 18 file reads |
 | Query-aware `sync_workspace` resume tier | ~224 tokens | 1 MCP call |
 
-The bundled fixture reports a **97.1% recovery-payload proxy reduction**. It is a reproducible
-synthetic comparison, not provider billing, latency, or model-quality measurement. The quality
-benchmark also checks cross-worktree recall, checkout ownership isolation, stale-memory exclusion,
-and unchanged-context replay suppression.
+This is a payload-size regression fixture, not an end-to-end savings claim. Its reread baseline
+assumes every bundled source file is sent again and does not model modern agents that summarize,
+cache, or selectively read files. Do not interpret the comparison as provider-token savings,
+billing reduction, latency improvement, or model-quality improvement. Use it to detect changes in
+djobs payload shape and inspect the benchmark methodology yourself. The companion quality fixture
+checks cross-worktree recall, checkout ownership isolation, stale-memory exclusion, and
+unchanged-context replay suppression.
 
-`djobs gain` complements the synthetic benchmark with local workflow proxies:
+`djobs gain` complements the fixture with local workflow heuristics:
 
 ```bash
 djobs gain
@@ -230,7 +240,8 @@ djobs gain --format json
 ```
 
 It reports first-pass verified rate, repair attempts, average attempts per verified task, cycle-time
-proxy, and estimated context tokens per verified task.
+proxy, and simple context-size estimates. These are explainable local estimates, not observed model
+usage or guaranteed savings.
 
 ## Requirements
 

@@ -13,6 +13,7 @@ import re
 from datetime import timedelta
 from typing import Any
 
+from djobs.core.pause import is_paused
 from djobs.handoff import _resolve, sync_workspace
 from djobs.observations import (
     capture_repository_snapshot,
@@ -23,6 +24,7 @@ from djobs.observations import (
     record_unique_session_observation,
     reset_context_injection,
 )
+from djobs.workspace import shared_db_path
 
 _CODING_TYPES = ("coding-session", "coding-checkpoint")
 _LEASE_SECONDS = 600
@@ -62,6 +64,12 @@ _PROMPT_KEYS = (
     "text",
 )
 _NO_MEMORY_MARKERS = ("[djobs:no-memory]", "<djobs:no-memory>")
+
+
+def automatic_memory_paused() -> bool:
+    """Return whether automatic capture and recovery are paused."""
+
+    return is_paused(shared_db_path())
 
 
 def _capture_user_intent_enabled() -> bool:
@@ -205,6 +213,8 @@ def _response_failed(payload: dict[str, Any]) -> bool:
 
 
 def _observe_tool(payload: dict[str, Any], *, agent_type: str, failed: bool) -> dict[str, Any]:
+    if automatic_memory_paused():
+        return {}
     try:
         workspace, agent, queue, repo = _resolve(
             roots=None,
@@ -249,6 +259,8 @@ def _observe_tool(payload: dict[str, Any], *, agent_type: str, failed: bool) -> 
 def session_start(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]:
     """Inject compact repository state without claiming or creating any task."""
 
+    if automatic_memory_paused():
+        return {}
     try:
         cwd = _cwd(payload)
         session_id = _session_id(payload)
@@ -298,6 +310,8 @@ def session_start(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]
 def prepare_prompt_context(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]:
     """Reset once-per-session prompt injection for clients lacking startup injection."""
 
+    if automatic_memory_paused():
+        return {}
     try:
         workspace, agent, _queue, repo = _resolve(
             roots=None,
@@ -313,10 +327,13 @@ def prepare_prompt_context(payload: dict[str, Any], *, agent_type: str) -> dict[
 
 
 def prompt_context(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]:
-    """Record current intent and return relevant read-only context once per session."""
+    """Recover prior context, then store the current intent for the next request."""
 
-    user_prompt_submit(payload, agent_type=agent_type)
+    if automatic_memory_paused():
+        return {}
     context = session_start(payload, agent_type=agent_type)
+    # Read-before-write prevents the current prompt from masquerading as historical memory.
+    user_prompt_submit(payload, agent_type=agent_type)
     if not context:
         return {}
     try:
@@ -347,6 +364,8 @@ def post_tool_failure(payload: dict[str, Any], *, agent_type: str) -> dict[str, 
 
 
 def pre_compact(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]:
+    if automatic_memory_paused():
+        return {}
     try:
         workspace, agent, _queue, repo = _resolve(
             roots=None,
@@ -377,6 +396,8 @@ def pre_compact(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]:
 
 
 def session_end(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]:
+    if automatic_memory_paused():
+        return {}
     try:
         workspace, agent, _queue, repo = _resolve(
             roots=None,
@@ -409,6 +430,8 @@ def session_end(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]:
 def user_prompt_submit(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]:
     """Store bounded user intent as passive memory, never as task ownership."""
 
+    if automatic_memory_paused():
+        return {}
     prompt = _prompt_text(payload)
     if (
         not prompt

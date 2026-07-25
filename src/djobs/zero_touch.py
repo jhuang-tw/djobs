@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from djobs.core.pause import is_paused
 from djobs.handoff import ensure_shared_queue
 from djobs.host_hooks import install_host_hooks
 from djobs.workspace import shared_db_path
@@ -122,6 +123,8 @@ def bootstrap_first_call(
 
     database = shared_db_path().expanduser()
     host = detect_host(context)
+    if is_paused(database):
+        return BootstrapResult(status="paused", host=host, database=str(database))
     key = (str(database.resolve(strict=False)), host or "unknown")
 
     cached = _RESULTS.get(key)

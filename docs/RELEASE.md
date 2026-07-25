@@ -8,8 +8,8 @@ and immutable release tag use one lockstep version.
 
 A normal change requires only one human pull request:
 
-1. the human PR runs the quick shared preflight;
-2. after merge, `main` runs the full compatibility matrix;
+1. the human PR runs the full compatibility matrix before merge;
+2. after merge, `main` revalidates the selected source commit;
 3. the `Release` workflow selects that validated main commit;
 4. it computes the next semantic version and opens an automated
    `automation/release-vX.Y.Z` pull request;
@@ -42,9 +42,10 @@ run the mutating quick form before pushing:
 python scripts/preflight.py --profile quick --fix --base-ref origin/main
 ```
 
-CI uses the non-mutating `--check` form. Ordinary human PRs run one quick required
-preflight. The full matrix is reserved for `main`, manual verification, and automated
-release PRs. A newer push cancels an obsolete CI run for the same PR.
+CI uses the non-mutating `--check` form. Every pull request runs the real compatibility
+matrix before merge; required check names must never be satisfied by no-op placeholder
+jobs. The same matrix runs for `main`, manual verification, and automated release PRs.
+A newer push cancels an obsolete CI run for the same branch.
 
 Full compatibility validation includes:
 
@@ -88,9 +89,9 @@ The workflow publishes in this order:
 4. compile and publish the VS Code extension;
 5. create or update the immutable Git tag and GitHub Release.
 
-The merged release commit differs from the checked PR only by the squash commit
-identity, so the workflow does not dispatch a duplicate full matrix after merging.
-The package and extension publishing jobs still rebuild from the exact merged SHA.
+The merged release commit differs from the checked PR only by the squash commit identity.
+A normal `main` CI run may revalidate that result, while the package and extension
+publishing jobs rebuild from the exact merged SHA.
 
 PyPI and Marketplace duplicate versions are treated idempotently. If publication is
 interrupted after the release PR reaches `main`, re-run the `Release` workflow. The

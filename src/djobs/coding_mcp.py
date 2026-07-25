@@ -14,6 +14,7 @@ from djobs.handoff import checkpoint as _checkpoint
 from djobs.handoff import ensure_shared_queue
 from djobs.handoff import handoff as _handoff
 from djobs.handoff import sync_workspace as _sync_workspace
+from djobs.lifecycle import automatic_memory_paused
 from djobs.memory import memory_action as _memory_action
 from djobs.observations import memory_context_hash
 from djobs.zero_touch import bootstrap_first_call
@@ -193,6 +194,18 @@ async def sync_workspace(
     - ``memory_unchanged=true`` means the resume payload was intentionally omitted, not lost.
     """
 
+    if automatic_memory_paused():
+        return json.dumps(
+            {
+                "ok": True,
+                "paused": True,
+                "memory_suppressed": True,
+                "continue_coding": True,
+                "message": "djobs is paused; automatic recovery was skipped.",
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
     bootstrap = bootstrap_first_call(context)
     # The resume tier is internally compiled from compact evidence so provenance can be attached
     # before the supporting list is removed from the public response.

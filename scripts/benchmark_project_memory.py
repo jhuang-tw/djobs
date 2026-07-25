@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Deterministic recovery-context proxy for djobs repository memory.
+"""Deterministic payload-size regression fixture for djobs repository memory.
 
-This benchmark does not claim provider billing or model-quality results. It
-compares a conservative "re-read every synthetic source file" recovery payload
-with one query-aware ``sync_workspace`` response for the same repository.
+This benchmark is a serialized payload-size regression fixture. It does not
+claim provider billing, end-to-end savings, latency, or model-quality results.
+Modern agents may summarize, cache, or selectively read files instead of replaying
+every source file, so the full-reread baseline is deliberately simple.
 """
 
 from __future__ import annotations
@@ -129,10 +130,12 @@ def run(file_count: int) -> dict[str, Any]:
             decoded = json.loads(memory)
             baseline_tokens = estimate_tokens(baseline)
             memory_tokens = estimate_tokens(memory)
-            reduction = 0.0 if baseline_tokens == 0 else 1 - memory_tokens / baseline_tokens
             return {
-                "benchmark": "deterministic recovery-payload proxy",
-                "disclaimer": "Not provider billing, latency, or model-quality measurement.",
+                "benchmark": "deterministic payload-size regression fixture",
+                "disclaimer": (
+                    "Not provider billing, end-to-end savings, latency, or model-quality "
+                    "measurement; modern agents may summarize, cache, or selectively read."
+                ),
                 "fixture_files": len(files),
                 "query": query,
                 "baseline": {
@@ -148,7 +151,13 @@ def run(file_count: int) -> dict[str, Any]:
                         1 for value in dict(decoded.get("resume") or {}).values() if value
                     ),
                 },
-                "proxy_reduction_percent": round(reduction * 100, 1),
+                "serialized_payload_ratio": round(memory_tokens / baseline_tokens, 4)
+                if baseline_tokens
+                else None,
+                "interpretation": (
+                    "Compare raw fixture payloads across releases; do not convert this ratio "
+                    "into a provider-token or product-quality claim."
+                ),
             }
         finally:
             close_configured_queue()
@@ -180,7 +189,7 @@ def main() -> int:
         f"~{result['djobs']['estimated_tokens']} tokens, "
         f"{result['djobs']['mcp_calls']} MCP call"
     )
-    print(f"Recovery-payload proxy reduction: {result['proxy_reduction_percent']}%")
+    print("Interpretation: compare raw fixture payloads; no end-to-end savings percentage is claimed.")
     return 0
 
 

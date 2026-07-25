@@ -10,11 +10,15 @@ _MODULE = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_MODULE)
 
 
-def test_recovery_proxy_is_reproducible_and_explicitly_labeled() -> None:
+def test_payload_fixture_is_reproducible_and_explicitly_labeled() -> None:
     result = _MODULE.run(8)
 
-    assert result["benchmark"] == "deterministic recovery-payload proxy"
+    assert result["benchmark"] == "deterministic payload-size regression fixture"
     assert "Not provider billing" in result["disclaimer"]
+    assert "end-to-end savings" in result["disclaimer"]
+    assert "modern agents" in result["disclaimer"]
+    assert "proxy_reduction_percent" not in result
+    assert result["serialized_payload_ratio"] < 1
     assert result["baseline"]["minimum_file_read_calls"] == 8
     assert result["djobs"]["mcp_calls"] == 1
     assert result["djobs"]["returned_memories"] >= 2

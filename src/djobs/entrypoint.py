@@ -240,8 +240,7 @@ def _doctor_payload() -> dict[str, Any]:
 
     import shutil
 
-    from djobs import __version__
-    from djobs import cli
+    from djobs import __version__, cli
     from djobs.setup_cli import doctor_results
     from djobs.workspace import shared_db_path
 
@@ -298,7 +297,9 @@ def _doctor_payload() -> dict[str, Any]:
                     "next_step": (
                         None
                         if command_ok
-                        else "Run 'djobs legacy install-mcp --force' or remove the broken override."
+                        else (
+                            "Run 'djobs legacy install-mcp --force' or remove the broken override."
+                        )
                     ),
                 }
             )
@@ -319,7 +320,8 @@ def _doctor_payload() -> dict[str, Any]:
                 "ok": True,
                 "level": "info",
                 "detail": (
-                    "not present (normal for extension or user-level setup; no project file required)"
+                    "not present (normal for extension or user-level setup; "
+                    "no project file required)"
                 ),
                 "next_step": None,
             }

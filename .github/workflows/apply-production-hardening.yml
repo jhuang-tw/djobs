@@ -122,7 +122,7 @@ jobs:
             code=$?
             trap - ERR
             set +e
-            git reset
+            git reset --mixed "$GITHUB_SHA"
             {
               printf 'run_id=%s\n' "$GITHUB_RUN_ID"
               printf 'exit_code=%s\n\n' "$code"
@@ -153,7 +153,6 @@ jobs:
           python scripts/preflight.py --profile full --check --base-ref origin/main > /tmp/preflight-output.txt 2>&1
 
           rm -f HARDENING_DIAGNOSTIC.txt
-          rm .github/workflows/apply-production-hardening.yml
           rm .github/scripts/calibrate_hardening_docs.py
           git diff --check
           git config user.name "github-actions[bot]"

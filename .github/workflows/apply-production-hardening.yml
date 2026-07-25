@@ -154,6 +154,8 @@ jobs:
           python -m ruff format src tests scripts/prepare_auto_release.py scripts/extract_release_notes.py scripts/preflight.py
           python scripts/preflight.py --profile full --check --base-ref origin/main > /tmp/preflight-output.txt 2>&1
 
+          cp .github/workflows/ci.yml CI_HARDENING_PAYLOAD.yml
+          git checkout -- .github/workflows/ci.yml
           rm -f HARDENING_DIAGNOSTIC.txt
           rm .github/scripts/calibrate_hardening_docs.py
           git diff --check

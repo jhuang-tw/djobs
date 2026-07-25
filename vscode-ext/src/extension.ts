@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
+import { runDjobsCommand } from './commands';
 import { DjobsClient } from './djobsClient';
+import { DjobsDoctorReport } from './types';
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -49,6 +51,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand('djobs.diagnose', async () => {
       await runDiagnostics(client, output, nativeMcp);
     }),
+    vscode.commands.registerCommand('djobs.memory', async () => {
+      await runValueCommand(client, output, ['memory', 'list'], 'Repository memory');
+    }),
+    vscode.commands.registerCommand('djobs.gain', async () => {
+      await runValueCommand(client, output, ['gain'], 'Memory gain');
+    }),
+    vscode.commands.registerCommand('djobs.receipt', async () => {
+      await runValueCommand(client, output, ['receipt'], 'Work receipt');
+    }),
     vscode.commands.registerCommand('djobs.pause', async () => {
       await runPauseCommand(client, true);
     }),
@@ -71,6 +82,32 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
 export function deactivate(): void {}
 
+async function runValueCommand(
+  client: DjobsClient,
+  output: vscode.OutputChannel,
+  args: string[],
+  title: string,
+): Promise<void> {
+  output.clear();
+  output.show(true);
+  output.appendLine(`${title}\n`);
+  try {
+    const result = await runDjobsCommand(client, args);
+    output.append(result.trimEnd());
+    output.appendLine('');
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    output.appendLine(`Could not run djobs: ${detail}`);
+    const choice = await vscode.window.showErrorMessage(
+      `djobs ${title.toLowerCase()} could not be shown. Set up or repair djobs now?`,
+      'Set up djobs',
+    );
+    if (choice === 'Set up djobs') {
+      await vscode.commands.executeCommand('djobs.setup');
+    }
+  }
+}
+
 async function runDiagnostics(
   client: DjobsClient,
   output: vscode.OutputChannel,
@@ -81,31 +118,41 @@ async function runDiagnostics(
   output.appendLine('Running djobs diagnostics...\n');
 
   try {
-    const report = await client.doctor();
-    let allOk = true;
+    const report = JSON.parse(
+      await runDjobsCommand(client, ['doctor', '--json']),
+    ) as DjobsDoctorReport;
+    let allOk = report.ok !== false;
     for (const check of report.checks) {
-      if (nativeMcp && check.name === 'mcp.json wiring') {
-        output.appendLine('  [INFO] VS Code native MCP: registered by the extension; mcp.json is optional');
+      if (nativeMcp && check.name === 'project MCP override' && check.ok) {
+        output.appendLine(
+          '  [INFO] VS Code native MCP: registered by the extension; project mcp.json is optional',
+        );
         continue;
       }
-      const info = check.level === 'info';
-      if (!check.ok && !info) {
+      const advisory = check.level === 'info' || check.level === 'warning';
+      if (!check.ok && !advisory) {
         allOk = false;
       }
-      const mark = check.ok ? 'OK  ' : info ? 'INFO' : 'FAIL';
+      const mark = check.ok ? (check.level === 'check' ? 'OK  ' : 'INFO')
+        : check.level === 'warning' ? 'WARN' : 'FAIL';
       output.appendLine(`  [${mark}] ${check.name}: ${check.detail}`);
+      if (!check.ok && check.next_step) {
+        output.appendLine(`         Next: ${check.next_step}`);
+      }
     }
 
     const hooksReady = await client.hooksInstalled();
     output.appendLine(
       hooksReady
         ? '  [OK  ] passive Copilot hooks: installed'
-        : '  [FAIL] passive Copilot hooks: missing; run "djobs: Set up / Repair djobs"',
+        : '  [INFO] passive Copilot hooks: not installed; use setup when Copilot capture is needed',
     );
-    allOk = allOk && hooksReady;
 
     output.appendLine('');
-    output.appendLine(allOk ? 'All checks passed.' : 'Some checks need attention.');
+    if (report.next_step) {
+      output.appendLine(`Next: ${report.next_step}`);
+    }
+    output.appendLine(allOk ? 'Critical checks passed.' : 'Some critical checks need attention.');
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     output.appendLine(`Could not run diagnostics: ${detail}`);
@@ -142,27 +189,33 @@ async function runDjobsSetup(
           }
         }
 
-        progress.report({ message: 'Installing passive Copilot hooks...' });
-        await client.installHooks();
+        progress.report({ message: 'Configuring passive Copilot memory...' });
+        await runDjobsCommand(client, ['setup', 'copilot']);
 
         if (nativeMcp) {
           if (client.detectDeadMcpInterpreter()) {
-            progress.report({ message: 'Repairing an old MCP launch path...' });
-            await client.reWireMcp();
+            progress.report({ message: 'Removing an obsolete project MCP override...' });
+            await runDjobsCommand(
+              client,
+              ['legacy', 'install-mcp', '--force', ...(client.isGlobalQueue() ? ['--global'] : [])],
+            );
           }
         } else if (client.isGlobalQueue() && !client.isGlobalMcpWired()) {
           progress.report({ message: 'Wiring the MCP server...' });
-          await client.wireGlobalMcp();
+          await runDjobsCommand(client, ['legacy', 'install-mcp', '--global', '--force']);
         } else if (client.detectDeadMcpInterpreter()) {
           progress.report({ message: 'Repairing the MCP launch path...' });
-          await client.reWireMcp();
+          await runDjobsCommand(
+            client,
+            ['legacy', 'install-mcp', '--force', ...(client.isGlobalQueue() ? ['--global'] : [])],
+          );
         }
       },
     );
 
     mcpDidChange.fire();
     vscode.window.showInformationMessage(
-      'djobs is ready. Passive local observations and explicit handoff are active; no sidebar is added.',
+      'djobs is ready. Use “Show Repository Memory” to see what the current project remembers.',
     );
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
@@ -201,13 +254,12 @@ async function runDjobsSetup(
 
 async function runPauseCommand(client: DjobsClient, pause: boolean): Promise<void> {
   try {
+    await runDjobsCommand(client, [pause ? 'pause' : 'unpause', '--db', client.resolvedDbPath()]);
     if (pause) {
-      await client.pause();
       vscode.window.showInformationMessage(
         'djobs paused. Passive observation and recovery are disabled; no state was deleted.',
       );
     } else {
-      await client.unpause();
       vscode.window.showInformationMessage('djobs resumed.');
     }
   } catch (error) {

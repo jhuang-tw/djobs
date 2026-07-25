@@ -112,7 +112,15 @@ def test_extension_is_headless_and_coding_focused() -> None:
     assert "menus" not in contributes
 
     commands = {item["command"] for item in contributes["commands"]}
-    assert commands == {"djobs.setup", "djobs.diagnose", "djobs.pause", "djobs.unpause"}
+    assert commands == {
+        "djobs.setup",
+        "djobs.diagnose",
+        "djobs.memory",
+        "djobs.gain",
+        "djobs.receipt",
+        "djobs.pause",
+        "djobs.unpause",
+    }
 
     properties = contributes["configuration"]["properties"]
     removed_ui_settings = {

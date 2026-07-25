@@ -1,0 +1,47 @@
+name: Apply final product optimizations
+
+on:
+  push:
+    branches:
+      - tmp/apply-final-product-optimizations-20260725
+    paths:
+      - .github/workflows/apply-final-product-optimizations.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: tmp/apply-final-product-optimizations-20260725
+          fetch-depth: 0
+
+      - name: Verify and reconstruct tested patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/tmp/final-patch/part-* | base64 --decode | gzip --decompress > /tmp/final.patch
+          echo 'b4db54981d86fea372916c54e390a7a5288c34f2cb16206748b603a1751008ea  /tmp/final.patch' | sha256sum --check
+
+      - name: Apply exact patch to product branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          target='fix/product-focus-cli-onboarding'
+          expected='a133674e972f16ec300cd4acef054114b269d1b9'
+          git fetch origin "$target"
+          actual="$(git rev-parse "origin/$target")"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "Refusing to apply: $target moved from $expected to $actual" >&2
+            exit 1
+          fi
+          git checkout -B final-product-optimizations "origin/$target"
+          git apply --index /tmp/final.patch
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: finish product-focus onboarding cleanup'
+          git push origin HEAD:"$target"
+          echo "Pushed $(git rev-parse HEAD) to $target"

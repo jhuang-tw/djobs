@@ -5,9 +5,13 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import stat
 import subprocess
 import sys
-from collections.abc import Sequence
+import tempfile
+import time
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +40,8 @@ _COPILOT_EVENTS = (
     "SessionEnd",
 )
 _SUPPORTED = ("copilot", "codex", "claude", "gemini", "kimi")
+_LOCK_TIMEOUT_SECONDS = 10.0
+_LOCK_STALE_SECONDS = 60.0
 
 
 def _command(argv: Sequence[str], *, windows: bool | None = None) -> str:
@@ -249,6 +255,74 @@ def _strip_managed(groups: Any) -> list[dict[str, Any]]:
     return kept
 
 
+def _lock_path(path: Path) -> Path:
+    return path.with_name(f".{path.name}.djobs.lock")
+
+
+@contextmanager
+def _exclusive_config(path: Path) -> Iterator[None]:
+    """Serialize config updates across processes without adding a dependency."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock = _lock_path(path)
+    deadline = time.monotonic() + _LOCK_TIMEOUT_SECONDS
+    descriptor: int | None = None
+    while descriptor is None:
+        try:
+            descriptor = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            try:
+                stale = time.time() - lock.stat().st_mtime > _LOCK_STALE_SECONDS
+            except FileNotFoundError:
+                continue
+            if stale:
+                with suppress(FileNotFoundError):
+                    lock.unlink()
+                continue
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"timed out waiting to update {path}") from None
+            time.sleep(0.05)
+
+    try:
+        os.write(descriptor, f"{os.getpid()}\n".encode())
+        os.fsync(descriptor)
+        yield
+    finally:
+        os.close(descriptor)
+        with suppress(FileNotFoundError):
+            lock.unlink()
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    """Durably replace one config file without exposing partial JSON/TOML."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else 0o600
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
+            with suppress(OSError, AttributeError):
+                os.fchmod(stream.fileno(), mode)
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        try:
+            directory_descriptor = os.open(path.parent, os.O_RDONLY)
+        except OSError:
+            return
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
+    finally:
+        with suppress(FileNotFoundError):
+            temporary.unlink()
+
+
 def _load_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
@@ -277,9 +351,8 @@ def _install_copilot_hooks(
     else:
         before = ""
     after = json.dumps(desired, ensure_ascii=False, sort_keys=True)
-    path.parent.mkdir(parents=True, exist_ok=True)
     if before != after:
-        path.write_text(json.dumps(desired, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        _atomic_write_text(path, json.dumps(desired, ensure_ascii=False, indent=2) + "\n")
         status = "configured"
     else:
         status = "unchanged"
@@ -313,9 +386,8 @@ def _install_json_hooks(
         document["description"] = "User hooks including passive djobs observations."
     content = json.dumps(document, ensure_ascii=False, indent=2) + "\n"
     after = json.dumps(document, ensure_ascii=False, sort_keys=True)
-    path.parent.mkdir(parents=True, exist_ok=True)
     if before != after or not path.exists():
-        path.write_text(content, encoding="utf-8")
+        _atomic_write_text(path, content)
         status = "configured"
     else:
         status = "unchanged"
@@ -369,9 +441,8 @@ def _install_kimi_hooks(
     if content:
         content += "\n\n"
     content += _kimi_block(database, mode)
-    path.parent.mkdir(parents=True, exist_ok=True)
     if content != original:
-        path.write_text(content, encoding="utf-8")
+        _atomic_write_text(path, content)
         status = "configured"
     else:
         status = "unchanged"
@@ -391,50 +462,53 @@ def install_host_hooks(
     del force
     if host not in _SUPPORTED:
         raise ValueError(f"unsupported client adapter: {host}")
-    if host == "copilot":
-        return _install_copilot_hooks(database, home=home, mode=mode)
-    if host == "kimi":
-        return _install_kimi_hooks(database, home=home, mode=mode)
-    return _install_json_hooks(host, database, home=home, mode=mode)
+    path = hook_path(host, home)
+    with _exclusive_config(path):
+        if host == "copilot":
+            return _install_copilot_hooks(database, home=home, mode=mode)
+        if host == "kimi":
+            return _install_kimi_hooks(database, home=home, mode=mode)
+        return _install_json_hooks(host, database, home=home, mode=mode)
 
 
 def remove_host_hooks(host: str, *, home: Path | None = None) -> dict[str, Any]:
     path = hook_path(host, home)
-    if not path.exists():
-        return {"host": host, "status": "absent", "path": str(path)}
-    if host == "copilot":
-        document = _load_json(path)
-        if not _contains_managed(document):
+    with _exclusive_config(path):
+        if not path.exists():
             return {"host": host, "status": "absent", "path": str(path)}
-        path.unlink()
-        return {"host": host, "status": "removed", "path": str(path)}
-    if host == "kimi":
-        original = path.read_text(encoding="utf-8")
-        content, changed = _strip_kimi_block(original)
+        if host == "copilot":
+            document = _load_json(path)
+            if not _contains_managed(document):
+                return {"host": host, "status": "absent", "path": str(path)}
+            path.unlink()
+            return {"host": host, "status": "removed", "path": str(path)}
+        if host == "kimi":
+            original = path.read_text(encoding="utf-8")
+            content, changed = _strip_kimi_block(original)
+            if not changed:
+                return {"host": host, "status": "absent", "path": str(path)}
+            _atomic_write_text(path, content)
+            return {"host": host, "status": "removed", "path": str(path)}
+
+        document = _load_json(path)
+        hooks = document.get("hooks")
+        changed = False
+        if isinstance(hooks, dict):
+            for event in list(hooks):
+                original = hooks[event]
+                stripped = _strip_managed(original)
+                if stripped != original:
+                    changed = True
+                    if stripped:
+                        hooks[event] = stripped
+                    else:
+                        hooks.pop(event, None)
+            if not hooks:
+                document.pop("hooks", None)
         if not changed:
             return {"host": host, "status": "absent", "path": str(path)}
-        path.write_text(content, encoding="utf-8")
+        _atomic_write_text(path, json.dumps(document, ensure_ascii=False, indent=2) + "\n")
         return {"host": host, "status": "removed", "path": str(path)}
-
-    document = _load_json(path)
-    hooks = document.get("hooks")
-    changed = False
-    if isinstance(hooks, dict):
-        for event in list(hooks):
-            original = hooks[event]
-            stripped = _strip_managed(original)
-            if stripped != original:
-                changed = True
-                if stripped:
-                    hooks[event] = stripped
-                else:
-                    hooks.pop(event, None)
-        if not hooks:
-            document.pop("hooks", None)
-    if not changed:
-        return {"host": host, "status": "absent", "path": str(path)}
-    path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    return {"host": host, "status": "removed", "path": str(path)}
 
 
 def host_hook_doctor(host: str, *, home: Path | None = None) -> dict[str, Any]:

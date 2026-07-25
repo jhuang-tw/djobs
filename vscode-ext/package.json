@@ -1,6 +1,6 @@
 {
   "name": "djobs",
-  "displayName": "djobs \u2014 Local Agent Memory",
+  "displayName": "djobs — Local Agent Memory",
   "description": "Local project memory that helps coding agents continue work across AI sessions.",
   "version": "0.18.3",
   "publisher": "jhuang-tw",
@@ -36,6 +36,12 @@
   "activationEvents": [
     "onStartupFinished"
   ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "djobs launches a local Python MCP process and may update user-level agent hook configuration. Trust the workspace before enabling it."
+    }
+  },
   "main": "./out/extension.js",
   "contributes": {
     "mcpServerDefinitionProviders": [

@@ -2,16 +2,15 @@
 
 The primary djobs product is **local repository memory for AI coding agents**.
 
-Start with:
+Start with the root-level product walkthrough:
 
 ```bash
 python examples/memory_walkthrough.py
 ```
 
-The older `run_*_demo.py` files exercise the original durable queue, worker pool, scheduler, and AI
-task-platform prototypes. They remain temporarily for compatibility and regression reference, but
-they are **not** the recommended onboarding path and will move under a dedicated legacy package in a
-future compatibility cleanup.
+The original durable queue, worker pool, scheduler, and AI task-platform demos have been moved to
+[`examples/legacy_queue/`](legacy_queue/). They remain available for compatibility and regression
+reference, but no longer compete with the memory product in the first directory view.
 
 For real host setup, use:
 

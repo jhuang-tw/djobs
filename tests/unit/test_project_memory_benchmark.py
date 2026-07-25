@@ -10,7 +10,7 @@ _MODULE = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_MODULE)
 
 
-def test_recovery_proxy_is_reproducible_and_explicitly_labeled() -> None:
+def test_payload_fixture_is_reproducible_and_explicitly_labeled() -> None:
     result = _MODULE.run(8)
 
     assert result["benchmark"] == "deterministic payload-size regression fixture"

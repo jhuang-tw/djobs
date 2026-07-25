@@ -1,10 +1,7 @@
-"""Run Phase 5 worker pool demo: concurrency control + graceful drain.
+"""Legacy durable-queue demo: worker pool concurrency and graceful drain.
 
-Demonstrates:
-1. WorkerPool with max_concurrent=2 processing 5 jobs in parallel.
-2. Per-type concurrency limit: at most 1 "email" job at a time.
-3. Graceful drain: stop signal waits for in-flight jobs to finish.
-4. Backlog metrics before and after processing.
+This example belongs to the original queue engine. For the current local-memory product,
+start with ``examples/memory_walkthrough.py``.
 """
 
 from __future__ import annotations
@@ -41,7 +38,6 @@ def main() -> None:
     registry.register("email", email_handler)
     registry.register("compute", compute_handler)
 
-    # Submit jobs
     for i in range(3):
         queue.submit("email", {"to": f"user{i}@example.com"})
     for i in range(3):
@@ -49,7 +45,6 @@ def main() -> None:
 
     print(f"[1] Backlog after submit: {queue.backlog()}")
 
-    # WorkerPool: max 2 concurrent, email limited to 1
     pool = WorkerPool(
         queue,
         registry,
@@ -60,8 +55,7 @@ def main() -> None:
 
     stop = threading.Event()
 
-    # Auto-stop after all jobs are processed
-    def _monitor():
+    def _monitor() -> None:
         while not stop.is_set():
             time.sleep(0.2)
             backlog = queue.backlog()

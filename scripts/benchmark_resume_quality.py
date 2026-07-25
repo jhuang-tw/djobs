@@ -111,7 +111,7 @@ def run() -> dict[str, Any]:
                 "tasks": [],
             }
         )
-        unchanged = json.loads(_with_context_hash(replay, context_hash))
+        unchanged = json.loads(_with_context_hash(replay, context_hash, "evidence"))
 
         result = {
             "benchmark": "deterministic multi-session recovery quality",

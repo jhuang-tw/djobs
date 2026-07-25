@@ -1,6 +1,6 @@
 {
   "name": "djobs",
-  "displayName": "djobs \u2014 Local Agent Memory",
+  "displayName": "djobs — Local Agent Memory",
   "description": "Local project memory that helps coding agents continue work across AI sessions.",
   "version": "0.18.1",
   "publisher": "jhuang-tw",
@@ -56,6 +56,21 @@
         "category": "djobs"
       },
       {
+        "command": "djobs.memory",
+        "title": "Show Repository Memory",
+        "category": "djobs"
+      },
+      {
+        "command": "djobs.gain",
+        "title": "Show Memory Gain",
+        "category": "djobs"
+      },
+      {
+        "command": "djobs.receipt",
+        "title": "Show Work Receipt",
+        "category": "djobs"
+      },
+      {
         "command": "djobs.pause",
         "title": "Pause djobs",
         "category": "djobs"
@@ -77,7 +92,7 @@
         "djobs.dbPath": {
           "type": "string",
           "default": "djobs_mcp.db",
-          "description": "Workspace queue path. Used only when djobs.queueLocation is workspace."
+          "description": "Workspace-local djobs database path. Used only when djobs.queueLocation is workspace."
         },
         "djobs.queueLocation": {
           "type": "string",
@@ -87,15 +102,15 @@
           ],
           "default": "global",
           "enumDescriptions": [
-            "Keep a separate queue in this workspace.",
-            "Share ~/.djobs/global.db while keeping recovery scoped to the workspace."
+            "Keep a separate local-memory database in this workspace.",
+            "Share ~/.djobs/global.db while keeping recovery scoped to each repository."
           ],
-          "description": "Where durable checkpoint state is stored."
+          "description": "Where local repository memory and explicit checkpoint state are stored."
         },
         "djobs.globalDbPath": {
           "type": "string",
           "default": "",
-          "description": "Optional absolute path for the shared queue. Leave empty for ~/.djobs/global.db."
+          "description": "Optional absolute path for shared local memory. Leave empty for ~/.djobs/global.db."
         }
       }
     }

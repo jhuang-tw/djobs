@@ -1607,8 +1607,8 @@ def _cmd_audit(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
-def main(argv: list[str] | None = None) -> None:
-    """CLI entry point."""
+def main(argv: list[str] | None = None, *, prog: str = "djobs") -> None:
+    """Compatibility CLI entry point for the original durable queue engine."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -1616,15 +1616,15 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     parser = argparse.ArgumentParser(
-        prog="djobs",
-        description="Local repository memory and explicit handoff for coding agents.",
+        prog=prog,
+        description="Compatibility CLI for the original durable queue engine.",
         epilog=(
-            "Common setup commands:\n"
-            "  djobs setup [copilot|codex|claude|gemini|kimi|all]\n"
+            "Return to the primary local-memory commands:\n"
+            "  djobs setup\n"
             "  djobs repair [target]\n"
             "  djobs remove [target]\n"
             "  djobs doctor\n"
-            "  djobs --version"
+            "  djobs memory list"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

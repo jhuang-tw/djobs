@@ -7,19 +7,20 @@ import argparse
 from djobs import entrypoint
 
 
-def test_main_temporarily_replaces_only_the_mcp_handler(monkeypatch):
+def test_legacy_main_temporarily_replaces_only_the_mcp_handler(monkeypatch):
     from djobs import cli
 
     original = cli._cmd_mcp
     observed = []
 
-    def fake_cli_main() -> None:
-        observed.append(cli._cmd_mcp)
+    def fake_cli_main(argv=None, *, prog="djobs") -> None:
+        observed.append((cli._cmd_mcp, list(argv or []), prog))
 
     monkeypatch.setattr(cli, "main", fake_cli_main)
+    monkeypatch.setattr(entrypoint.sys, "argv", ["djobs", "legacy"])
     entrypoint.main()
 
-    assert observed == [entrypoint._cmd_mcp_context_efficient]
+    assert observed == [(entrypoint._cmd_mcp_context_efficient, ["--help"], "djobs legacy")]
     assert cli._cmd_mcp is original
 
 

@@ -1,12 +1,7 @@
-"""Phase 8 final demo: AI Task Platform.
+"""Legacy durable-queue demo: the former Phase 8 AI Task Platform.
 
-Demonstrates the full system capability:
-1. Batch submission of mixed AI job types.
-2. WorkerPool with concurrency control + per-type limits.
-3. Scheduler loop for retry promotion + crash recovery.
-4. Job inspection with cost/token tracking.
-5. Health check and backlog metrics.
-6. Correlation ID linking all jobs in the batch.
+This demonstrates the original queue, worker-pool, and scheduler subsystem. It is not the
+recommended onboarding path for djobs local repository memory.
 """
 
 from __future__ import annotations
@@ -28,7 +23,7 @@ from djobs.worker.registry import HandlerRegistry
 
 
 def main() -> None:
-    random.seed(42)  # reproducible demo
+    random.seed(42)
 
     default_db = str(Path(__file__).with_name("phase8_ai_demo.db"))
     db_path = Path(os.getenv("DJOBS_AI_DEMO_DB_PATH", default_db))
@@ -36,7 +31,6 @@ def main() -> None:
     queue = QueueService(repo, retry_policy=RetryPolicy(base_delay_seconds=0.1))
     registry = HandlerRegistry()
 
-    # In-memory cost tracker (handlers mutate payload in memory, not DB)
     cost_tracker: dict[str, dict] = {}
     cost_lock = threading.Lock()
 
@@ -46,22 +40,18 @@ def main() -> None:
             with cost_lock:
                 cost_tracker[job_type] = cost_tracker.get(job_type, {})
                 cost_tracker[job_type]["tokens"] = (
-                    cost_tracker[job_type].get("tokens", 0)
-                    + payload.get("tokens_used", 0)
+                    cost_tracker[job_type].get("tokens", 0) + payload.get("tokens_used", 0)
                 )
                 cost_tracker[job_type]["cost"] = (
-                    cost_tracker[job_type].get("cost", 0.0)
-                    + payload.get("cost_usd", 0.0)
+                    cost_tracker[job_type].get("cost", 0.0) + payload.get("cost_usd", 0.0)
                 )
             return result
+
         return wrapper
 
     for job_type, handler in AI_HANDLERS.items():
         registry.register(job_type, _wrap_handler(job_type, handler))
 
-    # ------------------------------------------------------------------
-    # 1. Batch submit
-    # ------------------------------------------------------------------
     batch_id = f"batch-{datetime.now(timezone.utc).strftime('%H%M%S')}"
     jobs_spec = [
         {
@@ -103,9 +93,6 @@ def main() -> None:
     print(f"[1] Submitted {len(submitted)} AI jobs (correlation_id={batch_id})")
     print(f"    Backlog: {queue.backlog()}")
 
-    # ------------------------------------------------------------------
-    # 2. Start scheduler + worker pool
-    # ------------------------------------------------------------------
     stop = threading.Event()
     scheduler = SchedulerLoop(queue)
 
@@ -121,7 +108,7 @@ def main() -> None:
         registry,
         worker_id="ai-worker-1",
         max_concurrent=3,
-        type_concurrency_limits={"ai.generate": 1},  # expensive → limit concurrency
+        type_concurrency_limits={"ai.generate": 1},
     )
 
     pool_thread = threading.Thread(
@@ -131,11 +118,8 @@ def main() -> None:
     )
     pool_thread.start()
 
-    # ------------------------------------------------------------------
-    # 3. Wait for completion
-    # ------------------------------------------------------------------
     print("[2] Processing...")
-    for _ in range(200):  # max ~10s
+    for _ in range(200):
         time.sleep(0.05)
         backlog = queue.backlog()
         pending = (
@@ -150,9 +134,6 @@ def main() -> None:
     pool_thread.join(timeout=5)
     scheduler_thread.join(timeout=5)
 
-    # ------------------------------------------------------------------
-    # 4. Results
-    # ------------------------------------------------------------------
     print("\n[3] Results:")
     for job in submitted:
         info = queue.inspect(job.id)
@@ -163,15 +144,11 @@ def main() -> None:
             f"events={info['event_count']}"
         )
 
-    # ------------------------------------------------------------------
-    # 5. Summary
-    # ------------------------------------------------------------------
-    total_tokens = sum(v.get("tokens", 0) for v in cost_tracker.values())
-    total_cost = sum(v.get("cost", 0.0) for v in cost_tracker.values())
+    total_tokens = sum(value.get("tokens", 0) for value in cost_tracker.values())
+    total_cost = sum(value.get("cost", 0.0) for value in cost_tracker.values())
 
     print("\n[4] Summary:")
-    health = queue.health()
-    print(f"    Queue health: {health}")
+    print(f"    Queue health: {queue.health()}")
     print(f"    Total tokens: {total_tokens}")
     print(f"    Total cost:   ${total_cost:.6f}")
     print(f"    Pool stats:   completed={pool.completed_count}, failed={pool.failed_count}")

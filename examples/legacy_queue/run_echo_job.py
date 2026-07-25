@@ -1,4 +1,7 @@
-"""Run a Phase 1 echo job end-to-end with SQLite."""
+"""Legacy durable-queue demo: run one echo job end to end with SQLite.
+
+For the current local-memory product, start with ``examples/memory_walkthrough.py``.
+"""
 
 from __future__ import annotations
 
@@ -25,7 +28,7 @@ def main() -> None:
     registry = HandlerRegistry()
     registry.register("demo.echo", echo_handler)
 
-    submitted_job = queue.submit("demo.echo", {"message": "hello from Phase 1"})
+    submitted_job = queue.submit("demo.echo", {"message": "hello from the legacy queue demo"})
     runner = WorkerRunner(queue, registry, worker_id="demo-worker")
     result = runner.run_once()
     final_job = queue.get_job(submitted_job.id)

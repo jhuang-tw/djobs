@@ -1,4 +1,7 @@
-"""Run a Phase 2 retry job end-to-end with SQLite."""
+"""Legacy durable-queue demo: retry one SQLite job end to end.
+
+For the current local-memory product, start with ``examples/memory_walkthrough.py``.
+"""
 
 from __future__ import annotations
 
@@ -30,9 +33,9 @@ def main() -> None:
     registry.register("demo.flaky", flaky_handler)
     submitted_job = queue.submit(
         "demo.flaky",
-        {"message": "hello from Phase 2"},
+        {"message": "hello from the legacy retry demo"},
         max_attempts=2,
-        idempotency_key="phase2-demo-job",
+        idempotency_key="legacy-retry-demo-job",
     )
     runner = WorkerRunner(queue, registry, worker_id="retry-demo-worker")
 

@@ -150,19 +150,79 @@ def test_context_hash_suppresses_unchanged_memory_replay() -> None:
     )
     known = memory_context_hash(observations)
 
-    unchanged = json.loads(_with_context_hash(raw, known))
+    unchanged = json.loads(_with_context_hash(raw, known, "evidence"))
     assert unchanged["memory_unchanged"] is True
     assert unchanged["context_hash"] == known
     assert unchanged["observations"] == []
     assert unchanged["counts"]["observations"] == 0
 
-    changed = json.loads(_with_context_hash(raw, "different"))
+    changed = json.loads(_with_context_hash(raw, "different", "evidence"))
     assert changed["memory_unchanged"] is False
     assert changed["observations"] == observations
 
     resume = {"goal": "Keep the public API", "next": "run focused tests"}
     resume_raw = json.dumps({"ok": True, "resume": resume, "tasks": []})
     resume_hash = memory_context_hash(resume)
-    resume_unchanged = json.loads(_with_context_hash(resume_raw, resume_hash))
+    resume_unchanged = json.loads(_with_context_hash(resume_raw, resume_hash, "resume"))
     assert resume_unchanged["memory_unchanged"] is True
     assert resume_unchanged["resume"] == {}
+
+
+def test_resume_tier_adds_compact_sources_and_hides_evidence_list() -> None:
+    observations = [
+        {
+            "id": "memory-1",
+            "event": "tool_failure",
+            "summary": "Normalization removed plus signs",
+            "status": "active",
+            "score": 0.91,
+        }
+    ]
+    raw = json.dumps(
+        {
+            "ok": True,
+            "resume": {"goal": "Fix callback handling"},
+            "observations": observations,
+            "counts": {"observations": 1},
+            "tasks": [],
+        }
+    )
+
+    result = json.loads(_with_context_hash(raw, None, "resume"))
+
+    assert "observations" not in result
+    assert result["resume"]["sources"] == [
+        {
+            "event": "tool_failure",
+            "summary": "Normalization removed plus signs",
+            "status": "active",
+            "score": 0.91,
+        }
+    ]
+    assert result["resume"]["source_count"] == 1
+    assert result["selected_memory"]["statuses"] == {"active": 1}
+
+
+def test_resume_budget_estimate_matches_final_public_payload() -> None:
+    raw = json.dumps(
+        {
+            "ok": True,
+            "resume": {"goal": "Fix callback handling"},
+            "observations": [
+                {
+                    "event": "tool_failure",
+                    "summary": "Normalization removed plus signs",
+                    "status": "active",
+                    "score": 0.91,
+                }
+            ],
+            "tasks": [],
+            "budget": {"requested_tokens": 500, "estimated_tokens": 999},
+        }
+    )
+
+    encoded = _with_context_hash(raw, None, "resume")
+    result = json.loads(encoded)
+
+    assert result["budget"]["estimated_tokens"] == (len(encoded) + 3) // 4
+    assert result["budget"]["estimated_tokens"] < 999

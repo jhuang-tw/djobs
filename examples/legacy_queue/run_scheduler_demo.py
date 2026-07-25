@@ -1,10 +1,7 @@
-"""Run Phase 4 scheduler loop demo: crash recovery + retry promotion.
+"""Legacy durable-queue demo: crash recovery and retry promotion.
 
-Demonstrates:
-1. Worker crashes (lease expires) → SchedulerLoop.tick() recovers the job.
-2. Second worker picks up and fails with retryable error → retry_scheduled.
-3. Scheduler tick promotes the retry → pending.
-4. Second worker retries → succeeds.
+This example belongs to the original queue engine. For the current local-memory product,
+start with ``examples/memory_walkthrough.py``.
 """
 
 from __future__ import annotations
@@ -40,30 +37,25 @@ def main() -> None:
 
     registry.register("demo.flaky", flaky_handler)
 
-    # Submit a job with max_attempts=3
     submitted = queue.submit(
         "demo.flaky",
-        {"message": "Phase 4 scheduler demo"},
+        {"message": "Legacy scheduler demo"},
         max_attempts=3,
     )
     print(f"[1] Submitted job {submitted.id}")
 
-    # Worker-A claims the job, then "crashes" (short lease, no heartbeat)
     repository.claim_next_job("worker-A", lease_duration=timedelta(seconds=1))
     print("[2] worker-A claimed job (simulating crash, lease=1s)")
 
-    # Scheduler tick at far-future recovers the expired lease
     far = datetime.now(timezone.utc) + timedelta(seconds=10)
     tick1 = scheduler.tick(now=far)
     print(f"[3] Scheduler tick: recovered={tick1.recovered}")
 
-    # Worker-B picks up — first real handler attempt fails (RetryableJobError)
     runner = WorkerRunner(queue, registry, worker_id="worker-B")
     result1 = runner.run_once()
     status1 = result1.job.status.value if result1.job else "?"
     print(f"[4] worker-B attempt: status={status1}, error={result1.error}")
 
-    # Scheduler tick promotes the retry_scheduled → pending
     retry_job = queue.get_job(submitted.id)
     if retry_job and retry_job.run_after:
         tick2 = scheduler.tick(now=retry_job.run_after)
@@ -71,7 +63,6 @@ def main() -> None:
         tick2 = scheduler.tick(now=datetime.now(timezone.utc) + timedelta(hours=1))
     print(f"[5] Scheduler tick: promoted={tick2.promoted}")
 
-    # Worker-B retries — succeeds
     result2 = runner.run_once()
     print(f"[6] worker-B retry: status={result2.job.status.value if result2.job else '?'}")
 

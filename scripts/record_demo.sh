@@ -14,7 +14,7 @@
 set -euo pipefail
 
 CAST_FILE="demo.cast"
-DEMO_CMD="python examples/run_migration_demo.py"
+DEMO_CMD="python examples/legacy_queue/run_migration_demo.py"
 
 echo "Recording demo to ${CAST_FILE}..."
 echo "Press Ctrl-D or exit when done."

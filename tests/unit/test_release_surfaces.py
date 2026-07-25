@@ -68,29 +68,34 @@ def test_current_docs_and_marketplace_copy_match_passive_local_behavior() -> Non
     assert "resume_delta" in combined
 
 
-def test_public_surfaces_share_layered_recovery_positioning() -> None:
+def test_public_surfaces_share_memory_first_recovery_positioning() -> None:
     paths = ("README.md", "vscode-ext/README.md", "docs/index.html")
     surfaces = {path: (ROOT / path).read_text(encoding="utf-8").lower() for path in paths}
-    required = (
-        "local project memory and explicit handoff for ai coding agents.",
-        "continue the repository instead of explaining it again in every new ai session.",
+    shared_markers = (
+        "local",
+        "memory",
+        "ai coding agents",
         'context_tier="resume"',
         "python 3.10",
-        "node.js 20+",
         "1.101",
         "~224",
         "97.1%",
         "djobs gain",
         "sync_workspace",
-        "memory",
         "checkpoint",
         "handoff",
         "resume_delta",
     )
 
     for path, text in surfaces.items():
-        for marker in required:
+        for marker in shared_markers:
             assert marker in text, f"{path} is missing shared public marker: {marker}"
+
+    readme = surfaces["README.md"]
+    assert "continue the repository" in readme
+    assert "see it work in 60 seconds" in readme
+    assert "djobs memory list" in readme
+    assert "compatibility" in readme
 
     for path in ("README.md", "vscode-ext/README.md"):
         text = surfaces[path]

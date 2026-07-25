@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deterministic recovery-context proxy for djobs repository memory.
+"""Deterministic payload-size regression fixture for djobs repository memory.
 
 This benchmark is a serialized payload-size regression fixture. It does not
 claim provider billing, end-to-end savings, latency, or model-quality results.
@@ -130,7 +130,6 @@ def run(file_count: int) -> dict[str, Any]:
             decoded = json.loads(memory)
             baseline_tokens = estimate_tokens(baseline)
             memory_tokens = estimate_tokens(memory)
-            reduction = 0.0 if baseline_tokens == 0 else 1 - memory_tokens / baseline_tokens
             return {
                 "benchmark": "deterministic payload-size regression fixture",
                 "disclaimer": (

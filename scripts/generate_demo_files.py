@@ -20,7 +20,9 @@ DEMO_DIR = Path(__file__).resolve().parent.parent / "examples" / "demo_workspace
 # 30 files — each has classes/functions WITHOUT docstrings
 TEMPLATES = [
     # --- data models ---
-    ("models/user.py", '''
+    (
+        "models/user.py",
+        """
 class User:
     def __init__(self, name: str, email: str, age: int):
         self.name = name
@@ -35,8 +37,11 @@ class User:
 
     def to_dict(self) -> dict:
         return {"name": self.name, "email": self.email, "age": self.age}
-'''),
-    ("models/product.py", '''
+""",
+    ),
+    (
+        "models/product.py",
+        """
 class Product:
     def __init__(self, sku: str, name: str, price: float, stock: int):
         self.sku = sku
@@ -52,8 +57,11 @@ class Product:
 
     def restock(self, quantity: int) -> None:
         self.stock += quantity
-'''),
-    ("models/order.py", '''
+""",
+    ),
+    (
+        "models/order.py",
+        """
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -77,8 +85,11 @@ class Order:
 
     def item_count(self) -> int:
         return sum(item.quantity for item in self.items)
-'''),
-    ("models/payment.py", '''
+""",
+    ),
+    (
+        "models/payment.py",
+        """
 from enum import Enum
 
 class PaymentMethod(Enum):
@@ -105,8 +116,11 @@ class Payment:
             return 0.0
         self.is_completed = False
         return self.amount
-'''),
-    ("models/inventory.py", '''
+""",
+    ),
+    (
+        "models/inventory.py",
+        """
 class InventoryManager:
     def __init__(self):
         self._stock: dict[str, int] = {}
@@ -126,9 +140,12 @@ class InventoryManager:
 
     def low_stock_items(self, threshold: int = 5) -> list[str]:
         return [sku for sku, qty in self._stock.items() if qty < threshold]
-'''),
+""",
+    ),
     # --- services ---
-    ("services/auth.py", '''
+    (
+        "services/auth.py",
+        """
 import hashlib
 import secrets
 
@@ -155,8 +172,11 @@ class AuthService:
 
     def revoke_token(self, token: str) -> bool:
         return self._tokens.pop(token, None) is not None
-'''),
-    ("services/email.py", '''
+""",
+    ),
+    (
+        "services/email.py",
+        """
 class EmailService:
     def __init__(self, smtp_host: str, smtp_port: int):
         self.smtp_host = smtp_host
@@ -178,8 +198,11 @@ class EmailService:
 
     def sent_count(self) -> int:
         return len(self._sent)
-'''),
-    ("services/cache.py", '''
+""",
+    ),
+    (
+        "services/cache.py",
+        """
 import time
 
 class CacheEntry:
@@ -212,8 +235,11 @@ class SimpleCache:
         for k in expired:
             del self._store[k]
         return len(expired)
-'''),
-    ("services/rate_limiter.py", '''
+""",
+    ),
+    (
+        "services/rate_limiter.py",
+        """
 import time
 from collections import defaultdict
 
@@ -242,8 +268,11 @@ class RateLimiter:
 
     def reset(self, client_id: str) -> None:
         self._requests.pop(client_id, None)
-'''),
-    ("services/notification.py", '''
+""",
+    ),
+    (
+        "services/notification.py",
+        """
 from enum import Enum
 
 class Channel(Enum):
@@ -281,9 +310,12 @@ class NotificationService:
 
     def pending_count(self) -> int:
         return len(self._queue)
-'''),
+""",
+    ),
     # --- utils ---
-    ("utils/validators.py", '''
+    (
+        "utils/validators.py",
+        """
 import re
 
 def is_valid_email(email: str) -> bool:
@@ -304,8 +336,11 @@ def is_strong_password(password: str) -> bool:
 
 def sanitize_string(text: str) -> str:
     return re.sub(r"[<>&\"']", "", text).strip()
-'''),
-    ("utils/formatters.py", '''
+""",
+    ),
+    (
+        "utils/formatters.py",
+        """
 from datetime import datetime
 
 def format_currency(amount: float, currency: str = "USD") -> str:
@@ -334,8 +369,11 @@ def slugify(text: str) -> str:
     slug = re.sub(r"[^\\w\\s-]", "", slug)
     slug = re.sub(r"[\\s_]+", "-", slug)
     return slug.strip("-")
-'''),
-    ("utils/retry.py", '''
+""",
+    ),
+    (
+        "utils/retry.py",
+        """
 import time
 import random
 from typing import Callable, TypeVar
@@ -376,8 +414,11 @@ def retry_decorator(max_attempts: int = 3, base_delay: float = 1.0):
             )
         return wrapper
     return decorator
-'''),
-    ("utils/logging_utils.py", '''
+""",
+    ),
+    (
+        "utils/logging_utils.py",
+        """
 import logging
 import json
 from datetime import datetime
@@ -417,8 +458,11 @@ def log_execution_time(logger: logging.Logger):
             return result
         return wrapper
     return decorator
-'''),
-    ("utils/collections.py", '''
+""",
+    ),
+    (
+        "utils/collections.py",
+        """
 from typing import TypeVar, Iterable, Callable
 
 T = TypeVar("T")
@@ -451,9 +495,12 @@ def first_or_none(items: Iterable[T], predicate: Callable[[T], bool]) -> T | Non
         if predicate(item):
             return item
     return None
-'''),
+""",
+    ),
     # --- api layer ---
-    ("api/router.py", '''
+    (
+        "api/router.py",
+        """
 from typing import Callable, Any
 
 class Route:
@@ -486,8 +533,11 @@ class Router:
 
     def list_routes(self) -> list[dict[str, str]]:
         return [{"method": r.method, "path": r.path} for r in self._routes]
-'''),
-    ("api/middleware.py", '''
+""",
+    ),
+    (
+        "api/middleware.py",
+        """
 import time
 import logging
 from typing import Callable, Any
@@ -534,8 +584,11 @@ class CorsMiddleware(Middleware):
         response.setdefault("headers", {})
         response["headers"]["Access-Control-Allow-Origin"] = ", ".join(self.allowed_origins)
         return response
-'''),
-    ("api/response.py", '''
+""",
+    ),
+    (
+        "api/response.py",
+        """
 import json
 
 class ApiResponse:
@@ -568,8 +621,11 @@ def not_found(message: str = "Not found") -> ApiResponse:
 
 def internal_error(message: str = "Internal server error") -> ApiResponse:
     return ApiResponse(500, {"error": message})
-'''),
-    ("api/serializers.py", '''
+""",
+    ),
+    (
+        "api/serializers.py",
+        """
 from datetime import datetime
 from typing import Any
 
@@ -614,9 +670,12 @@ class PaginatedResponse:
             "total_pages": self.total_pages(),
             "has_next": self.has_next(),
         }
-'''),
+""",
+    ),
     # --- config / infra ---
-    ("config/settings.py", '''
+    (
+        "config/settings.py",
+        """
 import os
 
 class Settings:
@@ -638,8 +697,11 @@ class Settings:
         if self.max_connections < 1:
             errors.append("MAX_CONNECTIONS must be positive")
         return errors
-'''),
-    ("config/database.py", '''
+""",
+    ),
+    (
+        "config/database.py",
+        """
 class DatabaseConfig:
     def __init__(self, url: str, pool_size: int = 5, echo: bool = False):
         self.url = url
@@ -684,9 +746,12 @@ class ConnectionPool:
 
     def size(self) -> int:
         return len(self._pool) + self._in_use
-'''),
+""",
+    ),
     # --- domain logic ---
-    ("domain/pricing.py", '''
+    (
+        "domain/pricing.py",
+        """
 class PricingRule:
     def __init__(self, name: str, discount_percent: float, min_quantity: int = 0):
         self.name = name
@@ -715,8 +780,11 @@ class PricingEngine:
     def final_price(self, unit_price: float, quantity: int) -> float:
         discount = self.best_discount(unit_price, quantity)
         return max(0, (unit_price - discount) * quantity)
-'''),
-    ("domain/shipping.py", '''
+""",
+    ),
+    (
+        "domain/shipping.py",
+        """
 class ShippingZone:
     def __init__(self, name: str, base_rate: float, per_kg_rate: float):
         self.name = name
@@ -747,8 +815,11 @@ class ShippingCalculator:
 
     def available_zones(self) -> list[str]:
         return list(self._zones.keys())
-'''),
-    ("domain/tax.py", '''
+""",
+    ),
+    (
+        "domain/tax.py",
+        """
 class TaxRule:
     def __init__(self, region: str, rate: float, name: str = ""):
         self.region = region
@@ -776,13 +847,18 @@ class TaxCalculator:
     def effective_rate(self, region: str) -> float:
         rules = self._rules.get(region, [])
         return sum(r.rate for r in rules)
-'''),
+""",
+    ),
     # --- more modules to reach 30 ---
-    ("domain/discount.py", '''
+    (
+        "domain/discount.py",
+        """
 from datetime import datetime
 
 class CouponCode:
-    def __init__(self, code: str, discount_percent: float, expires_at: datetime, max_uses: int = 100):
+    def __init__(
+        self, code: str, discount_percent: float, expires_at: datetime, max_uses: int = 100
+    ):
         self.code = code
         self.discount_percent = discount_percent
         self.expires_at = expires_at
@@ -800,8 +876,11 @@ class CouponCode:
 
     def remaining_uses(self) -> int:
         return max(0, self.max_uses - self.used_count)
-'''),
-    ("domain/analytics.py", '''
+""",
+    ),
+    (
+        "domain/analytics.py",
+        """
 from collections import Counter
 from datetime import datetime
 
@@ -833,8 +912,11 @@ class EventTracker:
         count = len(self._events)
         self._events.clear()
         return count
-'''),
-    ("domain/workflow.py", '''
+""",
+    ),
+    (
+        "domain/workflow.py",
+        """
 from enum import Enum
 
 class StepStatus(Enum):
@@ -885,7 +967,8 @@ class Workflow:
 
     def failed_steps(self) -> list[WorkflowStep]:
         return [s for s in self.steps if s.status == StepStatus.FAILED]
-'''),
+""",
+    ),
     # --- __init__.py files ---
     ("models/__init__.py", ""),
     ("services/__init__.py", ""),
@@ -910,6 +993,7 @@ def create_files() -> int:
 
 def clean() -> int:
     import shutil
+
     if DEMO_DIR.exists():
         count = sum(1 for _ in DEMO_DIR.rglob("*.py"))
         shutil.rmtree(DEMO_DIR)

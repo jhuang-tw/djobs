@@ -13,14 +13,14 @@ def test_legacy_main_temporarily_replaces_only_the_mcp_handler(monkeypatch):
     original = cli._cmd_mcp
     observed = []
 
-    def fake_cli_main(argv=None) -> None:
-        observed.append((cli._cmd_mcp, list(argv or [])))
+    def fake_cli_main(argv=None, *, prog="djobs") -> None:
+        observed.append((cli._cmd_mcp, list(argv or []), prog))
 
     monkeypatch.setattr(cli, "main", fake_cli_main)
     monkeypatch.setattr(entrypoint.sys, "argv", ["djobs", "legacy"])
     entrypoint.main()
 
-    assert observed == [(entrypoint._cmd_mcp_context_efficient, ["--help"])]
+    assert observed == [(entrypoint._cmd_mcp_context_efficient, ["--help"], "djobs legacy")]
     assert cli._cmd_mcp is original
 
 

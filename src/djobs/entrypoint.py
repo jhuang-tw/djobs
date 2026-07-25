@@ -35,6 +35,8 @@ ownership. Do not treat a session start, user prompt, tool call, or turn end as 
 
 _PUBLIC_COMMANDS: tuple[tuple[str, str], ...] = (
     ("setup", "Configure djobs for Copilot, Codex, Claude, Gemini, Kimi, or all hosts"),
+    ("repair", "Repair a djobs-managed host integration without changing unrelated settings"),
+    ("remove", "Remove djobs-managed host integration while preserving unrelated settings"),
     ("doctor", "Check local storage and agent integration, with actionable next steps"),
     ("memory", "List, search, retire, forget, or clear repository memory"),
     ("gain", "Show local recovery savings and verified-task efficiency"),
@@ -327,6 +329,23 @@ def _doctor_payload() -> dict[str, Any]:
             }
         )
 
+    if _LEGACY_PROJECT_HOOK.exists() and _is_legacy_managed_hook():
+        checks.append(
+            {
+                "name": "legacy project hook",
+                "ok": False,
+                "level": "warning",
+                "detail": (
+                    f"{_LEGACY_PROJECT_HOOK} still uses the deprecated automatic "
+                    "command-checkpoint hook"
+                ),
+                "next_step": (
+                    "Run 'djobs legacy init --force' to migrate project wiring to "
+                    "passive repository memory."
+                ),
+            }
+        )
+
     host_items = doctor_results()
     configured_hosts: list[str] = []
     for item in host_items:
@@ -408,7 +427,7 @@ def _run_doctor(argv: list[str]) -> int:
     return 0 if payload["ok"] else 1
 
 
-def _run_cli(argv: list[str]) -> None:
+def _run_cli(argv: list[str], *, prog: str = "djobs") -> None:
     """Run the compatibility parser with the compact MCP behavior patched in."""
 
     from djobs import cli
@@ -429,7 +448,7 @@ def _run_cli(argv: list[str]) -> None:
     cli._cmd_init = init_passive
     cli._cmd_install_mcp = install_mcp_high_level
     try:
-        cli.main(argv)
+        cli.main(argv, prog=prog)
     finally:
         cli._cmd_mcp = original_mcp
         cli._cmd_init = original_init
@@ -477,7 +496,7 @@ def main() -> None:
         raise SystemExit(run_gain_cli(rest))
 
     if command == "legacy":
-        _run_cli(rest or ["--help"])
+        _run_cli(rest or ["--help"], prog="djobs legacy")
         return
 
     if command == "hook":

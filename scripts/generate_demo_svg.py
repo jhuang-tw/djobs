@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate an animated terminal SVG from the migration demo.
 
-Runs ``examples/run_migration_demo.py``, captures every line with a
+Runs ``examples/legacy_queue/run_migration_demo.py``, captures every line with a
 timestamp, then renders a dark-themed terminal SVG with CSS animations
 (line-by-line reveal + auto-scroll).  Pure Python, no external tools.
 
@@ -46,8 +46,11 @@ DIM = "#585b70"
 BORDER = "#313244"
 PROMPT_CLR = "#f5c2e7"
 
+DEMO_SCRIPT = Path("examples/legacy_queue/run_migration_demo.py")
+
 
 # ─── Step 1: run the demo ───────────────────────────────────────────
+
 
 def capture_demo() -> list[tuple[float, str]]:
     """Run the migration demo and return (elapsed_sec, text) per line."""
@@ -55,7 +58,7 @@ def capture_demo() -> list[tuple[float, str]]:
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUNBUFFERED"] = "1"
 
-    cmd = [sys.executable, str(Path("examples/run_migration_demo.py"))]
+    cmd = [sys.executable, str(DEMO_SCRIPT)]
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
@@ -75,6 +78,7 @@ def capture_demo() -> list[tuple[float, str]]:
 
 
 # ─── Step 2: clean up & retime ──────────────────────────────────────
+
 
 def clean_paths(lines: list[tuple[float, str]]) -> list[tuple[float, str]]:
     """Replace machine-specific absolute paths and normalise separators."""
@@ -96,14 +100,14 @@ def retime(lines: list[tuple[float, str]]) -> list[tuple[float, str]]:
         s = text.strip()
 
         if i == 0:
-            delay = 1.2                           # hold command prompt
-        elif "\U0001f4cb" in s:                    # 📋 enqueue — fast batch
+            delay = 1.2  # hold command prompt
+        elif "\U0001f4cb" in s:  # 📋 enqueue — fast batch
             delay = 0.06
-        elif s.startswith("\u2705"):                # ✅ complete — steady
+        elif s.startswith("\u2705"):  # ✅ complete — steady
             delay = 0.20
-        elif s.startswith("\u23f3"):                # ⏳ pending
+        elif s.startswith("\u23f3"):  # ⏳ pending
             delay = 0.14
-        elif "\U0001f4a5" in s or "CRASHED" in s:   # 💥 crash — dramatic
+        elif "\U0001f4a5" in s or "CRASHED" in s:  # 💥 crash — dramatic
             delay = 1.8
         elif s.startswith("STEP") or s.startswith("RESULT"):
             delay = 0.7
@@ -111,7 +115,7 @@ def retime(lines: list[tuple[float, str]]) -> list[tuple[float, str]]:
             delay = 0.3
         elif "ALL FILES COMPLETED" in s:
             delay = 0.8
-        elif "Queue:" in s or "\u2192" in s:       # → arrow
+        elif "Queue:" in s or "\u2192" in s:  # → arrow
             delay = 0.4
         elif "This is what" in s:
             delay = 0.5
@@ -128,17 +132,18 @@ def retime(lines: list[tuple[float, str]]) -> list[tuple[float, str]]:
 
 # ─── Step 3: SVG rendering ──────────────────────────────────────────
 
+
 def line_color(text: str) -> str:
     s = text.strip()
     if s.startswith("$"):
         return PROMPT_CLR
-    if "\u2705" in s:       # ✅
+    if "\u2705" in s:  # ✅
         return GREEN
     if "\U0001f4a5" in s or "CRASHED" in s:
         return RED
-    if "\u23f3" in s:       # ⏳
+    if "\u23f3" in s:  # ⏳
         return YELLOW
-    if "\U0001f4cb" in s:   # 📋
+    if "\U0001f4cb" in s:  # 📋
         return DIM
     if s.startswith("STEP") or s.startswith("RESULT") or s.startswith("\u2192"):
         return CYAN
@@ -151,7 +156,7 @@ def line_color(text: str) -> str:
 
 def build_svg(lines: list[tuple[float, str]]) -> str:
     n = len(lines)
-    hold_end = 5.0                             # hold final frame
+    hold_end = 5.0  # hold final frame
     duration = lines[-1][0] + hold_end
 
     # ── scroll keyframes ──
@@ -217,7 +222,7 @@ def build_svg(lines: list[tuple[float, str]]) -> str:
     o.append(
         f'  <clipPath id="t">'
         f'<rect x="0" y="{clip_y}" width="{SVG_WIDTH}" height="{clip_h}"/>'
-        f'</clipPath>'
+        f"</clipPath>"
     )
     o.append("</defs>")
 
@@ -239,6 +244,7 @@ def build_svg(lines: list[tuple[float, str]]) -> str:
 
 # ─── Step 4: optional asciicast export ──────────────────────────────
 
+
 def save_cast(lines: list[tuple[float, str]], path: Path) -> None:
     header = {"version": 2, "width": 80, "height": 24}
     with open(path, "w", encoding="utf-8") as f:
@@ -249,13 +255,14 @@ def save_cast(lines: list[tuple[float, str]], path: Path) -> None:
 
 # ─── main ───────────────────────────────────────────────────────────
 
+
 def main() -> None:
     print("Running migration demo…")
     raw = capture_demo()
     print(f"Captured {len(raw)} lines")
 
     # Prepend a shell prompt for realism
-    raw.insert(0, (0.0, "$ python examples/run_migration_demo.py"))
+    raw.insert(0, (0.0, f"$ python {DEMO_SCRIPT.as_posix()}"))
 
     lines = clean_paths(raw)
     lines = retime(lines)

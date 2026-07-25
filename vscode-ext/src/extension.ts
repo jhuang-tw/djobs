@@ -52,13 +52,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await runDiagnostics(client, output, nativeMcp);
     }),
     vscode.commands.registerCommand('djobs.memory', async () => {
-      await runValueCommand(client, output, ['memory', 'list'], 'Repository memory');
+      await runValueCommand(client, output, ['memory', 'list'], 'Repository Memory');
     }),
     vscode.commands.registerCommand('djobs.gain', async () => {
-      await runValueCommand(client, output, ['gain'], 'Memory gain');
+      await runValueCommand(client, output, ['gain'], 'Memory Gain');
     }),
     vscode.commands.registerCommand('djobs.receipt', async () => {
-      await runValueCommand(client, output, ['receipt'], 'Work receipt');
+      await runValueCommand(client, output, ['receipt'], 'Work Receipt');
     }),
     vscode.commands.registerCommand('djobs.pause', async () => {
       await runPauseCommand(client, true);

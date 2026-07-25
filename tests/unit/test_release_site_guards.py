@@ -112,6 +112,7 @@ def test_extension_is_headless_and_coding_focused() -> None:
     assert "menus" not in contributes
 
     commands = {item["command"] for item in contributes["commands"]}
+    command_titles = {item["command"]: item["title"] for item in contributes["commands"]}
     assert commands == {
         "djobs.setup",
         "djobs.diagnose",
@@ -136,11 +137,25 @@ def test_extension_is_headless_and_coding_focused() -> None:
     assert "createStatusBarItem" not in extension_text
     assert "setInterval" not in extension_text
     assert "tasksProvider" not in extension_text
+    assert command_titles["djobs.memory"] == "Show Repository Memory"
+    assert command_titles["djobs.gain"] == "Show Memory Gain"
+    assert command_titles["djobs.receipt"] == "Show Work Receipt"
+    assert "'Repository Memory'" in extension_text
+    assert "'Memory Gain'" in extension_text
+    assert "'Work Receipt'" in extension_text
     assert not (_REPO / "vscode-ext" / "src" / "tasksProvider.ts").exists()
 
     client_text = (_REPO / "vscode-ext" / "src" / "djobsClient.ts").read_text(encoding="utf-8")
     assert "djobs.coding_mcp" in client_text
     assert "djobs.mcp_server" not in client_text
+    for dead_method in (
+        "async pause(",
+        "async unpause(",
+        "async installHooks(",
+        "async wireGlobalMcp(",
+        "async reWireMcp(",
+    ):
+        assert dead_method not in client_text
 
 
 def test_python_runtime_floor_is_310() -> None:
@@ -179,3 +194,23 @@ def test_ci_validates_installable_artifacts_and_extension() -> None:
     assert "windows-latest" in workflow
     assert "macos-latest" in workflow
     assert "npm run compile" in workflow
+
+
+def test_automated_example_python_references_exist() -> None:
+    sources = [
+        *_REPO.glob(".github/workflows/*.yml"),
+        *_REPO.glob(".github/workflows/*.yaml"),
+        *_REPO.glob("scripts/*.py"),
+        *_REPO.glob("scripts/*.sh"),
+        *_REPO.glob("scripts/*.ps1"),
+    ]
+    pattern = re.compile(r"(?<![A-Za-z0-9_./-])(examples/[A-Za-z0-9_./-]+\.py)")
+    references = {
+        match
+        for source in sources
+        for match in pattern.findall(source.read_text(encoding="utf-8"))
+    }
+
+    assert references, "expected at least one automated examples/*.py reference"
+    missing = sorted(path for path in references if not (_REPO / path).is_file())
+    assert missing == [], f"automation references missing examples: {missing}"

@@ -4,7 +4,8 @@ These examples exercise the original djobs queue, worker, scheduler, dashboard-e
 AI task-platform prototypes.
 
 They are retained for compatibility testing and for users who already depend on the durable queue
-engine. They are **not** the recommended entry point for the current djobs product.
+engine. They are **not** the recommended entry point for the current djobs product. The
+`dead_letter_example.py` script also lives here because it operates directly on queue state.
 
 For local AI coding-agent memory, start here instead:
 

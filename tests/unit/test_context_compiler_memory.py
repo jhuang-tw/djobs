@@ -201,3 +201,28 @@ def test_resume_tier_adds_compact_sources_and_hides_evidence_list() -> None:
     ]
     assert result["resume"]["source_count"] == 1
     assert result["selected_memory"]["statuses"] == {"active": 1}
+
+
+def test_resume_budget_estimate_matches_final_public_payload() -> None:
+    raw = json.dumps(
+        {
+            "ok": True,
+            "resume": {"goal": "Fix callback handling"},
+            "observations": [
+                {
+                    "event": "tool_failure",
+                    "summary": "Normalization removed plus signs",
+                    "status": "active",
+                    "score": 0.91,
+                }
+            ],
+            "tasks": [],
+            "budget": {"requested_tokens": 500, "estimated_tokens": 999},
+        }
+    )
+
+    encoded = _with_context_hash(raw, None, "resume")
+    result = json.loads(encoded)
+
+    assert result["budget"]["estimated_tokens"] == (len(encoded) + 3) // 4
+    assert result["budget"]["estimated_tokens"] < 999

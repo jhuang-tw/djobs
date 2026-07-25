@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from collections import Counter
 from typing import Any, Literal, cast
 
@@ -65,6 +66,29 @@ def _cwd(context: Context) -> str | None:
             if isinstance(value, str) and value.strip():
                 return value.strip()
     return None
+
+
+def _estimate_tokens(value: Any) -> int:
+    text = (
+        value
+        if isinstance(value, str)
+        else json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
+    )
+    return max(1, math.ceil(len(text) / 4)) if text else 0
+
+
+def _refresh_budget_estimate(result: dict[str, Any]) -> None:
+    """Make budget.estimated_tokens describe the final public payload."""
+
+    budget = result.get("budget")
+    if not isinstance(budget, dict):
+        return
+    budget["estimated_tokens"] = 0
+    for _ in range(4):
+        estimate = _estimate_tokens(result)
+        if budget.get("estimated_tokens") == estimate:
+            return
+        budget["estimated_tokens"] = estimate
 
 
 def _source_view(item: dict[str, Any]) -> dict[str, Any]:
@@ -134,6 +158,7 @@ def _with_context_hash(
         if isinstance(counts, dict):
             counts["observations"] = 0
         result["next_step"] = result.get("next_step") or "Continue with current repository state."
+    _refresh_budget_estimate(result)
     return json.dumps(result, ensure_ascii=False, separators=(",", ":"), default=str)
 
 

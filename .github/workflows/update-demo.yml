@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "examples/run_migration_demo.py"
+      - "examples/legacy_queue/run_migration_demo.py"
       - "examples/demo_workspace/**"
       - "scripts/generate_demo_svg.py"
       - "src/djobs/**"

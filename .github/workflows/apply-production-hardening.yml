@@ -49,35 +49,55 @@ jobs:
           PY
           python /tmp/apply_hardening.py
 
-          # The audited source transformation embedded _metadata_json one scope too deep.
-          # Normalize that generated helper back to module scope before validation.
+          # Normalize two defects in the generated capsule helper before validation:
+          # it was nested one scope too deep, and reused an integer loop variable
+          # for a later Optional[int] tuple field.
           python - <<'PY'
           from pathlib import Path
 
           path = Path('src/djobs/observations.py')
           lines = path.read_text(encoding='utf-8').splitlines()
           start = next(
-              index
-              for index, line in enumerate(lines)
+              line_index
+              for line_index, line in enumerate(lines)
               if line.lstrip().startswith('def _metadata_json(')
           )
           end = next(
-              index
-              for index in range(start + 1, len(lines))
-              if lines[index].startswith('def _memory_status(')
+              line_index
+              for line_index in range(start + 1, len(lines))
+              if lines[line_index].startswith('def _memory_status(')
           )
           indent = len(lines[start]) - len(lines[start].lstrip())
           if indent <= 0:
               raise RuntimeError('_metadata_json was expected to require scope normalization')
           prefix = ' ' * indent
-          for index in range(start, end):
-              if lines[index].startswith(prefix):
-                  lines[index] = lines[index][indent:]
-              elif lines[index].strip():
+          for line_index in range(start, end):
+              if lines[line_index].startswith(prefix):
+                  lines[line_index] = lines[line_index][indent:]
+              elif lines[line_index].strip():
                   raise RuntimeError(
-                      f'inconsistent indentation while normalizing _metadata_json at line {index + 1}'
+                      'inconsistent indentation while normalizing _metadata_json '
+                      f'at line {line_index + 1}'
                   )
-          path.write_text('\n'.join(lines) + '\n', encoding='utf-8')
+          text = '\n'.join(lines) + '\n'
+          replacements = {
+              'for index, value in enumerate(values):':
+                  'for item_index, value in enumerate(values):',
+              'candidates.append((len(value), key, index))':
+                  'candidates.append((len(value), key, item_index))',
+              'length, key, index = max(candidates)':
+                  'length, key, selected_index = max(candidates)',
+              'if index is None:':
+                  'if selected_index is None:',
+              'capsule[key][index] = clean(capsule[key][index], new_limit)':
+                  'capsule[key][selected_index] = clean('
+                  'capsule[key][selected_index], new_limit)',
+          }
+          for old, new in replacements.items():
+              if old not in text:
+                  raise RuntimeError(f'expected capsule helper snippet missing: {old}')
+              text = text.replace(old, new, 1)
+          path.write_text(text, encoding='utf-8')
           PY
       - name: Validate and commit
         shell: bash

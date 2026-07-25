@@ -1,9 +1,9 @@
 name: Apply final product optimizations
 
 on:
-  push:
+  pull_request:
     branches:
-      - tmp/apply-final-product-optimizations-20260725
+      - fix/product-focus-cli-onboarding
     paths:
       - .github/workflows/apply-final-product-optimizations.yml
 

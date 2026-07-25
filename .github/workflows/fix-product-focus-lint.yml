@@ -24,7 +24,7 @@ jobs:
         run: |
           python -m pip install ruff==0.15.14
           python -m ruff check --fix src/djobs/entrypoint.py
-          python -c "from pathlib import Path; p=Path('src/djobs/entrypoint.py'); s=p.read_text(); s=s.replace(\"else \\\"Run 'djobs legacy install-mcp --force' or remove the broken override.\\\"\", \"else (\\n                            \\\"Run 'djobs legacy install-mcp --force' or remove \\\"\\n                            \\\"the broken override.\\\"\\n                        )\"); s=s.replace(\"\\\"not present (normal for extension or user-level setup; no project file required)\\\"\", \"\\\"not present (normal for extension or user-level setup; \\\"\\n                    \\\"no project file required)\\\"\"); p.write_text(s)"
+          python .github/scripts/fix_entrypoint_lint.py
           python -m ruff format src/djobs/entrypoint.py
           python -m ruff check src/djobs/entrypoint.py
       - name: Commit lint fixes

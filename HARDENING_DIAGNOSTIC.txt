@@ -1,5 +1,40 @@
+run_id=30166473713
+original_head=7fd25a1a7902412767049fb26b3803005abcf2a6
 exit_code=1
+
+git status:
+ D .github/scripts/calibrate_hardening_docs.py
+ M .github/workflows/ci.yml
+ M AGENTS.md
+ M CHANGELOG.md
+ M CONTRIBUTING.md
+ M HARDENING_DIAGNOSTIC.txt
+ M README.md
+ M docs/RELEASE.md
+ M docs/USER_GUIDE.md
+ M docs/index.html
+ M scripts/benchmark_project_memory.py
+ M src/djobs/coding_mcp.py
+ M src/djobs/entrypoint.py
+ M src/djobs/gain.py
+ M src/djobs/lifecycle.py
+ M src/djobs/observations.py
+ M src/djobs/zero_touch.py
+ M tests/unit/test_gain.py
+ M tests/unit/test_lifecycle.py
+ M tests/unit/test_project_memory_benchmark.py
+ M tests/unit/test_release_surfaces.py
+ M tests/unit/test_zero_config_entrypoint.py
+ M tests/unit/test_zero_touch_bootstrap.py
+ M vscode-ext/README.md
+
+working-tree diff check:
+
+cached diff check:
+
+preflight output:
 Changed paths:
+  - .github/scripts/calibrate_hardening_docs.py
   - .github/workflows/apply-production-hardening.yml
   - HARDENING_DIAGNOSTIC.txt
 
@@ -14,35 +49,64 @@ Success: no issues found in 53 source files
 
 ==> /opt/hostedtoolcache/Python/3.13.14/x64/bin/python -m pytest -q --tb=short
 ......s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s............................... [ 12%]
-........................................................................ [ 25%]
+........................................................................ [ 24%]
 ........................................................................ [ 37%]
-........................................................................ [ 50%]
+........................................................................ [ 49%]
 ........................................................................ [ 62%]
-........................................................................ [ 75%]
-...................F.................................................... [ 87%]
-.......................................................................  [100%]
-=================================== FAILURES ===================================
-_____ test_version_sync_and_release_workflow_cover_every_published_surface _____
-tests/unit/test_release_surfaces.py:130: in test_version_sync_and_release_workflow_cover_every_published_surface
-    assert "automation/release-v" in ci
-E   assert 'automation/release-v' in "name: CI\n\non:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n  workflow_dispatch:\n\nconcur...\n          path: dist\n      - if: env.FULL_CI == 'true'\n        run: python scripts/smoke_install.py --wheel dist\n"
-=========================== short test summary info ============================
-FAILED tests/unit/test_release_surfaces.py::test_version_sync_and_release_workflow_cover_every_published_surface - assert 'automation/release-v' in "name: CI\n\non:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n  workflow_dispatch:\n\nconcur...\n          path: dist\n      - if: env.FULL_CI == 'true'\n        run: python scripts/smoke_install.py --wheel dist\n"
-1 failed, 556 passed, 18 skipped in 28.20s
-Traceback (most recent call last):
-  File "/home/runner/work/djobs/djobs/scripts/preflight.py", line 261, in <module>
-    raise SystemExit(main())
-                     ~~~~^^
-  File "/home/runner/work/djobs/djobs/scripts/preflight.py", line 250, in main
-    run_tests(changes, full=args.profile == "full")
-    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/runner/work/djobs/djobs/scripts/preflight.py", line 194, in run_tests
-    _run([sys.executable, "-m", "pytest", "-q", "--tb=short", *targets])
-    ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/runner/work/djobs/djobs/scripts/preflight.py", line 111, in _run
-    subprocess.run(command, cwd=cwd, env=env, check=True)
-    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/opt/hostedtoolcache/Python/3.13.14/x64/lib/python3.13/subprocess.py", line 577, in run
-    raise CalledProcessError(retcode, process.args,
-                             output=stdout, stderr=stderr)
-subprocess.CalledProcessError: Command '['/opt/hostedtoolcache/Python/3.13.14/x64/bin/python', '-m', 'pytest', '-q', '--tb=short']' returned non-zero exit status 1.
+........................................................................ [ 74%]
+........................................................................ [ 87%]
+........................................................................ [ 99%]
+.                                                                        [100%]
+559 passed, 18 skipped in 63.76s (0:01:03)
+
+==> npm ci
+npm warn deprecated whatwg-encoding@3.1.1: Use @exodus/bytes instead for a more spec-conformant and faster implementation
+npm warn deprecated prebuild-install@7.1.3: No longer maintained. Please contact the author of the relevant native addon; alternatives are available.
+npm warn deprecated glob@11.1.0: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+
+added 301 packages, and audited 302 packages in 6s
+
+87 packages are looking for funding
+  run `npm fund` for details
+
+6 high severity vulnerabilities
+
+To address all issues, run:
+  npm audit fix
+
+Run `npm audit` for details.
+
+==> npx tsc -p ./ --noEmit
+
+==> npm run compile
+
+> djobs@0.18.2 compile
+> npm run sync-version && tsc -p ./
+
+
+> djobs@0.18.2 sync-version
+> node scripts/sync-version.js
+
+Extension version already 0.18.2
+Extension lock version already 0.18.2
+server.json version already 0.18.2
+
+==> /opt/hostedtoolcache/Python/3.13.14/x64/bin/python -m build
+* Creating isolated environment: venv+pip...
+* Installing packages in isolated environment:
+  - hatchling
+* Getting build dependencies for sdist...
+* Building sdist...
+* Building wheel from sdist
+* Creating isolated environment: venv+pip...
+* Installing packages in isolated environment:
+  - hatchling
+* Getting build dependencies for wheel...
+* Building wheel...
+Successfully built djobs-0.18.2.tar.gz and djobs-0.18.2-py3-none-any.whl
+
+==> /opt/hostedtoolcache/Python/3.13.14/x64/bin/python -m twine check dist/djobs-0.18.2-py3-none-any.whl dist/djobs-0.18.2.tar.gz
+Checking dist/djobs-0.18.2-py3-none-any.whl: [32mPASSED[0m
+Checking dist/djobs-0.18.2.tar.gz: [32mPASSED[0m
+
+Preflight passed.

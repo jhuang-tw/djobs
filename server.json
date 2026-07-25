@@ -3,7 +3,7 @@
   "name": "io.github.jhuang-tw/djobs",
   "title": "djobs \u2014 Local Agent Memory",
   "description": "Local project memory that recovers coding goals, failures, progress, and Git changes.",
-  "version": "0.18.2",
+  "version": "0.18.3",
   "repository": {
     "url": "https://github.com/jhuang-tw/djobs",
     "source": "github"
@@ -14,7 +14,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "djobs",
-      "version": "0.18.2",
+      "version": "0.18.3",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"

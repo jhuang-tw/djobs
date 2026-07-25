@@ -23,7 +23,7 @@ jobs:
       - name: Apply repository-pinned Ruff fixes
         run: |
           python -m pip install ruff==0.15.14
-          python -m ruff check --fix src/djobs/entrypoint.py
+          python -m ruff check --select I --fix src/djobs/entrypoint.py
           python .github/scripts/fix_entrypoint_lint.py
           python -m ruff format src/djobs/entrypoint.py
           python -m ruff check src/djobs/entrypoint.py

@@ -1,0 +1,39 @@
+name: Fix product-focus lint
+
+on:
+  push:
+    branches:
+      - fix/product-focus-cli-onboarding
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/product-focus-cli-onboarding
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Apply repository-pinned Ruff fixes
+        run: |
+          python -m pip install ruff==0.15.14
+          python -m ruff check --fix src/djobs/entrypoint.py
+          python -c "from pathlib import Path; p=Path('src/djobs/entrypoint.py'); s=p.read_text(); s=s.replace(\"else \\\"Run 'djobs legacy install-mcp --force' or remove the broken override.\\\"\", \"else (\\n                            \\\"Run 'djobs legacy install-mcp --force' or remove \\\"\\n                            \\\"the broken override.\\\"\\n                        )\"); s=s.replace(\"\\\"not present (normal for extension or user-level setup; no project file required)\\\"\", \"\\\"not present (normal for extension or user-level setup; \\\"\\n                    \\\"no project file required)\\\"\"); p.write_text(s)"
+          python -m ruff format src/djobs/entrypoint.py
+          python -m ruff check src/djobs/entrypoint.py
+      - name: Commit lint fixes
+        run: |
+          if git diff --quiet -- src/djobs/entrypoint.py; then
+            exit 0
+          fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/djobs/entrypoint.py
+          git commit -m "style: satisfy Ruff for memory-first entrypoint"
+          git push origin HEAD:fix/product-focus-cli-onboarding

@@ -36,6 +36,8 @@ def test_current_docs_and_marketplace_copy_match_passive_local_behavior() -> Non
         "CONTRIBUTING.md",
         "AGENTS.md",
         "docs/RELEASE.md",
+        "docs/USER_GUIDE.md",
+        "examples/README.md",
         "vscode-ext/README.md",
         "docs/index.html",
         "pyproject.toml",
@@ -79,7 +81,7 @@ def test_public_surfaces_share_memory_first_recovery_positioning() -> None:
         "python 3.10",
         "1.101",
         "~224",
-        "97.1%",
+        "not an end-to-end",
         "djobs gain",
         "sync_workspace",
         "checkpoint",
@@ -127,7 +129,10 @@ def test_version_sync_and_release_workflow_cover_every_published_surface() -> No
     assert "workflow_dispatch:" in ci
     assert "cancel-in-progress: true" in ci
     assert "scripts/preflight.py" in ci
-    assert "automation/release-v" in ci
+    assert 'FULL_CI: "true"' in ci
+    assert "if: github.event_name != 'pull_request'" not in ci
+    assert "test-postgres:" in ci
+    assert "installed-smoke:" in ci
     assert "actions: write" in release
     assert "pull-requests: write" in release
     assert 'gh workflow run ci.yml --ref "$release_branch"' not in release
@@ -149,3 +154,34 @@ def test_version_sync_and_release_workflow_cover_every_published_surface() -> No
     assert "profile" in preflight
     assert "ruff" in preflight
     assert not (ROOT / ".github/workflows/approve-release-pr-ci.yml").exists()
+
+
+def test_public_benchmark_copy_is_cautious_and_consistent() -> None:
+    paths = ("README.md", "vscode-ext/README.md", "docs/index.html")
+    for path in paths:
+        text = (ROOT / path).read_text(encoding="utf-8").lower()
+        assert "payload-size regression fixture" in text
+        assert "not an end-to-end savings claim" in text
+        assert "modern agents" in text
+        assert "97.1%" not in text
+        assert "payload proxy reduction" not in text
+
+    benchmark = (ROOT / "scripts/benchmark_project_memory.py").read_text(encoding="utf-8")
+    assert "proxy_reduction_percent" not in benchmark
+    assert "no end-to-end savings percentage is claimed" in benchmark
+
+    guide = (ROOT / "docs/USER_GUIDE.md").read_text(encoding="utf-8").lower()
+    assert "bounded local storage" in guide
+    assert "not a permanent audit archive" in guide
+    assert "while paused" in guide
+    assert "manual" in guide
+
+
+def test_markdown_matches_real_pull_request_gates() -> None:
+    paths = ("CONTRIBUTING.md", "AGENTS.md", "docs/RELEASE.md")
+    for path in paths:
+        text = (ROOT / path).read_text(encoding="utf-8").lower()
+        assert "every pull request" in text
+        assert "no-op placeholder" in text
+        assert "ordinary pull requests run one fast" not in text
+        assert "ordinary prs run the quick" not in text

@@ -14,6 +14,15 @@ public interfaces may still change between minor versions. Entries below use
 
 ## [Unreleased]
 
+### Fixed
+- `[core]` Pause now suppresses automatic capture, snapshots, session capsules, first-call bootstrap, and workspace recovery without blocking manual inspection or deletion.
+- `[core]` Recovery reads prior memory before persisting the current prompt, preventing the current request from ranking as its own history.
+- `[core]` Bounded session-capsule storage preserves structured goal, progress, failure, next-step, and source fields.
+
+### Changed
+- `[release]` Pull requests run real compatibility, package, extension, database, and installed-wheel gates before merge instead of no-op compatibility placeholders.
+- `[docs]` Public benchmark copy now describes a synthetic payload-size regression fixture and its assumptions instead of claiming a fixed percentage of provider-token savings.
+
 ## [0.18.2] - 2026-07-25
 
 ### Changed

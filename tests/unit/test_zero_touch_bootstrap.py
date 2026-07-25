@@ -133,3 +133,52 @@ def test_minimal_sync_tool_bootstraps_before_reading_workspace(monkeypatch) -> N
     assert asyncio.run(coding_mcp.sync_workspace(context)) == "{}"
     assert order == ["bootstrap", "roots", "sync"]
     assert captured["agent_type"] == "copilot"
+
+
+def test_paused_bootstrap_is_side_effect_free(monkeypatch, tmp_path: Path) -> None:
+    from djobs.core.pause import set_paused
+
+    database = tmp_path / "memory.db"
+    monkeypatch.setenv("DJOBS_DB", str(database))
+    monkeypatch.setenv("DJOBS_AGENT_TYPE", "copilot")
+    set_paused(database, True)
+    calls: list[str] = []
+    monkeypatch.setattr(zero_touch, "ensure_shared_queue", lambda: calls.append("queue"))
+    monkeypatch.setattr(
+        zero_touch,
+        "install_host_hooks",
+        lambda *_args, **_kwargs: calls.append("hooks"),
+    )
+    zero_touch.reset_bootstrap_state()
+
+    result = zero_touch.bootstrap_first_call(home=tmp_path)
+
+    assert result.status == "paused"
+    assert calls == []
+
+
+def test_minimal_sync_tool_reports_pause_before_bootstrap(monkeypatch, tmp_path: Path) -> None:
+    import asyncio
+    import json
+
+    from djobs import coding_mcp
+    from djobs.core.pause import set_paused
+
+    database = tmp_path / "memory.db"
+    monkeypatch.setenv("DJOBS_DB", str(database))
+    set_paused(database, True)
+    monkeypatch.setattr(
+        coding_mcp,
+        "bootstrap_first_call",
+        lambda _context: (_ for _ in ()).throw(AssertionError("must not bootstrap while paused")),
+    )
+
+    result = json.loads(asyncio.run(coding_mcp.sync_workspace(None, query="continue")))
+
+    assert result == {
+        "ok": True,
+        "paused": True,
+        "memory_suppressed": True,
+        "continue_coding": True,
+        "message": "djobs is paused; automatic recovery was skipped.",
+    }

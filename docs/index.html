@@ -370,7 +370,7 @@
         <div>
           <p class="label">Install once</p>
           <h2 id="install-title">Open any repository and continue.</h2>
-          <p class="lead">The VS Code extension is the easiest route. Other MCP hosts can launch djobs through <code>uvx</code>. Setup and doctor remain repair tools, not a ritual for every project.</p>
+          <p class="lead">The VS Code extension is the easiest route. Its first MCP call may create the local database and configure the detected Copilot adapter at user level; Diagnose Setup makes that visible. Other MCP hosts can launch djobs through <code>uvx</code>.</p>
           <div class="requirements">
             <div class="req"><b>Python 3.10+</b><span>Python 3.10–3.14 tested in CI</span></div>
             <div class="req"><b>VS Code 1.101+</b><span>For the Marketplace extension</span></div>
@@ -413,27 +413,27 @@
     <section class="wrap band" id="benchmarks" aria-labelledby="bench-title">
       <div class="section-head">
         <p class="label">Reproducible benchmarks</p>
-        <h2 id="bench-title">Show the payload, not a vague marketing number.</h2>
-        <p>The bundled deterministic fixture compares a full synthetic repository reread with one query-aware resume-tier recovery call.</p>
+        <h2 id="bench-title">Measure payload shape, not a marketing percentage.</h2>
+        <p>The bundled deterministic fixture compares a deliberately simple full-reread baseline with one query-aware resume-tier response.</p>
       </div>
 
       <div class="metrics">
-        <article class="metric"><strong>~7,805</strong><span>estimated tokens to reread the synthetic 18-file fixture</span></article>
-        <article class="metric"><strong>~224</strong><span>estimated tokens for query-aware <code>sync_workspace</code> resume tier</span></article>
+        <article class="metric"><strong>~7,805</strong><span>simple estimate for rereading all 18 synthetic files</span></article>
+        <article class="metric"><strong>~224</strong><span>simple estimate for one query-aware <code>sync_workspace</code> resume response</span></article>
       </div>
-      <p style="color:var(--muted);margin-top:18px">A 97.1% recovery-payload proxy reduction for this fixture. This is not provider billing, latency, or model-quality measurement. Run <code>python scripts/benchmark_project_memory.py</code> and inspect it yourself.</p>
-      <div class="gain-note"><strong>djobs gain</strong> now also reports first-pass verified rate, repair attempts, average attempts per verified task, cycle-time proxy, and estimated context tokens per verified task.</div>
+      <p style="color:var(--muted);margin-top:18px">This is a payload-size regression fixture, not an end-to-end savings claim. The baseline does not model modern agents that summarize, cache, or selectively read files. It is not provider billing, measured model usage, latency, or quality. Run <code>python scripts/benchmark_project_memory.py</code> and inspect the assumptions.</p>
+      <div class="gain-note"><strong>djobs gain</strong> reports local task-efficiency and context-size heuristics. Treat them as explainable estimates, not guaranteed savings.</div>
     </section>
 
     <section class="wrap band" aria-labelledby="privacy-title">
       <div class="section-head">
         <p class="label">Privacy and control</p>
         <h2 id="privacy-title">Local, inspectable, and reversible.</h2>
-        <p>State defaults to <code>~/.djobs/global.db</code>. Common credentials are redacted on a best-effort basis, stored text is untrusted data, and failures remain fail-open.</p>
+        <p>State defaults to <code>~/.djobs/global.db</code>. Pause stops automatic capture and recovery without deleting data. Common credentials are redacted on a best-effort basis, stored text is untrusted data, retention is bounded, and failures remain fail-open.</p>
       </div>
       <div class="cards">
         <article class="card"><span class="card-icon" aria-hidden="true">01</span><h3>Opt out per prompt</h3><p>Add <code>[djobs:no-memory]</code> for one prompt or set <code>DJOBS_CAPTURE_USER_INTENT=0</code> globally.</p></article>
-        <article class="card"><span class="card-icon" aria-hidden="true">02</span><h3>Resolve without erasing</h3><p>Mark memory resolved, superseded, stale, or contradicted while keeping its audit trail.</p></article>
+        <article class="card"><span class="card-icon" aria-hidden="true">02</span><h3>Retire without selecting</h3><p>Mark memory resolved, superseded, stale, or contradicted. It remains inspectable only while retained by bounded local storage.</p></article>
         <article class="card"><span class="card-icon" aria-hidden="true">03</span><h3>Forget or clear</h3><p>Delete one memory or explicitly clear passive memory for the repository family.</p></article>
       </div>
     </section>

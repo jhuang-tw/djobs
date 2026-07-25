@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from djobs import handoff, lifecycle, observations
+from djobs.core.pause import set_paused
 from djobs.queue.service import QueueService
 from djobs.storage.sqlite import SQLiteJobRepository
 from djobs.workspace import resolve_agent_session, resolve_workspace
@@ -317,3 +318,137 @@ def test_tool_observation_redacts_common_secrets(
     assert "abc123" not in summary
     assert "super-secret" not in summary
     assert "<redacted>" in summary
+
+
+def test_pause_stops_automatic_capture_and_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _git_repo(tmp_path / "project")
+    database = tmp_path / "shared.db"
+    repository, queue = _queue(database)
+    monkeypatch.setattr(handoff, "configure", lambda _path: queue)
+    monkeypatch.setenv("DJOBS_DB", str(database))
+    set_paused(database, True)
+
+    payload = {
+        "cwd": str(root),
+        "session_id": "paused-session",
+        "prompt": "This prompt must not be stored while paused",
+    }
+    assert lifecycle.prompt_context(payload, agent_type="codex") == {}
+    assert (
+        lifecycle.post_tool_use(
+            {
+                "cwd": str(root),
+                "session_id": "paused-session",
+                "tool_name": "write_file",
+                "tool_response": {"success": True, "output": "done"},
+            },
+            agent_type="codex",
+        )
+        == {}
+    )
+    assert lifecycle.session_end(payload, agent_type="codex") == {}
+
+    count = repository._connection.execute("SELECT COUNT(*) FROM agent_observations").fetchone()[0]
+    assert count == 0
+
+
+def test_prompt_context_reads_history_before_storing_current_prompt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _git_repo(tmp_path / "project")
+    database = tmp_path / "shared.db"
+    repository, queue = _queue(database)
+    monkeypatch.setattr(handoff, "configure", lambda _path: queue)
+    monkeypatch.setenv("DJOBS_DB", str(database))
+    workspace = resolve_workspace(cwd=str(root))
+    historical_agent = resolve_agent_session(
+        workspace,
+        agent_type="codex",
+        session_id="historical-session",
+    )
+    observations.record_observation(
+        repository,
+        workspace,
+        historical_agent,
+        "tool_failure",
+        "OAuth callback plus-sign normalization failed in the previous session",
+    )
+
+    current_prompt = "Continue OAuth callback plus-sign recovery CURRENT-REQUEST-ONLY"
+    context = lifecycle.prompt_context(
+        {
+            "cwd": str(root),
+            "session_id": "current-session",
+            "prompt": current_prompt,
+        },
+        agent_type="codex",
+    )
+
+    assert "previous session" in context["additionalContext"]
+    assert "CURRENT-REQUEST-ONLY" not in context["additionalContext"]
+    stored = repository._connection.execute(
+        "SELECT summary FROM agent_observations WHERE event_type = 'user_intent'"
+    ).fetchall()
+    assert current_prompt in {row["summary"] for row in stored}
+
+
+def test_large_session_capsule_keeps_structured_fields(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _git_repo(tmp_path / "project")
+    database = tmp_path / "shared.db"
+    repository, _queue_service = _queue(database)
+    monkeypatch.setenv("DJOBS_DB", str(database))
+    workspace = resolve_workspace(cwd=str(root))
+    agent = resolve_agent_session(workspace, agent_type="codex", session_id="large-capsule")
+
+    observations.record_observation(
+        repository,
+        workspace,
+        agent,
+        "user_intent",
+        "Preserve the public API while completing a deliberately large hardening session",
+    )
+    for index in range(8):
+        observations.record_observation(
+            repository,
+            workspace,
+            agent,
+            "tool_result",
+            f"progress {index}: " + ("implementation evidence " * 20),
+        )
+    for index in range(5):
+        observations.record_observation(
+            repository,
+            workspace,
+            agent,
+            "tool_failure",
+            f"failure {index}: " + ("diagnostic detail " * 20),
+        )
+
+    assert observations.record_session_capsule(
+        repository,
+        workspace,
+        agent,
+        reason="test-large-capsule",
+        next_hint="Run the complete compatibility matrix and inspect every failure " * 10,
+    )
+    row = repository._connection.execute(
+        "SELECT metadata_json FROM agent_observations "
+        "WHERE event_type = 'session_capsule' ORDER BY created_at DESC LIMIT 1"
+    ).fetchone()
+    metadata = json.loads(row["metadata_json"])
+
+    assert len(row["metadata_json"]) <= observations._MAX_CAPSULE_METADATA
+    assert metadata["capsule_schema"] == 1
+    assert isinstance(metadata["goal"], str) and metadata["goal"]
+    assert isinstance(metadata["progress"], list)
+    assert isinstance(metadata["failures"], list)
+    assert "next" in metadata
+    assert isinstance(metadata["source_event_ids"], list)
+    assert metadata["truncated_fields"]

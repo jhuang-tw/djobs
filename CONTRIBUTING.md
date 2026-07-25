@@ -74,19 +74,15 @@ second hand-written list of local checks.
 
 ## CI layers
 
-Ordinary pull requests run one fast required `lint` check containing the complete
-quick preflight. The legacy required check names remain present but their expensive
-jobs are skipped for ordinary PRs.
+Every pull request runs the real compatibility gates before merge. The shared `lint` job performs
+formatting, lint, and type checks, while separate jobs cover Python 3.10–3.14,
+PostgreSQL, package and Twine validation, VS Code compilation, and clean-wheel
+installation on Windows, macOS, and Linux. Required compatibility job names must not
+be no-op placeholders.
 
-The full compatibility matrix runs for:
-
-- every commit that reaches `main`;
-- `workflow_dispatch` verification;
-- automated `automation/release-vX.Y.Z` pull requests.
-
-Full CI includes Python 3.10–3.14, PostgreSQL, package and Twine validation, VS Code
-compilation, and clean-wheel installation on Windows, macOS, and Linux. New pushes to
-the same PR cancel obsolete runs instead of waiting for every stale commit.
+The same matrix also runs on `main`, `workflow_dispatch`, and automated
+`automation/release-vX.Y.Z` pull requests. New pushes to the same branch cancel
+obsolete runs instead of waiting for every stale commit.
 
 ## Versioning and releases
 
@@ -102,8 +98,8 @@ After a change reaches protected `main` and its full `CI` workflow succeeds, the
 - publishes PyPI and the VS Code Marketplace from the merged commit;
 - creates the matching Git tag and GitHub Release.
 
-The release commit changes only generated version surfaces already validated in the
-release PR, so it is not followed by a duplicate full main matrix.
+The release PR validates the generated version surfaces before merge. A normal `main` CI run may
+also revalidate the squash result; publishing rebuilds artifacts from the exact merged SHA.
 
 Use `feat:` for a minor release, `!` or a `BREAKING CHANGE:` footer for a major
 release, and any other clear title for a patch release. After a successful release,

@@ -184,3 +184,23 @@ def test_doctor_warns_about_recognized_legacy_project_hook(tmp_path: Path, monke
     assert warning["ok"] is False
     assert "djobs legacy init --force" in warning["next_step"]
     assert payload["ok"] is True
+
+
+def test_top_level_pause_defaults_to_shared_memory_database(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "global.db"
+    monkeypatch.setenv("DJOBS_DB", str(database))
+    captured: list[str] = []
+
+    def fake_run_cli(argv: list[str], *, prog: str = "djobs") -> None:
+        del prog
+        captured.extend(argv)
+
+    monkeypatch.setattr(entrypoint, "_run_cli", fake_run_cli)
+    monkeypatch.setattr(sys, "argv", ["djobs", "pause"])
+
+    entrypoint.main()
+
+    assert captured == ["pause", "--db", str(database)]

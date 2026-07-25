@@ -514,7 +514,15 @@ def main() -> None:
 
         raise SystemExit(run_agent_event(rest))
 
-    if command in {"mcp", "pause", "unpause", "receipt"}:
+    if command in {"pause", "unpause"}:
+        if not any(item == "--db" or item.startswith("--db=") for item in rest):
+            from djobs.workspace import shared_db_path
+
+            rest = [*rest, "--db", str(shared_db_path())]
+        _run_cli([command, *rest])
+        return
+
+    if command in {"mcp", "receipt"}:
         _run_cli(argv)
         return
 

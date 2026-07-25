@@ -1,4 +1,4 @@
-"""Explainable token-savings analytics for durable djobs state."""
+"""Explainable heuristic context comparisons for durable djobs state."""
 
 from __future__ import annotations
 
@@ -274,7 +274,7 @@ def build_gain_report(
     redo_overhead_tokens: int = DEFAULT_REDO_OVERHEAD_TOKENS,
     history_limit: int = _HISTORY_LIMIT,
 ) -> dict[str, Any]:
-    """Build an explainable savings report without mutating durable state."""
+    """Build an explainable heuristic comparison without mutating durable state."""
 
     if chars_per_token <= 0:
         raise ValueError("chars_per_token must be greater than 0")
@@ -341,13 +341,14 @@ def build_gain_report(
         "generated_at": current.isoformat(),
         "scope": correlation_id or "all workspaces",
         "database": str(Path(db_path).expanduser()),
-        "estimate_kind": "avoided replay/re-read/re-plan tokens",
+        "estimate_kind": "simple replay baseline versus stored durable context",
         "assumptions": {
             "chars_per_token": chars_per_token,
             "redo_overhead_tokens_per_completed_record": redo_overhead_tokens,
             "note": (
-                "Estimates compare replaying completed work after context loss with "
-                "the compact durable state djobs can restore. They are not provider billing data."
+                "Estimates compare a configurable replay baseline with compact durable state. "
+                "Modern agents may summarize, cache, or selectively reread, so the baseline can "
+                "overstate avoided work. This is not observed provider usage or billing data."
             ),
         },
         "last_24_hours": _summarize(since(timedelta(hours=24))),
@@ -371,8 +372,8 @@ def _format_tokens(value: int) -> str:
 
 def _print_window(label: str, data: dict[str, Any]) -> None:
     print(
-        f"  {label:<9} {_format_tokens(data['estimated_saved_tokens']):>10} tokens saved  "
-        f"({data['completed_records']} completed, {data['estimated_saved_percent']:.1f}%)"
+        f"  {label:<9} {_format_tokens(data['estimated_saved_tokens']):>10} heuristic delta  "
+        f"({data['completed_records']} completed records)"
     )
 
 
@@ -419,7 +420,7 @@ def print_gain_report(
     show_daily: bool = False,
     show_graph: bool = False,
 ) -> None:
-    print("djobs gain - estimated durable-context savings")
+    print("djobs gain - heuristic durable-context comparison")
     print(f"  scope: {report['scope']}")
     _print_window("24 hours", report["last_24_hours"])
     _print_window("30 days", report["last_30_days"])
@@ -428,7 +429,7 @@ def print_gain_report(
     all_time = report["all_time"]
     auto = all_time["sources"]["automatic_hook"]
     workflow = all_time["sources"]["durable_workflow"]
-    print("\nSavings sources")
+    print("\nEstimated delta sources")
     print(
         f"  automatic hooks   {_format_tokens(auto['estimated_saved_tokens']):>10} "
         f"({auto['completed_records']} completed commands)"
@@ -461,7 +462,10 @@ def print_gain_report(
         f"{_format_tokens(recoverable['protected_context_tokens'])} tokens of compact "
         "context protected"
     )
-    print("\n  Estimate only: avoided replay/re-read/re-plan, not provider billing data.")
+    print(
+        "\n  Heuristic only: modern agents may summarize or selectively reread; "
+        "not observed provider usage or guaranteed savings."
+    )
 
     if show_graph:
         _print_graph(report["daily"])
@@ -474,7 +478,7 @@ def print_gain_report(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="djobs gain",
-        description="Show explainable token savings from durable djobs state",
+        description="Show explainable local context heuristics from durable djobs state",
     )
     parser.add_argument(
         "--db",

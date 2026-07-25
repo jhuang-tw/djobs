@@ -58,11 +58,11 @@ next equivalent recovery without hiding current task state.
 2. Open a Git repository.
 3. Start using Copilot normally.
 
-The first djobs MCP call creates `~/.djobs/global.db` and installs the passive Copilot lifecycle
-adapter. There is no required per-project command.
-
-Run **djobs: Set up / Repair djobs** only when Python is missing, an old launch path needs repair,
-or diagnostics report a damaged installation.
+The first djobs MCP call may create `~/.djobs/global.db` and install the passive Copilot
+lifecycle adapter. That is a local user-level configuration change, not a read-only probe. No
+per-project command is required, but **djobs: Diagnose Setup** shows what was configured and
+**djobs: Set up / Repair djobs** performs the same work explicitly when Python or an old launch path
+needs attention.
 
 ## Five compact MCP tools
 
@@ -81,19 +81,22 @@ remain available through `djobs-mcp-full` rather than occupying every ordinary A
 
 - **djobs: Set up / Repair djobs** — install or update the engine, hooks, and native MCP registration.
 - **djobs: Diagnose Setup** — verify runtime, MCP, local database, and hook health.
-- **djobs: Pause djobs** — temporarily disable djobs operations without deleting state.
+- **djobs: Pause djobs** — stop automatic capture and recovery without deleting state; manual inspection and cleanup remain available.
 - **djobs: Resume djobs** — re-enable djobs.
 
 ## Efficiency metrics
 
-The bundled recovery benchmark estimates **~224 tokens** for one `resume` recovery versus
-**~7,805 tokens** for rereading the synthetic 18-file fixture, a **97.1% payload proxy reduction**.
-This is not provider billing or model-quality measurement.
+The bundled fixture produces a simple serialized-text estimate of **~224 tokens** for one `resume`
+response and **~7,805 tokens** for rereading all 18 synthetic files.
 
-Reproduce it from the repository with `python scripts/benchmark_project_memory.py`.
+This is a payload-size regression fixture, not an end-to-end savings claim. The reread baseline does
+not model modern agents that summarize, cache, or selectively read files, so the figures are not
+provider billing, measured model usage, latency, or quality results. Reproduce the fixture with
+`python scripts/benchmark_project_memory.py` and inspect its assumptions.
 
-`djobs gain` also reports first-pass verified rate, repair attempts, average attempts per verified
-task, cycle-time proxy, and estimated context tokens per verified task.
+`djobs gain` reports first-pass verified rate, repair attempts, average attempts per verified task,
+cycle-time proxy, and simple context-size estimates. Treat them as local heuristics rather than
+guaranteed savings.
 
 ## Requirements
 
@@ -113,7 +116,10 @@ End users do not need Node.js. Node is required only to build or package the ext
 - Common credentials are redacted on a best-effort basis.
 - Add `[djobs:no-memory]` to skip one prompt.
 - Set `DJOBS_CAPTURE_USER_INTENT=0` to disable automatic prompt-intent capture.
-- Mark memory resolved, superseded, stale, or contradicted without erasing its audit trail.
+- Use **Pause djobs** to stop automatic capture, session capsules, snapshots, bootstrap, and
+  `sync_workspace` recovery without deleting stored state.
+- Mark memory resolved, superseded, stale, or contradicted so normal recovery excludes it. Local
+  observation retention is bounded; this is not a permanent audit archive.
 - Hook failures are fail-open, unrelated settings are preserved, and djobs does not upload
   repository memory or task state.
 

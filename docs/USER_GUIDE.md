@@ -16,7 +16,9 @@ djobs memory list
 
 `djobs setup` defaults to Copilot. Pass `codex`, `claude`, `gemini`, `kimi`, or `all` to configure a
 different host. The VS Code extension can register the MCP server natively, so a missing
-`.vscode/mcp.json` is not an error.
+`.vscode/mcp.json` is not an error. On its first MCP call the extension may create the shared local
+database and configure the detected Copilot adapter; that is a local user-level side effect. Use
+`djobs doctor` to inspect it and `djobs remove HOST` to remove a managed adapter.
 
 ## What is stored
 
@@ -60,7 +62,7 @@ djobs memory status OLD_ID superseded --replacement-id NEW_ID
 djobs memory status MEMORY_ID stale
 ```
 
-Inactive memory remains auditable but is excluded from normal recovery.
+Inactive memory is excluded from normal recovery and remains inspectable only while retained by bounded local storage. djobs is not a permanent audit archive.
 
 Delete only when requested:
 
@@ -71,6 +73,18 @@ djobs memory clear --yes
 
 `clear --yes` removes passive memory for the repository family. Explicit checkpoint tasks are
 preserved.
+
+## Pause automatic behavior
+
+```bash
+djobs pause
+djobs unpause
+```
+
+While paused, automatic prompt and tool capture, repository snapshots, session capsules, first-call
+bootstrap, and `sync_workspace` recovery are skipped. Existing data is not deleted. Manual
+`memory list`, `search`, lifecycle updates, `forget`, and `clear` remain available so the user can
+inspect or remove stored state.
 
 ## Choosing a recovery tool
 
@@ -94,6 +108,17 @@ already persists correlation IDs and revisions.
 - `state_hash`: queue-state hash used by legacy `resume_delta` callers.
 - `snapshot_consistent`: the legacy delta snapshot is internally consistent.
 - `reset_required`: the legacy revision cursor cannot be advanced safely; refresh from scratch.
+
+## Interpreting benchmarks and `djobs gain`
+
+The bundled benchmark compares one bounded `sync_workspace` response with a deliberately simple
+baseline that rereads every file in a synthetic fixture. This is a payload-size regression fixture,
+not an end-to-end savings claim. Modern agents can summarize, cache, or selectively read files, so
+the fixture must not be presented as provider-token savings, billing reduction, latency, or quality.
+
+`djobs gain` uses configurable characters-per-token and redo-overhead assumptions. Its output is an
+explainable local heuristic, not observed provider usage or a guarantee that a model would otherwise
+repeat the same work.
 
 ## Troubleshooting
 

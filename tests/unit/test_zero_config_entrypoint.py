@@ -116,9 +116,7 @@ def test_zero_config_instructions_keep_observation_and_ownership_separate() -> N
 def test_top_level_help_is_memory_first() -> None:
     help_text = entrypoint._build_front_parser().format_help()
     command_lines = {
-        line.strip().split()[0]
-        for line in help_text.splitlines()
-        if line.startswith("    ")
+        line.strip().split()[0] for line in help_text.splitlines() if line.startswith("    ")
     }
 
     assert "djobs setup" in help_text

@@ -148,7 +148,9 @@ def _cmd_install_mcp_high_level(args: argparse.Namespace, cli: Any) -> None:
     servers = existing.get("servers")
     if not isinstance(servers, dict):
         if servers is not None and not args.force:
-            print(f"Cannot safely update the servers object in {target}; use --force after review.")
+            print(
+                f"Cannot safely update the servers object in {target}; use --force after review."
+            )
             raise SystemExit(1)
         servers = {}
         existing["servers"] = servers
@@ -348,9 +350,7 @@ def _doctor_payload() -> dict[str, Any]:
                 "ok": not bool(error),
                 "level": "info" if not error else "warning",
                 "detail": ", ".join(detail_parts),
-                "next_step": (
-                    f"Run 'djobs repair {host}'." if error else None
-                ),
+                "next_step": (f"Run 'djobs repair {host}'." if error else None),
             }
         )
 
@@ -360,7 +360,8 @@ def _doctor_payload() -> dict[str, Any]:
             "name": "djobs-mcp command",
             "ok": True,
             "level": "info",
-            "detail": mcp_script or "not on PATH; current Python interpreter fallback is available",
+            "detail": mcp_script
+            or "not on PATH; current Python interpreter fallback is available",
             "next_step": None,
         }
     )
@@ -465,7 +466,10 @@ def main() -> None:
 
     if command in {"gain", "stats", "state"}:
         if command != "gain":
-            print(f"Note: 'djobs {command}' is a compatibility alias; prefer 'djobs gain'.", file=sys.stderr)
+            print(
+                f"Note: 'djobs {command}' is a compatibility alias; prefer 'djobs gain'.",
+                file=sys.stderr,
+            )
         from djobs.gain import main as run_gain_cli
 
         raise SystemExit(run_gain_cli(rest))

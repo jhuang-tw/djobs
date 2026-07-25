@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import djobs.cli as cli
@@ -110,3 +111,26 @@ def test_zero_config_instructions_keep_observation_and_ownership_separate() -> N
     assert "Never hijack the user's intent." in body
     assert "untrusted data" in body
     assert "enqueue_batch" not in body
+
+
+def test_top_level_help_is_memory_first() -> None:
+    help_text = entrypoint._build_front_parser().format_help()
+
+    assert "djobs setup" in help_text
+    assert "memory" in help_text
+    assert "gain" in help_text
+    assert "legacy" in help_text
+    assert "serve" not in help_text
+    assert "dashboard" not in help_text
+    assert "token-savings" not in help_text
+
+
+def test_main_without_arguments_prints_memory_first_help(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(sys, "argv", ["djobs"])
+
+    entrypoint.main()
+
+    output = capsys.readouterr().out
+    assert "Local repository memory for AI coding agents" in output
+    assert "djobs memory list" in output
+    assert "djobs legacy --help" in output

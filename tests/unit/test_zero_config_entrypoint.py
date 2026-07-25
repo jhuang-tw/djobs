@@ -137,3 +137,55 @@ def test_main_without_arguments_prints_memory_first_help(monkeypatch, capsys) ->
     assert "Local repository memory for AI coding agents" in output
     assert "djobs memory list" in output
     assert "djobs legacy --help" in output
+
+
+def test_top_level_help_lists_host_repair_and_removal() -> None:
+    help_text = entrypoint._build_front_parser().format_help()
+    command_lines = {
+        line.strip().split()[0] for line in help_text.splitlines() if line.startswith("    ")
+    }
+
+    assert "repair" in command_lines
+    assert "remove" in command_lines
+
+
+def test_legacy_subcommand_uses_its_own_program_name(monkeypatch, capsys) -> None:
+    recorded: dict[str, object] = {}
+
+    def fake_main(argv: list[str] | None = None, prog: str = "djobs") -> None:
+        recorded["argv"] = argv
+        recorded["prog"] = prog
+
+    monkeypatch.setattr(cli, "main", fake_main)
+    monkeypatch.setattr(sys, "argv", ["djobs", "legacy"])
+
+    entrypoint.main()
+
+    assert recorded == {"argv": ["--help"], "prog": "djobs legacy"}
+    capsys.readouterr()
+
+
+def test_doctor_warns_about_legacy_project_hook(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    legacy = tmp_path / ".github" / "hooks" / "djobs.json"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "hooks": {
+                    "sessionStart": [{"bash": "djobs hook session-start"}],
+                    "preToolUse": [{"bash": "djobs hook pre"}],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    payload = entrypoint._doctor_payload()
+    warnings = [item for item in payload["checks"] if item["name"] == "legacy project hook"]
+
+    assert len(warnings) == 1
+    assert warnings[0]["level"] == "warning"
+    assert not warnings[0]["ok"]
+    assert "djobs legacy init" in str(warnings[0]["next_step"])

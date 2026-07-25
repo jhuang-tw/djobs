@@ -13,21 +13,6 @@ type DjobsInstaller =
 export class DjobsClient {
   constructor(private readonly workspaceRoot: string) {}
 
-  /** Pause djobs operations without deleting local state (reversible). */
-  async pause(): Promise<void> {
-    await this.run(['pause', '--db', this.resolvedDbPath()]);
-  }
-
-  /** Resume normal djobs behavior after a pause. */
-  async unpause(): Promise<void> {
-    await this.run(['unpause', '--db', this.resolvedDbPath()]);
-  }
-
-  /** Install the passive local Copilot lifecycle adapter. */
-  async installHooks(): Promise<void> {
-    await this.run(['setup', 'copilot']);
-  }
-
   /** Check whether the passive Copilot hook document is installed and valid. */
   async hooksInstalled(): Promise<boolean> {
     try {
@@ -81,24 +66,6 @@ export class DjobsClient {
     } catch {
       return false;
     }
-  }
-
-  /** Wire the agent's write side to the shared global queue via the CLI. */
-  async wireGlobalMcp(): Promise<void> {
-    await this.run(['install-mcp', '--global', '--force']);
-  }
-
-  /**
-   * Re-generate .vscode/mcp.json so the agent launches via the currently
-   * working djobs runtime. Respects the configured queue location so a
-   * workspace-queue user is not silently switched to the global queue.
-   */
-  async reWireMcp(): Promise<void> {
-    const args = ['install-mcp', '--force'];
-    if (this.isGlobalQueue()) {
-      args.push('--global');
-    }
-    await this.run(args);
   }
 
   /**

@@ -329,6 +329,22 @@ def _doctor_payload() -> dict[str, Any]:
             }
         )
 
+    if _is_legacy_managed_hook():
+        checks.append(
+            {
+                "name": "legacy project hook",
+                "ok": False,
+                "level": "warning",
+                "detail": (
+                    f"{_LEGACY_PROJECT_HOOK} still enables automatic command checkpoint jobs"
+                ),
+                "next_step": (
+                    f"Run 'djobs legacy init' to remove {_LEGACY_PROJECT_HOOK}, "
+                    "or delete the file manually."
+                ),
+            }
+        )
+
     host_items = doctor_results()
     configured_hosts: list[str] = []
     for item in host_items:

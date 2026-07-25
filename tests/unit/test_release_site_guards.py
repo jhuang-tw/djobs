@@ -179,3 +179,20 @@ def test_ci_validates_installable_artifacts_and_extension() -> None:
     assert "windows-latest" in workflow
     assert "macos-latest" in workflow
     assert "npm run compile" in workflow
+
+
+def test_referenced_example_scripts_exist() -> None:
+    """Example paths quoted by automation must survive directory reorganizations."""
+
+    sources = {
+        "scripts/generate_demo_svg.py": _REPO / "scripts" / "generate_demo_svg.py",
+        "update-demo.yml": _REPO / ".github" / "workflows" / "update-demo.yml",
+        "examples/README.md": _REPO / "examples" / "README.md",
+    }
+    referenced: set[str] = set()
+    for text in (path.read_text(encoding="utf-8") for path in sources.values()):
+        referenced.update(re.findall(r"examples/[\w./-]*\.py", text))
+
+    assert referenced
+    missing = sorted(path for path in referenced if not (_REPO / path).exists())
+    assert missing == []

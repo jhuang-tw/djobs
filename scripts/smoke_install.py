@@ -11,6 +11,14 @@ import tempfile
 import venv
 from pathlib import Path
 
+_TOP_LEVEL_HELP_MARKERS = (
+    "Local repository memory",
+    "djobs setup",
+    "djobs doctor",
+    "djobs memory list",
+    "djobs legacy --help",
+)
+
 
 def _venv_executable(root: Path, name: str) -> Path:
     scripts = root / ("Scripts" if os.name == "nt" else "bin")
@@ -87,7 +95,7 @@ def smoke(wheel: Path, *, find_links: Path | None = None) -> None:
             raise AssertionError(f"unexpected version output: {version!r}")
 
         help_text = _run([str(djobs), "--help"], env=env, cwd=workspace).stdout
-        for expected in ("Local repository memory", "djobs setup", "djobs repair", "djobs remove"):
+        for expected in _TOP_LEVEL_HELP_MARKERS:
             if expected not in help_text:
                 raise AssertionError(f"top-level help is missing {expected!r}")
 

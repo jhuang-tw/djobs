@@ -383,6 +383,11 @@ def run_wrapped_payload(payload: dict[str, Any]) -> int:
             )
             task_id = job.id
         except Exception as exc:  # checkpoint failures must not block user commands
+            from djobs.diagnostics import record_shared_failure
+
+            record_shared_failure(
+                "auto_hook.checkpoint_create", exc, context={"cwd": cwd, "shell": shell}
+            )
             _debug(f"checkpoint creation failed: {exc}")
 
     try:
@@ -390,6 +395,11 @@ def run_wrapped_payload(payload: dict[str, Any]) -> int:
     except KeyboardInterrupt:
         return_code = 130
     except Exception as exc:
+        from djobs.diagnostics import record_shared_failure
+
+        record_shared_failure(
+            "auto_hook.command_wrapper", exc, context={"cwd": cwd, "shell": shell}
+        )
         _debug(f"command wrapper failed: {exc}")
         return_code = 127
 
@@ -410,6 +420,9 @@ def run_wrapped_payload(payload: dict[str, Any]) -> int:
                     f"automatic command checkpoint: exit {return_code}",
                 )
         except Exception as exc:
+            from djobs.diagnostics import record_shared_failure
+
+            record_shared_failure("auto_hook.checkpoint_finalize", exc, context={"cwd": cwd})
             _debug(f"checkpoint finalization failed: {exc}")
     return return_code
 
@@ -429,6 +442,9 @@ def session_start_context(payload: dict[str, Any]) -> dict[str, Any]:
             statuses=_RECOVERABLE_STATUSES,
         )
     except Exception as exc:
+        from djobs.diagnostics import record_shared_failure
+
+        record_shared_failure("auto_hook.session_recovery", exc, context={"cwd": cwd})
         _debug(f"session recovery failed: {exc}")
         return {}
 
@@ -557,6 +573,9 @@ def _cmd_pre() -> int:
     try:
         result = rewrite_pre_tool_payload(_read_payload())
     except Exception as exc:
+        from djobs.diagnostics import record_shared_failure
+
+        record_shared_failure("auto_hook.pre_tool_use", exc)
         _debug(f"preToolUse processing failed: {exc}")
         result = {}
     print(json.dumps(result, separators=(",", ":")))
@@ -567,6 +586,9 @@ def _cmd_session_start() -> int:
     try:
         result = session_start_context(_read_payload())
     except Exception as exc:
+        from djobs.diagnostics import record_shared_failure
+
+        record_shared_failure("auto_hook.session_start", exc)
         _debug(f"sessionStart processing failed: {exc}")
         result = {}
     print(json.dumps(result, separators=(",", ":")))

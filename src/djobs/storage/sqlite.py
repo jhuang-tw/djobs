@@ -5,7 +5,10 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from itertools import count
 from pathlib import Path
 from typing import Any
 
@@ -27,15 +30,28 @@ SCHEMA_SQL = SQLITE_SCHEMA_SQL
 # (imported at top of file)
 
 
-def connect(path: str | Path) -> sqlite3.Connection:
+def connect(
+    path: str | Path,
+    *,
+    busy_timeout_ms: int = 5000,
+) -> sqlite3.Connection:
     """Open a SQLite connection configured for repository use."""
     if str(path) != ":memory:":
         path = Path(path).expanduser()
         path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(path, check_same_thread=False)
+    timeout_ms = max(0, min(int(busy_timeout_ms), 60_000))
+    connection = sqlite3.connect(
+        path,
+        check_same_thread=False,
+        timeout=timeout_ms / 1000,
+    )
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
-    connection.execute("PRAGMA busy_timeout = 5000")
+    connection.execute(f"PRAGMA busy_timeout = {timeout_ms}")
+    connection.execute("PRAGMA synchronous = NORMAL")
+    connection.execute("PRAGMA temp_store = MEMORY")
+    if str(path) != ":memory:":
+        connection.execute("PRAGMA journal_mode = WAL")
     return connection
 
 
@@ -44,6 +60,29 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
     connection.executescript(SCHEMA_SQL)
     apply_sqlite_column_migrations(connection)
     connection.commit()
+
+
+class SQLiteTransaction:
+    """Bounded transaction handle exposed to storage clients.
+
+    The handle intentionally exposes only SQLite cursor operations needed by
+    repository adapters. Commit and rollback remain owned by
+    :meth:`SQLiteJobRepository.transaction`.
+    """
+
+    __slots__ = ("_connection",)
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._connection = connection
+
+    def execute(self, sql: str, parameters: Sequence[Any] = ()) -> sqlite3.Cursor:
+        return self._connection.execute(sql, tuple(parameters))
+
+    def executemany(self, sql: str, parameters: Sequence[Sequence[Any]]) -> sqlite3.Cursor:
+        return self._connection.executemany(sql, parameters)
+
+    def executescript(self, sql_script: str) -> sqlite3.Cursor:
+        return self._connection.executescript(sql_script)
 
 
 class SQLiteJobRepository:
@@ -57,10 +96,16 @@ class SQLiteJobRepository:
         self._connection.row_factory = sqlite3.Row
         self._connection.execute("PRAGMA foreign_keys = ON")
         self._lock = threading.RLock()
+        self._savepoint_counter = count(1)
 
     @classmethod
-    def from_path(cls, path: str | Path) -> SQLiteJobRepository:
-        connection = connect(path)
+    def from_path(
+        cls,
+        path: str | Path,
+        *,
+        busy_timeout_ms: int = 5000,
+    ) -> SQLiteJobRepository:
+        connection = connect(path, busy_timeout_ms=busy_timeout_ms)
         initialize_schema(connection)
         return cls(connection)
 
@@ -70,9 +115,84 @@ class SQLiteJobRepository:
         with self._lock:
             self._connection.close()
 
-    def create_job(self, job: Job) -> Job:
+    def configure_concurrency(self, *, busy_timeout_ms: int = 5000) -> None:
+        """Apply canonical SQLite settings to an opened repository."""
+
+        timeout_ms = max(0, min(int(busy_timeout_ms), 60_000))
         with self._lock:
-            self._connection.execute(
+            self._connection.execute("PRAGMA foreign_keys = ON")
+            self._connection.execute(f"PRAGMA busy_timeout = {timeout_ms}")
+            self._connection.execute("PRAGMA synchronous = NORMAL")
+            self._connection.execute("PRAGMA temp_store = MEMORY")
+            # WAL is unavailable for pure in-memory databases and harmlessly
+            # remains ``memory`` there. File-backed databases use WAL.
+            self._connection.execute("PRAGMA journal_mode = WAL")
+
+    @property
+    def in_transaction(self) -> bool:
+        """Return whether the underlying connection currently owns a transaction."""
+
+        with self._lock:
+            return self._connection.in_transaction
+
+    def read_one(self, sql: str, parameters: Sequence[Any] = ()) -> sqlite3.Row | None:
+        """Execute one read under the repository lock."""
+
+        with self._lock:
+            return self._connection.execute(sql, tuple(parameters)).fetchone()
+
+    def read_all(self, sql: str, parameters: Sequence[Any] = ()) -> list[sqlite3.Row]:
+        """Execute a read and return a detached row list."""
+
+        with self._lock:
+            return list(self._connection.execute(sql, tuple(parameters)).fetchall())
+
+    def execute_write(self, sql: str, parameters: Sequence[Any] = ()) -> int:
+        """Execute one write, committing only when not inside a transaction."""
+
+        with self._lock:
+            was_in_transaction = self._connection.in_transaction
+            cursor = self._connection.execute(sql, tuple(parameters))
+            if not was_in_transaction:
+                self._connection.commit()
+            return int(cursor.rowcount)
+
+    def execute_script(self, sql_script: str) -> None:
+        """Execute a schema script and commit it atomically."""
+
+        with self._lock:
+            self._connection.executescript(sql_script)
+            self._connection.commit()
+
+    @contextmanager
+    def transaction(self, *, immediate: bool = False) -> Iterator[SQLiteTransaction]:
+        """Run an atomic block with savepoint-backed nested transaction support."""
+
+        with self._lock:
+            nested = self._connection.in_transaction
+            savepoint = f"djobs_sp_{next(self._savepoint_counter)}" if nested else None
+            if savepoint is not None:
+                self._connection.execute(f"SAVEPOINT {savepoint}")
+            else:
+                self._connection.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
+            try:
+                yield SQLiteTransaction(self._connection)
+            except Exception:
+                if savepoint is not None:
+                    self._connection.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                    self._connection.execute(f"RELEASE SAVEPOINT {savepoint}")
+                else:
+                    self._connection.rollback()
+                raise
+            else:
+                if savepoint is not None:
+                    self._connection.execute(f"RELEASE SAVEPOINT {savepoint}")
+                else:
+                    self._connection.commit()
+
+    def create_job(self, job: Job) -> Job:
+        with self.transaction(immediate=True) as transaction:
+            transaction.execute(
                 """
                 INSERT INTO jobs (
                     id, type, payload_json, status, attempt, max_attempts,
@@ -84,13 +204,13 @@ class SQLiteJobRepository:
                 """,
                 _job_to_params(job),
             )
-            self._append_event(
+            self.append_event_in_transaction(
+                transaction,
                 job.id,
                 "job_created",
                 metadata={"job_type": job.type, "correlation_id": job.correlation_id},
             )
-            self._connection.commit()
-            return job
+        return job
 
     def get_job(self, job_id: str) -> Job | None:
         with self._lock:
@@ -720,20 +840,23 @@ class SQLiteJobRepository:
     # Internal helpers (called within lock)
     # ------------------------------------------------------------------
 
-    def _append_event(
+    def append_event_in_transaction(
         self,
+        transaction: SQLiteTransaction,
         job_id: str,
         event_type: str,
         message: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> JobEvent:
+        """Append an event inside a caller-owned repository transaction."""
+
         event = JobEvent(
             job_id=job_id,
             event_type=event_type,
             message=message,
             metadata=metadata or {},
         )
-        self._connection.execute(
+        transaction.execute(
             """
             INSERT INTO job_events
                 (id, job_id, event_type, message, metadata_json, created_at)
@@ -749,6 +872,21 @@ class SQLiteJobRepository:
             ),
         )
         return event
+
+    def _append_event(
+        self,
+        job_id: str,
+        event_type: str,
+        message: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> JobEvent:
+        return self.append_event_in_transaction(
+            SQLiteTransaction(self._connection),
+            job_id,
+            event_type,
+            message,
+            metadata,
+        )
 
     def _update_status(
         self,

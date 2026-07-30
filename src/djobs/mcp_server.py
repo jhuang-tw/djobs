@@ -32,12 +32,13 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from djobs.cli import build_work_receipt
+from djobs.commands.receipt import build_work_receipt
 from djobs.core.constants import STALE_AFTER_DAYS
 from djobs.core.correlation import correlation_id_variants
 from djobs.core.models import Agent, Job, _new_id
 from djobs.core.pause import is_paused
 from djobs.queue.service import QueueService
+from djobs.storage.reporting import reporting_repository
 from djobs.storage.sqlite import SQLiteJobRepository
 
 # ---------------------------------------------------------------------------
@@ -725,38 +726,14 @@ def audit_log(
     if until_dt.tzinfo is None:
         until_dt = until_dt.replace(tzinfo=timezone.utc)
 
-    where_clauses = ["e.created_at >= ?", "e.created_at <= ?"]
-    params: list[Any] = [since_dt.isoformat(), until_dt.isoformat()]
-    if correlation_id:
-        where_clauses.append("j.correlation_id = ?")
-        params.append(correlation_id)
-    if event_type:
-        where_clauses.append("e.event_type = ?")
-        params.append(event_type)
-
-    where_sql = " AND ".join(where_clauses)
-    base_sql = f"""
-        SELECT
-            e.id AS event_id,
-            e.job_id AS job_id,
-            e.event_type AS event_type,
-            e.message AS message,
-            e.created_at AS event_at,
-            j.type AS task_type,
-            j.status AS job_status,
-            j.correlation_id AS correlation_id,
-            j.created_at AS job_created_at,
-            j.updated_at AS job_updated_at
-        FROM job_events e
-        JOIN jobs j ON e.job_id = j.id
-        WHERE {where_sql}
-        ORDER BY e.created_at DESC
-        LIMIT ?
-    """
-
     scan_limit = max(limit, 5000) if summary else limit
-    with repo._lock:
-        rows = repo._connection.execute(base_sql, (*params, scan_limit)).fetchall()
+    rows = reporting_repository(repo).audit_rows(
+        since=since_dt.isoformat(),
+        until=until_dt.isoformat(),
+        correlation_id=correlation_id,
+        event_type=event_type,
+        limit=scan_limit,
+    )
 
     if not summary:
         events_out = [

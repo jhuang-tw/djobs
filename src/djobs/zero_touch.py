@@ -158,6 +158,13 @@ def bootstrap_first_call(
                 hooks=hook_status,
             )
         except Exception as exc:
+            from djobs.diagnostics import record_shared_failure
+
+            record_shared_failure(
+                "zero_touch.bootstrap",
+                exc,
+                context={"host": host or "unknown", "database": str(database)},
+            )
             result = BootstrapResult(
                 status="degraded",
                 host=host,

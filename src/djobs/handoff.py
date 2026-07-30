@@ -9,12 +9,14 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from djobs.diagnostics import record_shared_failure
 from djobs.mcp_server import configure
 from djobs.observations import (
     capture_repository_snapshot,
     recent_observations,
     search_observations,
 )
+from djobs.storage.workspace import workspace_repository
 from djobs.workspace import (
     AgentSession,
     Workspace,
@@ -62,9 +64,7 @@ def _resolve(
     )
     queue = configure(str(shared_db_path()))
     repo: Any = queue._repository
-    with repo._lock:
-        repo._connection.execute("PRAGMA journal_mode = WAL")
-        repo._connection.execute("PRAGMA busy_timeout = 5000")
+    workspace_repository(repo).configure_runtime()
     queue.register_agent(
         agent.agent_id,
         capabilities=["coding", "checkpoint", "handoff"],
@@ -83,31 +83,17 @@ def ensure_shared_queue() -> Any:
 
     queue = configure(str(shared_db_path()))
     repo: Any = queue._repository
-    with repo._lock:
-        repo._connection.execute("PRAGMA journal_mode = WAL")
-        repo._connection.execute("PRAGMA busy_timeout = 5000")
+    workspace_repository(repo).configure_runtime()
     return queue
-
-
-def _scope_sql(workspace: Workspace) -> tuple[str, tuple[str, ...]]:
-    placeholders = ",".join("?" for _ in workspace.correlation_ids)
-    return placeholders, workspace.correlation_ids
 
 
 def _recover(queue: Any, repo: Any) -> None:
     try:
         queue.recover_expired_leases()
         queue.reap_stale_agents()
-        with repo._lock:
-            repo._connection.execute(
-                "UPDATE jobs SET status = 'pending', updated_at = ? "
-                "WHERE status = 'retry_scheduled' AND run_after IS NULL "
-                "AND leased_by IS NULL",
-                (datetime.now(timezone.utc).isoformat(),),
-            )
-            repo._connection.commit()
-    except Exception:
-        return
+        workspace_repository(repo).recover_null_retries(updated_at=datetime.now(timezone.utc))
+    except Exception as exc:
+        record_shared_failure("handoff.recovery", exc)
 
 
 def _compact_row(row: Any, current_agent: str) -> dict[str, Any]:
@@ -187,7 +173,7 @@ def _resume_view(observations: list[dict[str, Any]]) -> dict[str, Any]:
             if item.get("event") == "tool_failure" and str(item.get("summary", "")).strip()
         ][:2]
 
-    constraints: list[str] = []
+    constraints = [str(item) for item in capsule.get("constraints", []) if str(item).strip()]
     for item in observations:
         if item.get("event") != "user_intent":
             continue
@@ -230,6 +216,8 @@ def _evidence_observation(item: dict[str, Any]) -> dict[str, Any]:
         "branch",
         "affected_files",
         "score",
+        "matched_by",
+        "provenance",
     )
     return {key: item[key] for key in fields if item.get(key) not in (None, "", [])}
 
@@ -380,41 +368,18 @@ def sync_workspace(
             if query and query.strip()
             else recent_observations(repo, workspace, limit=max_items)
         )
-        placeholders, params = _scope_sql(workspace)
         limit = max(1, min(int(max_items), 20))
-        with repo._lock:
-            rows = repo._connection.execute(
-                f"""
-                SELECT j.id, j.type, j.status, j.payload_json, j.last_error,
-                       j.leased_by, j.lease_expires_at,
-                       (SELECT e.message FROM job_events e
-                        WHERE e.job_id = j.id
-                          AND e.event_type IN ('job_succeeded', 'job_released', 'handoff_recorded')
-                        ORDER BY e.created_at DESC LIMIT 1) AS evidence
-                FROM jobs j
-                WHERE j.correlation_id IN ({placeholders})
-                  AND j.status IN (?, ?, ?, ?, ?)
-                ORDER BY CASE j.status
-                    WHEN 'running' THEN 0 WHEN 'pending' THEN 1
-                    WHEN 'retry_scheduled' THEN 2 ELSE 3 END,
-                    j.updated_at DESC
-                LIMIT ?
-                """,
-                (*params, *_ACTIVE, *_FAILED, limit * 3),
-            ).fetchall()
-            completed = repo._connection.execute(
-                f"""
-                SELECT j.id, j.type, j.status, j.payload_json, j.last_error,
-                       j.leased_by, j.lease_expires_at,
-                       (SELECT e.message FROM job_events e
-                        WHERE e.job_id = j.id AND e.event_type = 'job_succeeded'
-                        ORDER BY e.created_at DESC LIMIT 1) AS evidence
-                FROM jobs j
-                WHERE j.correlation_id IN ({placeholders}) AND j.status = 'succeeded'
-                ORDER BY j.updated_at DESC LIMIT 3
-                """,
-                params,
-            ).fetchall()
+        task_store = workspace_repository(repo)
+        rows = task_store.task_rows(
+            correlation_ids=workspace.correlation_ids,
+            statuses=(*_ACTIVE, *_FAILED),
+            limit=limit * 3,
+            evidence_events=("job_succeeded", "job_released", "handoff_recorded"),
+        )
+        completed = task_store.completed_rows(
+            correlation_ids=workspace.correlation_ids,
+            limit=3,
+        )
 
         active = [_compact_row(row, agent.agent_id) for row in rows if row["status"] in _ACTIVE]
         failed = [_compact_row(row, agent.agent_id) for row in rows if row["status"] in _FAILED]
@@ -463,6 +428,7 @@ def sync_workspace(
         _apply_context_tier(result, observations[:limit], tier)
         return _bounded(result, token_budget)
     except Exception as exc:
+        record_shared_failure("handoff.sync_workspace", exc)
         return _dumps(
             {
                 "ok": False,
@@ -477,67 +443,13 @@ def _claim_exact(
     task_id: str,
     agent: AgentSession,
     lease_seconds: int,
-) -> tuple[str, Any]:
-    now = datetime.now(timezone.utc)
-    expires = now + timedelta(seconds=max(10, min(lease_seconds, 3600)))
-    with repo._lock:
-        cursor = repo._connection.cursor()
-        try:
-            cursor.execute("BEGIN IMMEDIATE")
-            row = cursor.execute("SELECT * FROM jobs WHERE id = ?", (task_id,)).fetchone()
-            if row is None:
-                repo._connection.rollback()
-                return "missing", None
-            if row["status"] == "running":
-                repo._connection.commit()
-                return ("owned" if row["leased_by"] == agent.agent_id else "occupied"), row
-            if row["status"] != "pending":
-                repo._connection.commit()
-                return row["status"], row
-            if row["resource_key"] is not None:
-                holder = cursor.execute(
-                    "SELECT leased_by FROM jobs "
-                    "WHERE status = 'running' AND resource_key = ? AND id != ? LIMIT 1",
-                    (row["resource_key"], task_id),
-                ).fetchone()
-                if holder is not None:
-                    repo._connection.commit()
-                    return "occupied", holder
-            cursor.execute(
-                """
-                UPDATE jobs SET status = 'running', attempt = attempt + 1,
-                    leased_by = ?, lease_expires_at = ?, heartbeat_at = ?,
-                    started_at = COALESCE(started_at, ?), updated_at = ?
-                WHERE id = ? AND status = 'pending'
-                """,
-                (
-                    agent.agent_id,
-                    expires.isoformat(),
-                    now.isoformat(),
-                    now.isoformat(),
-                    now.isoformat(),
-                    task_id,
-                ),
-            )
-            if cursor.rowcount != 1:
-                repo._connection.rollback()
-                return "occupied", None
-            repo._append_event(
-                task_id,
-                "job_claimed",
-                metadata={
-                    "worker_id": agent.agent_id,
-                    "agent_type": agent.agent_type,
-                    "lease_expires_at": expires.isoformat(),
-                },
-            )
-            repo._connection.commit()
-            return "claimed", repo._connection.execute(
-                "SELECT * FROM jobs WHERE id = ?", (task_id,)
-            ).fetchone()
-        except Exception:
-            repo._connection.rollback()
-            raise
+) -> tuple[str, dict[str, Any] | None]:
+    return workspace_repository(repo).claim_exact(
+        task_id=task_id,
+        agent_id=agent.agent_id,
+        agent_type=agent.agent_type,
+        lease_seconds=lease_seconds,
+    )
 
 
 def checkpoint(
@@ -600,6 +512,7 @@ def checkpoint(
             result.update({"owner": owner, "continue_coding": True})
         return _dumps(result)
     except Exception as exc:
+        record_shared_failure("handoff.checkpoint", exc)
         return _dumps({"ok": False, "continue_coding": True, "error": _clean_text(str(exc), 160)})
 
 
@@ -622,12 +535,10 @@ def handoff(
             agent_type=agent_type,
             session_id=session_id,
         )
-        placeholders, params = _scope_sql(workspace)
-        with repo._lock:
-            row = repo._connection.execute(
-                f"SELECT * FROM jobs WHERE id = ? AND correlation_id IN ({placeholders})",
-                (task_id, *params),
-            ).fetchone()
+        row = workspace_repository(repo).scoped_job(
+            task_id=task_id,
+            correlation_ids=workspace.correlation_ids,
+        )
         if row is None:
             return _dumps(
                 {
@@ -661,14 +572,13 @@ def handoff(
                 )
             job = queue.release(task_id, agent.agent_id, reason=note or "Handed off")
             return _dumps({"ok": True, "task_id": task_id, "state": job.status.value})
-        with repo._lock:
-            repo._append_event(
-                task_id,
-                "handoff_recorded",
-                message=note or "Handed off",
-                metadata={"agent_type": agent.agent_type, "stored_as_data": True},
-            )
-            repo._connection.commit()
+        repo.append_event(
+            task_id,
+            "handoff_recorded",
+            message=note or "Handed off",
+            metadata={"agent_type": agent.agent_type, "stored_as_data": True},
+        )
         return _dumps({"ok": True, "task_id": task_id, "state": row["status"]})
     except Exception as exc:
+        record_shared_failure("handoff.handoff", exc)
         return _dumps({"ok": False, "continue_coding": True, "error": _clean_text(str(exc), 160)})

@@ -396,6 +396,43 @@ def test_prompt_context_reads_history_before_storing_current_prompt(
     assert current_prompt in {row["summary"] for row in stored}
 
 
+def test_fail_open_tool_capture_records_bounded_diagnostic(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sqlite3
+
+    root = _git_repo(tmp_path / "project")
+    database = tmp_path / "shared.db"
+    _repository, queue = _queue(database)
+    monkeypatch.setattr(handoff, "configure", lambda _path: queue)
+    monkeypatch.setenv("DJOBS_DB", str(database))
+
+    def fail_record(*_args, **_kwargs):
+        raise sqlite3.OperationalError("database is locked with TOKEN=secret-value")
+
+    monkeypatch.setattr(lifecycle, "record_observation", fail_record)
+
+    result = lifecycle.post_tool_use(
+        {
+            "cwd": str(root),
+            "session_id": "locked",
+            "tool_name": "edit",
+            "tool_response": {"success": True},
+        },
+        agent_type="copilot",
+    )
+
+    assert result == {}
+    from djobs.diagnostics import list_diagnostics
+
+    diagnostic_repo = SQLiteJobRepository.from_path(database)
+    diagnostics = list_diagnostics(diagnostic_repo)
+    diagnostic_repo.close()
+    assert any(item["component"] == "lifecycle.tool_observation" for item in diagnostics)
+    assert "secret-value" not in json.dumps(diagnostics)
+
+
 def test_large_session_capsule_keeps_structured_fields(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -445,10 +482,12 @@ def test_large_session_capsule_keeps_structured_fields(
     metadata = json.loads(row["metadata_json"])
 
     assert len(row["metadata_json"]) <= observations._MAX_CAPSULE_METADATA
-    assert metadata["capsule_schema"] == 1
+    assert metadata["capsule_schema"] == 2
     assert isinstance(metadata["goal"], str) and metadata["goal"]
     assert isinstance(metadata["progress"], list)
     assert isinstance(metadata["failures"], list)
     assert "next" in metadata
     assert isinstance(metadata["source_event_ids"], list)
+    assert metadata["provenance"]["goal"]["source"] == "user_intent"
+    assert metadata["provenance"]["next"]["advisory"] is True
     assert metadata["truncated_fields"]

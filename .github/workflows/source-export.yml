@@ -1,0 +1,51 @@
+name: Source Export
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: vscode-ext/package-lock.json
+      - name: Archive source tree
+        run: git archive --format=zip --output=source-tree.zip HEAD
+      - name: Build offline wheelhouse
+        run: |
+          python -m pip download --dest wheelhouse ".[dev,pg]"
+          python -m pip download --dest wheelhouse hatchling
+      - name: Build extension dependencies
+        working-directory: vscode-ext
+        run: npm ci
+      - name: Archive extension dependencies
+        run: tar -czf vscode-node-modules.tgz -C vscode-ext node_modules
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-tree
+          path: source-tree.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheelhouse-py313
+          path: wheelhouse/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vscode-node-modules
+          path: vscode-node-modules.tgz
+          if-no-files-found: error

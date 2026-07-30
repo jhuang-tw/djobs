@@ -38,7 +38,10 @@ _server = FastMCP(
 async def _roots(context: Context) -> list[Any]:
     try:
         response = await context.session.list_roots()
-    except Exception:
+    except Exception as exc:
+        from djobs.diagnostics import record_shared_failure
+
+        record_shared_failure("coding_mcp.list_roots", exc)
         return []
     roots = getattr(response, "roots", response)
     return list(roots) if roots is not None else []
@@ -95,7 +98,15 @@ def _refresh_budget_estimate(result: dict[str, Any]) -> None:
 def _source_view(item: dict[str, Any]) -> dict[str, Any]:
     """Return a compact, user-readable provenance item for a resume conclusion."""
 
-    fields = ("event", "summary", "status", "commit_sha", "branch", "score")
+    fields = (
+        "event",
+        "summary",
+        "status",
+        "commit_sha",
+        "branch",
+        "score",
+        "matched_by",
+    )
     return {key: item[key] for key in fields if item.get(key) not in (None, "", [])}
 
 

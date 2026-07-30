@@ -26,6 +26,7 @@ from djobs.mcp_server import (
     _correlation_id_variants,
     _job_to_dict,
 )
+from djobs.storage.reporting import reporting_repository
 
 _INCOMPLETE_STATUSES = ("pending", "running", "retry_scheduled")
 _COMPLETED_STATUSES = {"succeeded", "archived"}
@@ -69,34 +70,11 @@ def _workspace_events(
 ) -> tuple[int, list[dict[str, Any]]]:
     """Return workspace head revision and ordered events after ``since_revision``."""
 
-    if not correlation_ids:
-        return 0, []
-    placeholders = ",".join("?" for _ in correlation_ids)
-    with repo._lock:
-        head_row = repo._connection.execute(
-            f"""
-            SELECT COALESCE(MAX(revision), 0) AS revision
-            FROM context_revisions
-            WHERE correlation_id IN ({placeholders})
-            """,
-            tuple(correlation_ids),
-        ).fetchone()
-        head_revision = int(head_row["revision"] if head_row else 0)
-        rows = repo._connection.execute(
-            f"""
-            SELECT
-                revision, job_id, task_type, event_type, status, payload_json,
-                attempt, max_attempts, last_error, run_after, depends_on_json,
-                resource_key
-            FROM context_revisions
-            WHERE correlation_id IN ({placeholders})
-              AND revision > ?
-            ORDER BY revision ASC
-            LIMIT ?
-            """,
-            (*correlation_ids, since_revision, _MAX_DELTA_EVENTS),
-        ).fetchall()
-    return head_revision, [dict(row) for row in rows]
+    return reporting_repository(repo).workspace_events(
+        tuple(correlation_ids),
+        since_revision,
+        limit=_MAX_DELTA_EVENTS,
+    )
 
 
 def _change_kind(task: dict[str, Any], event_types: set[str]) -> str:
@@ -218,25 +196,19 @@ def resume_delta(
     queue = _get_queue()
     repo: Any = queue._repository
     if not all(
-        hasattr(repo, name) for name in ("_connection", "_lock", "list_jobs_by_correlation_ids")
+        hasattr(repo, name)
+        for name in ("transaction", "read_one", "read_all", "list_jobs_by_correlation_ids")
     ):
         return _dumps({"error": "resume_delta requires SQLite backend"})
 
     correlation_ids = _correlation_id_variants(correlation_id)
-    with repo._lock:
-        began_snapshot = not repo._connection.in_transaction
-        if began_snapshot:
-            repo._connection.execute("BEGIN")
-        try:
-            all_jobs = repo.list_jobs_by_correlation_ids(correlation_ids)
-            head_revision, events = _workspace_events(repo, correlation_ids, since_revision)
-            reset_required = since_revision > head_revision
-            effective_since = 0 if reset_required else since_revision
-            if reset_required:
-                head_revision, events = _workspace_events(repo, correlation_ids, effective_since)
-        finally:
-            if began_snapshot:
-                repo._connection.rollback()
+    with repo.transaction():
+        all_jobs = repo.list_jobs_by_correlation_ids(correlation_ids)
+        head_revision, events = _workspace_events(repo, correlation_ids, since_revision)
+        reset_required = since_revision > head_revision
+        effective_since = 0 if reset_required else since_revision
+        if reset_required:
+            head_revision, events = _workspace_events(repo, correlation_ids, effective_since)
 
     all_tasks = [_job_to_dict(job) for job in all_jobs]
     active_tasks = [task for task in all_tasks if task.get("status") in _INCOMPLETE_STATUSES]

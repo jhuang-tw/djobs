@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from djobs.core.correlation import correlation_id_variants
+from djobs.storage.reporting import reporting_repository
 from djobs.storage.sqlite import SQLiteJobRepository
 
 DEFAULT_CHARS_PER_TOKEN = 4.0
@@ -87,15 +88,7 @@ def _payload_summary(job_type: str, payload: dict[str, Any]) -> str:
 
 
 def _latest_success_events(repo: SQLiteJobRepository) -> dict[str, dict[str, Any]]:
-    with repo._lock:
-        rows = repo._connection.execute(
-            """
-            SELECT job_id, message, metadata_json, created_at
-            FROM job_events
-            WHERE event_type = 'job_succeeded'
-            ORDER BY created_at ASC, rowid ASC
-            """
-        ).fetchall()
+    rows = reporting_repository(repo).latest_success_events()
 
     result: dict[str, dict[str, Any]] = {}
     for row in rows:
@@ -118,27 +111,8 @@ def _query_jobs(
     repo: SQLiteJobRepository,
     correlation_id: str | None,
 ) -> list[Any]:
-    columns = (
-        "id, type, status, payload_json, correlation_id, last_error, "
-        "attempt, max_attempts, started_at, created_at, updated_at"
-    )
-    with repo._lock:
-        if correlation_id is None:
-            return list(
-                repo._connection.execute(
-                    f"SELECT {columns} FROM jobs ORDER BY created_at ASC, rowid ASC"
-                ).fetchall()
-            )
-        variants = correlation_id_variants(correlation_id)
-        placeholders = ",".join("?" for _ in variants)
-        return list(
-            repo._connection.execute(
-                f"SELECT {columns} FROM jobs "
-                f"WHERE correlation_id IN ({placeholders}) "
-                "ORDER BY created_at ASC, rowid ASC",
-                tuple(variants),
-            ).fetchall()
-        )
+    variants = () if correlation_id is None else tuple(correlation_id_variants(correlation_id))
+    return reporting_repository(repo).gain_job_rows(variants)
 
 
 def _record_from_row(

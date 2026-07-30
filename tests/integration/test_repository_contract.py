@@ -6,6 +6,8 @@ SQLite runs in-process; PostgreSQL is skipped if unavailable.
 
 from __future__ import annotations
 
+import json
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -76,7 +78,10 @@ def _pg_factory(_tmp_path):
     conn.commit()
     # Truncate for a clean slate
     with conn.cursor() as cur:
-        cur.execute("TRUNCATE job_events, jobs CASCADE")
+        cur.execute(
+            "TRUNCATE djobs_diagnostics, agent_observations, repository_snapshots, "
+            "context_revisions, agents, job_events, jobs CASCADE"
+        )
     conn.commit()
     return PostgresJobRepository(conn)
 
@@ -283,3 +288,169 @@ def test_events_recorded(repo) -> None:
     events = repo.list_events(job.id)
     types = [e.event_type for e in events]
     assert types == ["job_created", "job_claimed", "job_succeeded"]
+
+
+def test_passive_memory_adapter_contract(repo) -> None:
+    from djobs.storage.memory import memory_repository
+
+    adapter = memory_repository(repo)
+    scope = "contract-memory"
+    now = datetime.now(timezone.utc).isoformat()
+
+    def observation(memory_id: str, summary: str) -> dict[str, object]:
+        return {
+            "id": memory_id,
+            "correlation_id": scope,
+            "agent_type": "contract",
+            "session_id_hash": "session",
+            "event_type": "tool_result",
+            "tool_name": "edit",
+            "summary": summary,
+            "metadata_json": json.dumps({"memory_status": "active"}),
+            "created_at": now,
+        }
+
+    first_id = uuid.uuid4().hex
+    second_id = uuid.uuid4().hex
+    assert (
+        adapter.insert_observation(
+            observation(first_id, "same result"),
+            marker_event="context_injected",
+            max_observations=100,
+            max_markers=20,
+        )
+        == first_id
+    )
+    adapter.insert_observation(
+        observation(second_id, "same result"),
+        marker_event="context_injected",
+        max_observations=100,
+        max_markers=20,
+    )
+
+    unique_id = uuid.uuid4().hex
+    unique = observation(unique_id, "unique result")
+    assert (
+        adapter.insert_unique_observation(
+            unique,
+            scopes=(scope,),
+            marker_event="context_injected",
+            max_observations=100,
+            max_markers=20,
+        )
+        is True
+    )
+    duplicate_unique = observation(uuid.uuid4().hex, "unique result")
+    assert (
+        adapter.insert_unique_observation(
+            duplicate_unique,
+            scopes=(scope,),
+            marker_event="context_injected",
+            max_observations=100,
+            max_markers=20,
+        )
+        is False
+    )
+    assert adapter.observation_metadata(memory_id=unique_id, scopes=(scope,)) is not None
+    assert (
+        adapter.update_observation_metadata(
+            memory_id=unique_id,
+            metadata_json=json.dumps({"memory_status": "resolved"}),
+        )
+        is True
+    )
+    session = adapter.session_rows(scopes=(scope,), session_hash="session", limit=10)
+    assert any(str(row["id"]) == unique_id for row in session)
+    assert adapter.forget(memory_id=unique_id, scopes=(scope,)) is True
+
+    assert (
+        adapter.upsert_snapshot(
+            checkout_id="checkout-contract",
+            digest="first",
+            summary="first snapshot",
+            updated_at=now,
+            observation=None,
+            record_initial=False,
+            marker_event="context_injected",
+            max_observations=100,
+            max_markers=20,
+        )
+        is False
+    )
+    assert (
+        adapter.upsert_snapshot(
+            checkout_id="checkout-contract",
+            digest="second",
+            summary="second snapshot",
+            updated_at=now,
+            observation=None,
+            record_initial=False,
+            marker_event="context_injected",
+            max_observations=100,
+            max_markers=20,
+        )
+        is True
+    )
+
+    rows = adapter.recent_rows(scopes=(scope,), marker_event="context_injected", limit=10)
+    assert {str(row["id"]) for row in rows} == {first_id, second_id}
+    assert adapter.stats(scopes=(scope,))["total"] == 2
+    preview = adapter.compact(scopes=(scope,), keep_recent=1, dry_run=True)
+    applied = adapter.compact(scopes=(scope,), keep_recent=1, dry_run=False)
+    assert preview["duplicates"] == 1
+    assert applied == preview
+    assert (
+        len(adapter.recent_rows(scopes=(scope,), marker_event="context_injected", limit=10)) == 1
+    )
+
+
+def test_diagnostics_adapter_contract(repo) -> None:
+    from djobs.storage.diagnostics import clear, list_recent, record
+
+    record(
+        repo,
+        component="contract.component",
+        error_type="ContractError",
+        message="redacted fixture",
+        context={"phase": "first"},
+    )
+    record(
+        repo,
+        component="contract.component",
+        error_type="ContractError",
+        message="redacted fixture",
+        context={"phase": "second"},
+    )
+
+    rows = list_recent(repo, limit=10)
+    assert len(rows) == 1
+    assert rows[0]["occurrence_count"] == 2
+    assert rows[0]["context"] == {"phase": "second"}
+    assert clear(repo) == 1
+    assert list_recent(repo, limit=10) == []
+
+
+def test_workspace_adapter_explicit_claim_contract(repo) -> None:
+    from djobs.storage.workspace import workspace_repository
+
+    task = Job(type="coding-checkpoint", correlation_id="contract-workspace")
+    repo.create_job(task)
+    adapter = workspace_repository(repo)
+
+    state, claimed = adapter.claim_exact(
+        task_id=task.id,
+        agent_id="agent-contract",
+        agent_type="contract",
+        lease_seconds=120,
+    )
+
+    assert state == "claimed"
+    assert claimed is not None
+    assert claimed["status"] == "running"
+    assert claimed["leased_by"] == "agent-contract"
+    owned = adapter.owned_rows(
+        correlation_ids=("contract-workspace",),
+        job_types=("coding-checkpoint",),
+        agent_id="agent-contract",
+    )
+    assert [str(row["id"]) for row in owned] == [task.id]

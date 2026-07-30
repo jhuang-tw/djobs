@@ -14,6 +14,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from djobs.commands.diagnostics import run as _run_diagnostics
+from djobs.commands.privacy import run as _run_privacy
+from djobs.commands.storage import run as _run_storage
+
 _LEGACY_PROJECT_HOOK = Path(".github/hooks/djobs.json")
 
 _ZERO_CONFIG_INSTRUCTIONS_BODY = """
@@ -38,7 +42,10 @@ _PUBLIC_COMMANDS: tuple[tuple[str, str], ...] = (
     ("repair", "Repair a djobs-managed host integration without changing unrelated settings"),
     ("remove", "Remove djobs-managed host integration while preserving unrelated settings"),
     ("doctor", "Check local storage and agent integration, with actionable next steps"),
+    ("diagnostics", "Inspect or clear bounded fail-open errors"),
     ("memory", "List, search, retire, forget, or clear repository memory"),
+    ("storage", "Check integrity, create backups, or compact passive memory"),
+    ("privacy", "Scan local files or test redaction without exposing secrets"),
     ("gain", "Show local recovery savings and verified-task efficiency"),
     ("pause", "Temporarily stop automatic recovery and capture"),
     ("unpause", "Resume automatic recovery and capture"),
@@ -283,6 +290,31 @@ def _doctor_payload() -> dict[str, Any]:
         }
     )
 
+    if db_ok:
+        from djobs.diagnostics import list_diagnostics
+        from djobs.storage.sqlite import SQLiteJobRepository
+
+        diagnostic_repo = SQLiteJobRepository.from_path(database)
+        try:
+            diagnostic_items = list_diagnostics(diagnostic_repo, limit=10)
+        finally:
+            diagnostic_repo.close()
+        checks.append(
+            {
+                "name": "fail-open diagnostics",
+                "ok": not diagnostic_items,
+                "level": "warning" if diagnostic_items else "info",
+                "detail": (
+                    f"{len(diagnostic_items)} recent deduplicated error(s)"
+                    if diagnostic_items
+                    else "none recorded"
+                ),
+                "next_step": (
+                    "Run 'djobs diagnostics' for details." if diagnostic_items else None
+                ),
+            }
+        )
+
     project_mcp = Path(".vscode/mcp.json")
     if project_mcp.exists():
         try:
@@ -480,10 +512,19 @@ def main() -> None:
     if command == "doctor":
         raise SystemExit(_run_doctor(rest))
 
+    if command == "diagnostics":
+        raise SystemExit(_run_diagnostics(rest))
+
     if command == "memory":
         from djobs.memory import main as run_memory_cli
 
         raise SystemExit(run_memory_cli(rest))
+
+    if command == "storage":
+        raise SystemExit(_run_storage(rest))
+
+    if command == "privacy":
+        raise SystemExit(_run_privacy(rest))
 
     if command in {"gain", "stats", "state"}:
         if command != "gain":

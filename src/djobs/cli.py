@@ -28,9 +28,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from djobs.commands.receipt import build_work_receipt
 from djobs.core.constants import STALE_AFTER_DAYS
 from djobs.core.correlation import correlation_id_variants
 from djobs.core.pause import is_paused, set_paused
+from djobs.storage.reporting import reporting_repository
 
 Handler = Callable[[dict[str, Any]], Any]
 
@@ -323,17 +325,8 @@ def _latest_evidence_by_job(repo: Any) -> dict[str, str | None]:
     the latest message per job (``None`` when that completion had no evidence).
     """
     evidence: dict[str, str | None] = {}
-    with repo._lock:
-        rows = repo._connection.execute(
-            """
-            SELECT job_id, message
-            FROM job_events
-            WHERE event_type = 'job_succeeded'
-            ORDER BY created_at DESC
-            """
-        ).fetchall()
-    for row in rows:
-        evidence.setdefault(row["job_id"], row["message"])
+    for row in reporting_repository(repo).latest_success_evidence():
+        evidence.setdefault(str(row["job_id"]), row.get("message"))
     return evidence
 
 
@@ -353,26 +346,10 @@ def _cmd_status(args: argparse.Namespace) -> None:
     evidence_by_job = _latest_evidence_by_job(repo)
 
     tasks: list[dict[str, Any]] = []
-    with repo._lock:
-        if args.correlation_id:
-            cids = _correlation_id_variants(args.correlation_id)
-            cid_ph = ",".join("?" for _ in cids)
-            rows = repo._connection.execute(
-                "SELECT id, type, status, payload_json, correlation_id, "
-                "created_at, updated_at, attempt, max_attempts, last_error, "
-                "depends_on_json "
-                f"FROM jobs WHERE correlation_id IN ({cid_ph}) AND status != ? "
-                "ORDER BY rowid ASC",
-                (*cids, "archived"),
-            ).fetchall()
-        else:
-            rows = repo._connection.execute(
-                "SELECT id, type, status, payload_json, correlation_id, "
-                "created_at, updated_at, attempt, max_attempts, last_error, "
-                "depends_on_json "
-                "FROM jobs WHERE status != ? ORDER BY rowid ASC",
-                ("archived",),
-            ).fetchall()
+    correlation_ids = (
+        tuple(_correlation_id_variants(args.correlation_id)) if args.correlation_id else ()
+    )
+    rows = reporting_repository(repo).status_rows(correlation_ids)
     for row in rows:
         item = dict(row)
         item["evidence"] = evidence_by_job.get(item["id"])
@@ -452,24 +429,13 @@ def _cmd_accept_before(args: argparse.Namespace) -> None:
     repo = SQLiteJobRepository.from_path(args.db)
     queue = QueueService(repo)
 
-    with repo._lock:
-        target = repo._connection.execute(
-            "SELECT rowid, correlation_id FROM jobs WHERE id = ?",
-            (args.job_id,),
-        ).fetchone()
-        if target is None:
-            raise SystemExit(f"Job not found: {args.job_id}")
-        # Use the monotonic rowid (strict insertion order) rather than created_at,
-        # which can collide for jobs created within the same clock tick.
-        rows = repo._connection.execute(
-            """
-            SELECT id, status FROM jobs
-            WHERE correlation_id = ?
-              AND rowid < ?
-            ORDER BY rowid ASC
-            """,
-            (target["correlation_id"], target["rowid"]),
-        ).fetchall()
+    reporting = reporting_repository(repo)
+    target = reporting.task_position(args.job_id)
+    if target is None:
+        raise SystemExit(f"Job not found: {args.job_id}")
+    # Use the monotonic rowid (strict insertion order) rather than created_at,
+    # which can collide for jobs created within the same clock tick.
+    rows = reporting.jobs_before(str(target["correlation_id"]), int(target["rowid"]))
 
     accepted_ids: list[str] = []
     for row in rows:
@@ -491,19 +457,10 @@ def _cmd_archive_workflow(args: argparse.Namespace) -> None:
     repo = SQLiteJobRepository.from_path(args.db)
     queue = QueueService(repo)
 
-    with repo._lock:
-        if args.correlation_id:
-            cids = _correlation_id_variants(args.correlation_id)
-            cid_ph = ",".join("?" for _ in cids)
-            rows = repo._connection.execute(
-                "SELECT id, status FROM jobs "
-                f"WHERE correlation_id IN ({cid_ph}) ORDER BY rowid ASC",
-                (*cids,),
-            ).fetchall()
-        else:
-            rows = repo._connection.execute(
-                "SELECT id, status FROM jobs ORDER BY rowid ASC"
-            ).fetchall()
+    correlation_ids = (
+        tuple(_correlation_id_variants(args.correlation_id)) if args.correlation_id else ()
+    )
+    rows = reporting_repository(repo).workflow_states(correlation_ids)
 
     archived: list[str] = []
     skipped_terminal: list[str] = []
@@ -551,14 +508,7 @@ def _cmd_delete_task(args: argparse.Namespace) -> None:
     if job is None:
         raise SystemExit(f"Job not found: {args.job_id}")
 
-    with repo._lock:
-        event_count = repo._connection.execute(
-            "SELECT COUNT(*) FROM job_events WHERE job_id = ?",
-            (args.job_id,),
-        ).fetchone()[0]
-        repo._connection.execute("DELETE FROM job_events WHERE job_id = ?", (args.job_id,))
-        repo._connection.execute("DELETE FROM jobs WHERE id = ?", (args.job_id,))
-        repo._connection.commit()
+    event_count = reporting_repository(repo).delete_task(args.job_id)
 
     print(
         json.dumps(
@@ -595,160 +545,6 @@ def _cmd_task_history(args: argparse.Namespace) -> None:
             default=str,
         )
     )
-
-
-def _payload_field(payload_json: str | None, *keys: str) -> str | None:
-    """Return the first non-empty string value among *keys* in the JSON payload."""
-    import json
-
-    if not payload_json:
-        return None
-    try:
-        payload = json.loads(payload_json)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(payload, dict):
-        return None
-    for key in keys:
-        value = payload.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return None
-
-
-def build_work_receipt(
-    repo: Any, correlation_id: str | None, *, git_root: str | None = None
-) -> dict[str, Any]:
-    """Build an evidence-backed summary of what the agent actually did.
-
-    Read-only. This is the "AI Work Receipt": it turns durable task state into a
-    verifiable handoff so a human (or the next agent / a reviewer) can trust what
-    was done without re-reading the whole chat. Shared by the ``djobs receipt``
-    CLI and the MCP ``work_receipt`` tool so the two can never disagree.
-
-    Groups tasks into completed / remaining / failed, lists the files changed
-    (from task payloads), surfaces the evidence recorded on each completed task,
-    reports evidence coverage (how trustworthy the record is), and suggests a
-    next step.
-
-    When *git_root* is a git repository, also folds in the real git working-tree
-    changes so the receipt shows ground truth (what git sees changed) next to
-    the agent's claims — and flags files the agent claimed but that git does not
-    show as changed.
-    """
-    evidence_by_job = _latest_evidence_by_job(repo)
-
-    columns = "id, type, status, payload_json, correlation_id, last_error"
-    with repo._lock:
-        if correlation_id:
-            cids = _correlation_id_variants(correlation_id)
-            cid_ph = ",".join("?" for _ in cids)
-            rows = repo._connection.execute(
-                f"SELECT {columns} FROM jobs "
-                f"WHERE correlation_id IN ({cid_ph}) ORDER BY rowid ASC",
-                (*cids,),
-            ).fetchall()
-        else:
-            rows = repo._connection.execute(
-                f"SELECT {columns} FROM jobs ORDER BY correlation_id, rowid ASC",
-            ).fetchall()
-
-    remaining_statuses = {"pending", "running", "retry_scheduled"}
-    failed_statuses = {"failed", "dead_lettered"}
-
-    completed: list[dict[str, Any]] = []
-    remaining: list[dict[str, Any]] = []
-    failed: list[dict[str, Any]] = []
-    archived_count = 0
-    changed_files: list[str] = []
-    seen_files: set[str] = set()
-    evidence_present = 0
-
-    for row in rows:
-        status = row["status"]
-        file = _payload_field(row["payload_json"], "file", "path")
-        summary = _payload_field(row["payload_json"], "summary", "title", "name", "description")
-        label = summary or file or f"{row['type']} {row['id'][:8]}"
-
-        if status == "succeeded":
-            ev = evidence_by_job.get(row["id"])
-            if ev:
-                evidence_present += 1
-            completed.append(
-                {
-                    "id": row["id"],
-                    "type": row["type"],
-                    "label": label,
-                    "file": file,
-                    "evidence": ev,
-                }
-            )
-            if file and file not in seen_files:
-                seen_files.add(file)
-                changed_files.append(file)
-        elif status in failed_statuses:
-            err = row["last_error"]
-            first_err = err.splitlines()[0] if err else None
-            failed.append(
-                {"id": row["id"], "type": row["type"], "label": label, "last_error": first_err}
-            )
-        elif status == "archived":
-            archived_count += 1
-        elif status in remaining_statuses:
-            remaining.append(
-                {"id": row["id"], "type": row["type"], "label": label, "status": status}
-            )
-
-    if failed:
-        next_step = (
-            f"Investigate {len(failed)} failed task(s): "
-            "`djobs task-history <id>` shows the error and events."
-        )
-    elif remaining:
-        next_step = (
-            f"{len(remaining)} task(s) remain. Run `djobs explain` to see why each is "
-            "still open, or ask the agent to resume the durable work."
-        )
-    elif completed:
-        next_step = "All tasks complete. Review the changed files (git diff) and commit."
-    else:
-        next_step = "No tasks recorded for this scope yet."
-
-    receipt: dict[str, Any] = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "scope": correlation_id or "all workspaces",
-        "totals": {
-            "completed": len(completed),
-            "remaining": len(remaining),
-            "failed": len(failed),
-            "archived": archived_count,
-        },
-        "evidence_coverage": {
-            "completed_with_evidence": evidence_present,
-            "completed_total": len(completed),
-        },
-        "changed_files": changed_files,
-        "completed_tasks": completed,
-        "remaining_tasks": remaining,
-        "failed_tasks": failed,
-        "recommended_next_step": next_step,
-    }
-
-    if git_root:
-        from djobs.core.gitinfo import working_tree_changes
-
-        git = working_tree_changes(git_root)
-        receipt["git"] = git
-        if git.get("is_git_repo") and "changed_files" in git:
-            git_files = set(git["changed_files"])
-            # Files the agent claimed it changed but that git does not show as
-            # dirty. This is advisory: they may already be committed, so we label
-            # it honestly rather than asserting the agent lied.
-            claimed_not_in_git = [f for f in changed_files if f not in git_files]
-            if claimed_not_in_git:
-                receipt["claimed_not_in_working_tree"] = claimed_not_in_git
-
-    return receipt
 
 
 def _cmd_receipt(args: argparse.Namespace) -> None:
@@ -840,50 +636,20 @@ def _cmd_explain(args: argparse.Namespace) -> None:
     repo = SQLiteJobRepository.from_path(args.db)
     now = datetime.now(timezone.utc)
 
-    columns = (
-        "id, type, status, correlation_id, created_at, run_after, "
-        "attempt, max_attempts, last_error, leased_by, lease_expires_at, "
-        "depends_on_json, resource_key"
+    correlation_ids = (
+        tuple(_correlation_id_variants(args.correlation_id)) if args.correlation_id else ()
     )
-    with repo._lock:
-        if args.correlation_id:
-            cids = _correlation_id_variants(args.correlation_id)
-            cid_ph = ",".join("?" for _ in cids)
-            rows = repo._connection.execute(
-                f"SELECT {columns} FROM jobs "
-                f"WHERE status NOT IN ('succeeded', 'archived') AND correlation_id IN ({cid_ph}) "
-                "ORDER BY rowid ASC",
-                (*cids,),
-            ).fetchall()
-        else:
-            rows = repo._connection.execute(
-                f"SELECT {columns} FROM jobs "
-                "WHERE status NOT IN ('succeeded', 'archived') "
-                "ORDER BY correlation_id, rowid ASC",
-            ).fetchall()
+    reporting = reporting_repository(repo)
+    rows = reporting.visible_rows(correlation_ids)
 
-        # Resolve every dependency's status and which running task holds each
-        # resource key, in one query each, so the per-task explanation matches
-        # the queue's real claim gating without an N+1 query pattern.
-        dep_ids: set[str] = set()
-        for r in rows:
-            raw = r["depends_on_json"]
-            if raw:
-                dep_ids.update(json.loads(raw))
-        dep_status: dict[str, str] = {}
-        if dep_ids:
-            placeholders = ", ".join("?" * len(dep_ids))
-            for d in repo._connection.execute(
-                f"SELECT id, status FROM jobs WHERE id IN ({placeholders})",
-                tuple(dep_ids),
-            ).fetchall():
-                dep_status[d["id"]] = d["status"]
-        resource_holders: dict[str, str] = {}
-        for r in repo._connection.execute(
-            "SELECT id, resource_key FROM jobs "
-            "WHERE status = 'running' AND resource_key IS NOT NULL ORDER BY created_at",
-        ).fetchall():
-            resource_holders.setdefault(r["resource_key"], r["id"])
+    # Resolve every dependency status and active resource holder in bounded queries.
+    dep_ids: set[str] = set()
+    for row in rows:
+        raw = row.get("depends_on_json")
+        if raw:
+            dep_ids.update(json.loads(raw))
+    dep_status = reporting.dependency_statuses(tuple(sorted(dep_ids)))
+    resource_holders = reporting.resource_holders()
 
     tasks: list[dict[str, Any]] = []
     for row in rows:
@@ -985,22 +751,10 @@ def _cmd_token_savings(args: argparse.Namespace) -> None:
     repo = SQLiteJobRepository.from_path(args.db)
     evidence_by_job = _latest_evidence_by_job(repo)
 
-    with repo._lock:
-        if args.correlation_id:
-            cids = _correlation_id_variants(args.correlation_id)
-            placeholders = ",".join("?" for _ in cids)
-            rows = repo._connection.execute(
-                "SELECT id, type, status, payload_json, correlation_id, last_error "
-                f"FROM jobs WHERE correlation_id IN ({placeholders}) AND status != ? "
-                "ORDER BY rowid ASC",
-                (*cids, "archived"),
-            ).fetchall()
-        else:
-            rows = repo._connection.execute(
-                "SELECT id, type, status, payload_json, correlation_id, last_error "
-                "FROM jobs WHERE status != ? ORDER BY correlation_id, rowid ASC",
-                ("archived",),
-            ).fetchall()
+    correlation_ids = (
+        tuple(_correlation_id_variants(args.correlation_id)) if args.correlation_id else ()
+    )
+    rows = reporting_repository(repo).token_saving_rows(correlation_ids)
 
     completed: list[dict[str, Any]] = []
     incomplete = 0
@@ -1320,24 +1074,9 @@ def _probe_command(cmd: str) -> tuple[bool, str]:
 
 def _probe_db_writable(db_path: os.PathLike[str] | str) -> tuple[bool, str]:
     """Check whether the queue database can be opened/created without writing it."""
-    import os as _os
-    import sqlite3
-    from pathlib import Path
+    from djobs.storage.maintenance import probe_sqlite_database
 
-    p = Path(db_path)
-    try:
-        if p.exists():
-            con = sqlite3.connect(str(p))
-            con.execute("PRAGMA user_version")
-            con.close()
-            return True, "exists, writable"
-        parent = p.parent
-        parent.mkdir(parents=True, exist_ok=True)
-        if _os.access(parent, _os.W_OK):
-            return True, "will be created on first use (parent writable)"
-        return False, "parent directory not writable"
-    except Exception as exc:
-        return False, f"NOT usable: {exc}"
+    return probe_sqlite_database(db_path)
 
 
 def _cmd_doctor(args: argparse.Namespace) -> None:
@@ -1543,31 +1282,12 @@ def _cmd_audit(args: argparse.Namespace) -> None:
     if since_dt.tzinfo is None:
         since_dt = since_dt.replace(tzinfo=timezone.utc)
 
-    where_clauses = ["e.created_at >= ?"]
-    params: list[Any] = [since_dt.isoformat()]
-
-    if args.correlation_id:
-        where_clauses.append("j.correlation_id = ?")
-        params.append(args.correlation_id)
-    if args.failures:
-        where_clauses.append("e.event_type = ?")
-        params.append("job_failed")
-
-    where_sql = " AND ".join(where_clauses)
-    sql = f"""
-        SELECT
-            e.event_type, e.message, e.created_at AS event_at,
-            j.type AS task_type, j.status AS job_status,
-            j.correlation_id, j.id AS job_id
-        FROM job_events e
-        JOIN jobs j ON e.job_id = j.id
-        WHERE {where_sql}
-        ORDER BY e.created_at DESC
-        LIMIT ?
-    """
-
-    with repo._lock:
-        rows = repo._connection.execute(sql, (*params, args.limit)).fetchall()
+    rows = reporting_repository(repo).audit_rows(
+        since=since_dt.isoformat(),
+        correlation_id=args.correlation_id,
+        event_type="job_failed" if args.failures else None,
+        limit=args.limit,
+    )
 
     if args.detail or args.output_format == "json":
         events = [dict(row) for row in rows]

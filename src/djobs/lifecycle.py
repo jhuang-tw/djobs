@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from datetime import timedelta
 from typing import Any
 
 from djobs.core.pause import is_paused
+from djobs.diagnostics import record_shared_failure
 from djobs.handoff import _resolve, sync_workspace
 from djobs.observations import (
     capture_repository_snapshot,
@@ -24,35 +24,13 @@ from djobs.observations import (
     record_unique_session_observation,
     reset_context_injection,
 )
+from djobs.privacy import redact_text
+from djobs.storage.workspace import workspace_repository
 from djobs.workspace import shared_db_path
 
 _CODING_TYPES = ("coding-session", "coding-checkpoint")
 _LEASE_SECONDS = 600
 _MAX_EVIDENCE = 500
-_SECRET_SUFFIX = (
-    r"(?:api[_-]?key|secret[_-]?access[_-]?key|access[_-]?key|"
-    r"access[_-]?token|auth[_-]?token|refresh[_-]?token|token|"
-    r"password|passwd|private[_-]?key|client[_-]?secret|secret|authorization)"
-)
-_SECRET_KEY = rf"[A-Za-z0-9_-]*{_SECRET_SUFFIX}"
-_ASSIGN_QUOTED_RE = re.compile(
-    rf"(?i)(?P<prefix>['\"]?)(?P<name>{_SECRET_KEY})(?P=prefix)"
-    r"(?P<separator>\s*[:=]\s*)(?P<quote>['\"])(?P<value>.*?)(?P=quote)"
-)
-_ASSIGN_UNQUOTED_RE = re.compile(
-    rf"(?i)(?P<prefix>['\"]?)(?P<name>{_SECRET_KEY})(?P=prefix)"
-    r"(?P<separator>\s*[:=]\s*)(?P<value>[^'\"\s,;][^\s,;]*)"
-)
-_FLAG_QUOTED_RE = re.compile(
-    rf"(?i)(?P<name>--{_SECRET_KEY})(?P<separator>\s+)"
-    r"(?P<quote>['\"])(?P<value>.*?)(?P=quote)"
-)
-_FLAG_UNQUOTED_RE = re.compile(
-    rf"(?i)(?P<name>--{_SECRET_KEY})(?P<separator>\s+)"
-    r"(?P<value>[^'\"\s,;][^\s,;]*)"
-)
-_BEARER_RE = re.compile(r"(?i)(\bbearer\s+)[A-Za-z0-9._~+/=-]+")
-_URL_CREDENTIAL_RE = re.compile(r"(://[^:/\s]+:)[^@\s]+@")
 _PROMPT_KEYS = (
     "prompt",
     "initial_prompt",
@@ -106,22 +84,7 @@ def _next_hint(repo: Any, workspace: Any, agent_id: str) -> str | None:
 
 
 def _redact(value: Any) -> str:
-    text = str(value or "")
-    text = _URL_CREDENTIAL_RE.sub(r"\1<redacted>@", text)
-    text = _BEARER_RE.sub(r"\1<redacted>", text)
-    text = _ASSIGN_QUOTED_RE.sub(
-        r"\g<prefix>\g<name>\g<prefix>\g<separator>\g<quote><redacted>\g<quote>",
-        text,
-    )
-    text = _ASSIGN_UNQUOTED_RE.sub(
-        r"\g<prefix>\g<name>\g<prefix>\g<separator><redacted>",
-        text,
-    )
-    text = _FLAG_QUOTED_RE.sub(
-        r"\g<name>\g<separator>\g<quote><redacted>\g<quote>",
-        text,
-    )
-    return _FLAG_UNQUOTED_RE.sub(r"\g<name>\g<separator><redacted>", text)
+    return redact_text(value)
 
 
 def _cwd(payload: dict[str, Any]) -> str | None:
@@ -134,25 +97,12 @@ def _session_id(payload: dict[str, Any]) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _scope(workspace: Any) -> tuple[str, tuple[str, ...]]:
-    placeholders = ",".join("?" for _ in workspace.correlation_ids)
-    return placeholders, workspace.correlation_ids
-
-
-def _owned_rows(repo: Any, workspace: Any, agent_id: str) -> list[Any]:
-    placeholders, params = _scope(workspace)
-    with repo._lock:
-        return repo._connection.execute(
-            f"""
-            SELECT * FROM jobs
-            WHERE correlation_id IN ({placeholders})
-              AND type IN (?, ?)
-              AND status = 'running'
-              AND leased_by = ?
-            ORDER BY updated_at DESC
-            """,
-            (*params, *_CODING_TYPES, agent_id),
-        ).fetchall()
+def _owned_rows(repo: Any, workspace: Any, agent_id: str) -> list[dict[str, Any]]:
+    return workspace_repository(repo).owned_rows(
+        correlation_ids=workspace.correlation_ids,
+        job_types=_CODING_TYPES,
+        agent_id=agent_id,
+    )
 
 
 def _hook_context(event: str, text: str) -> dict[str, Any]:
@@ -251,8 +201,12 @@ def _observe_tool(payload: dict[str, Any], *, agent_type: str, failed: bool) -> 
         # repository ground truth without multiplying large-repository diff cost.
         for row in _owned_rows(repo, workspace, agent.agent_id):
             queue.heartbeat(str(row["id"]), agent.agent_id, timedelta(seconds=_LEASE_SECONDS))
-    except Exception:
-        pass
+    except Exception as exc:
+        record_shared_failure(
+            "lifecycle.tool_observation",
+            exc,
+            context={"agent_type": agent_type, "tool": _tool_name(payload)},
+        )
     return {}
 
 
@@ -303,7 +257,8 @@ def session_start(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]
                 f"{clean(item['summary'], 260)}"
             )
         return _hook_context("SessionStart", "\n".join(lines))
-    except Exception:
+    except Exception as exc:
+        record_shared_failure("lifecycle.session_start", exc, context={"agent_type": agent_type})
         return {}
 
 
@@ -321,8 +276,10 @@ def prepare_prompt_context(payload: dict[str, Any], *, agent_type: str) -> dict[
         )
         reset_context_injection(repo, workspace, agent)
         capture_repository_snapshot(repo, workspace, agent)
-    except Exception:
-        pass
+    except Exception as exc:
+        record_shared_failure(
+            "lifecycle.prepare_prompt_context", exc, context={"agent_type": agent_type}
+        )
     return {}
 
 
@@ -350,7 +307,8 @@ def prompt_context(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any
             context_key=_prompt_text(payload) or None,
         ):
             return {}
-    except Exception:
+    except Exception as exc:
+        record_shared_failure("lifecycle.prompt_context", exc, context={"agent_type": agent_type})
         return {}
     return context
 
@@ -390,8 +348,8 @@ def pre_compact(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]:
             reason=f"pre_compact:{trigger}",
             next_hint=_next_hint(repo, workspace, agent.agent_id),
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        record_shared_failure("lifecycle.pre_compact", exc, context={"agent_type": agent_type})
     return {}
 
 
@@ -422,8 +380,8 @@ def session_end(payload: dict[str, Any], *, agent_type: str) -> dict[str, Any]:
             f"Session ended ({reason}); explicit task leases remain unchanged.",
             metadata={"reason": reason, "stored_as_data": True},
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        record_shared_failure("lifecycle.session_end", exc, context={"agent_type": agent_type})
     return {}
 
 
@@ -454,8 +412,8 @@ def user_prompt_submit(payload: dict[str, Any], *, agent_type: str) -> dict[str,
             prompt,
             metadata={"source": "user_prompt", "stored_as_data": True},
         )
-    except Exception:
-        pass
+    except Exception as exc:
+        record_shared_failure("lifecycle.user_prompt", exc, context={"agent_type": agent_type})
     return {}
 
 

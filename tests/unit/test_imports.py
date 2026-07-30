@@ -34,3 +34,13 @@ def test_version() -> None:
     # Version is sourced solely from src/djobs/__init__.py (__version__);
     # assert shape only so releases never require editing this test.
     assert re.fullmatch(r"\d+\.\d+\.\d+", djobs.__version__)
+
+
+def test_legacy_facade_preserves_queue_exports() -> None:
+    import djobs
+    import djobs.legacy as legacy
+
+    assert legacy.Job is djobs.Job
+    assert legacy.QueueService is djobs.QueueService
+    assert legacy.SQLiteJobRepository is djobs.SQLiteJobRepository
+    assert legacy.WorkerPool is djobs.WorkerPool

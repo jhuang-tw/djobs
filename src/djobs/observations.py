@@ -11,7 +11,6 @@ import hashlib
 import json
 import os
 import re
-import sqlite3
 import stat
 import subprocess
 import tempfile
@@ -20,10 +19,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from djobs.storage.schema import (
-    SQLITE_OBSERVATION_FTS_SCHEMA_SQL,
-    SQLITE_OBSERVATION_SCHEMA_SQL,
-)
+from djobs.ranking import rank_memory_rows
+from djobs.storage.maintenance import storage_maintenance
+from djobs.storage.memory import memory_repository
 
 _MAX_SUMMARY = 500
 _MAX_METADATA = 1000
@@ -70,32 +68,57 @@ def _metadata_dict(raw: Any) -> dict[str, Any]:
 
 
 def _capsule_metadata_json(metadata: dict[str, Any], limit: int) -> str:
-    # Bound capsule metadata field-by-field without discarding its schema.
-    original_progress = metadata.get("progress")
-    original_failures = metadata.get("failures")
-    original_sources = metadata.get("source_event_ids")
-    progress_values = original_progress if isinstance(original_progress, list) else []
-    failure_values = original_failures if isinstance(original_failures, list) else []
-    source_values = original_sources if isinstance(original_sources, list) else []
+    """Serialize a provenance-aware capsule without discarding its schema."""
 
+    def text_list(value: Any, *, item_limit: int, count: int) -> list[str]:
+        values = value if isinstance(value, list) else []
+        return [clean(item, item_limit) for item in values[-count:] if clean(item, item_limit)]
+
+    def provenance_item(value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {}
+        item: dict[str, Any] = {}
+        for key, bound in (("source", 40), ("evidence_id", 64), ("kind", 40)):
+            if value.get(key):
+                item[key] = clean(value[key], bound)
+        if value.get("advisory") is not None:
+            item["advisory"] = bool(value["advisory"])
+        return item
+
+    raw_provenance = metadata.get("provenance")
+    provenance = raw_provenance if isinstance(raw_provenance, dict) else {}
     capsule: dict[str, Any] = {
-        "capsule_schema": 1,
+        "capsule_schema": 2,
         "memory_status": metadata.get("memory_status", "active"),
         "stored_as_data": True,
         "reason": clean(metadata.get("reason"), 80),
         "goal": clean(metadata.get("goal"), 320),
-        "progress": [clean(item, 180) for item in progress_values[-3:] if clean(item, 180)],
-        "failures": [clean(item, 180) for item in failure_values[-2:] if clean(item, 180)],
+        "constraints": text_list(metadata.get("constraints"), item_limit=180, count=3),
+        "progress": text_list(metadata.get("progress"), item_limit=180, count=4),
+        "failures": text_list(metadata.get("failures"), item_limit=180, count=3),
         "next": clean(metadata.get("next"), 220),
-        "source_event_ids": [clean(item, 64) for item in source_values[-8:] if clean(item, 64)],
+        "source_event_ids": text_list(metadata.get("source_event_ids"), item_limit=64, count=12),
+        "provenance": {
+            "goal": provenance_item(provenance.get("goal")),
+            "constraints": [
+                item
+                for value in (provenance.get("constraints") or [])[-3:]
+                if (item := provenance_item(value))
+            ],
+            "progress": [
+                item
+                for value in (provenance.get("progress") or [])[-4:]
+                if (item := provenance_item(value))
+            ],
+            "failures": [
+                item
+                for value in (provenance.get("failures") or [])[-3:]
+                if (item := provenance_item(value))
+            ],
+            "next": provenance_item(provenance.get("next")),
+        },
     }
     truncated_fields: set[str] = set()
-    if len(progress_values) > len(capsule["progress"]):
-        truncated_fields.add("progress")
-    if len(failure_values) > len(capsule["failures"]):
-        truncated_fields.add("failures")
-    if len(source_values) > len(capsule["source_event_ids"]):
-        truncated_fields.add("source_event_ids")
 
     def render() -> str:
         payload = dict(capsule)
@@ -105,53 +128,52 @@ def _capsule_metadata_json(metadata: dict[str, Any], limit: int) -> str:
 
     raw = render()
     while len(raw) > limit:
-        sources = capsule["source_event_ids"]
-        progress = capsule["progress"]
-        failures = capsule["failures"]
-        if sources:
-            sources.pop(0)
+        if capsule["source_event_ids"]:
+            capsule["source_event_ids"].pop(0)
             truncated_fields.add("source_event_ids")
-        elif len(progress) > 1:
-            progress.pop(0)
+        elif capsule["provenance"]["progress"]:
+            capsule["provenance"]["progress"].pop(0)
+            truncated_fields.add("provenance.progress")
+        elif capsule["provenance"]["failures"]:
+            capsule["provenance"]["failures"].pop(0)
+            truncated_fields.add("provenance.failures")
+        elif len(capsule["progress"]) > 1:
+            capsule["progress"].pop(0)
             truncated_fields.add("progress")
-        elif len(failures) > 1:
-            failures.pop(0)
+        elif len(capsule["failures"]) > 1:
+            capsule["failures"].pop(0)
             truncated_fields.add("failures")
+        elif capsule["constraints"]:
+            capsule["constraints"].pop(0)
+            truncated_fields.add("constraints")
         else:
-            candidates: list[tuple[int, str, int | None]] = []
-            for key in ("goal", "next", "reason"):
-                value = capsule.get(key)
-                if isinstance(value, str) and len(value) > 32:
-                    candidates.append((len(value), key, None))
-            for key in ("progress", "failures"):
-                values = capsule.get(key)
-                if isinstance(values, list):
-                    for item_index, value in enumerate(values):
-                        if isinstance(value, str) and len(value) > 32:
-                            candidates.append((len(value), key, item_index))
+            candidates = [
+                (len(str(capsule[key])), key)
+                for key in ("goal", "next", "reason")
+                if len(str(capsule[key])) > 48
+            ]
             if not candidates:
                 break
-            length, key, selected_index = max(candidates)
-            new_limit = max(32, int(length * 0.75))
-            if selected_index is None:
-                capsule[key] = clean(capsule[key], new_limit)
-            else:
-                capsule[key][selected_index] = clean(capsule[key][selected_index], new_limit)
+            length, key = max(candidates)
+            capsule[key] = clean(capsule[key], max(48, int(length * 0.7)))
             truncated_fields.add(key)
         raw = render()
 
     if len(raw) > limit:
-        capsule.update(
-            {
-                "reason": clean(capsule.get("reason"), 48),
-                "goal": clean(capsule.get("goal"), 80),
-                "progress": [],
-                "failures": [],
-                "next": clean(capsule.get("next"), 80),
-                "source_event_ids": [],
-            }
+        capsule["constraints"] = []
+        capsule["progress"] = capsule["progress"][-1:]
+        capsule["failures"] = capsule["failures"][-1:]
+        capsule["source_event_ids"] = []
+        capsule["provenance"] = {
+            "goal": capsule["provenance"]["goal"],
+            "constraints": [],
+            "progress": [],
+            "failures": [],
+            "next": capsule["provenance"]["next"],
+        }
+        truncated_fields.update(
+            {"constraints", "progress", "failures", "source_event_ids", "provenance"}
         )
-        truncated_fields.update({"goal", "progress", "failures", "next", "source_event_ids"})
         raw = render()
     return raw
 
@@ -162,7 +184,7 @@ def _metadata_json(metadata: dict[str, Any] | None, *, limit: int | None = None)
     normalized = dict(metadata or {})
     normalized.setdefault("memory_status", "active")
     normalized.setdefault("stored_as_data", True)
-    if normalized.get("capsule_schema") == 1:
+    if normalized.get("capsule_schema") in {1, 2}:
         return _capsule_metadata_json(normalized, resolved_limit)
     raw = json.dumps(normalized, ensure_ascii=False, separators=(",", ":"), default=str)
     if len(raw) <= resolved_limit:
@@ -190,75 +212,42 @@ def _memory_status(raw: Any) -> str:
 
 
 def ensure_schema(repo: Any) -> None:
-    """Create observation storage and an optional SQLite FTS5 search index."""
+    """Initialize passive-memory storage through the formal adapter."""
 
-    with repo._lock:
-        repo._connection.executescript(SQLITE_OBSERVATION_SCHEMA_SQL)
-        try:
-            repo._connection.executescript(SQLITE_OBSERVATION_FTS_SCHEMA_SQL)
-            repo._connection.execute(
-                """
-                INSERT INTO agent_observations_fts (
-                    observation_id, correlation_id, event_type, tool_name, summary
-                )
-                SELECT o.id, o.correlation_id, o.event_type, COALESCE(o.tool_name, ''), o.summary
-                FROM agent_observations AS o
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM agent_observations_fts AS f
-                    WHERE f.observation_id = o.id
-                )
-                """
-            )
-        except sqlite3.OperationalError:
-            pass
-        repo._connection.commit()
+    memory_repository(repo).ensure_schema()
 
 
-def _prune_observations(cursor: Any, scope_id: str) -> None:
-    """Bound visible observations without evicting live injection markers."""
-
-    cursor.execute(
-        """
-        DELETE FROM agent_observations
-        WHERE correlation_id = ?
-          AND event_type != ?
-          AND id NOT IN (
-              SELECT id FROM agent_observations
-              WHERE correlation_id = ? AND event_type != ?
-              ORDER BY created_at DESC, id DESC LIMIT ?
-          )
-        """,
-        (
-            scope_id,
-            _CONTEXT_INJECTED_EVENT,
-            scope_id,
-            _CONTEXT_INJECTED_EVENT,
-            _MAX_OBSERVATIONS_PER_WORKSPACE,
-        ),
-    )
-    cursor.execute(
-        """
-        DELETE FROM agent_observations
-        WHERE correlation_id = ?
-          AND event_type = ?
-          AND id NOT IN (
-              SELECT id FROM agent_observations
-              WHERE correlation_id = ? AND event_type = ?
-              ORDER BY created_at DESC, id DESC LIMIT ?
-          )
-        """,
-        (
-            scope_id,
-            _CONTEXT_INJECTED_EVENT,
-            scope_id,
-            _CONTEXT_INJECTED_EVENT,
-            _MAX_CONTEXT_MARKERS_PER_WORKSPACE,
-        ),
-    )
+def _observation_record(
+    workspace: Any,
+    agent: Any,
+    event_type: str,
+    summary: str,
+    *,
+    tool_name: str | None = None,
+    metadata: dict[str, Any] | None = None,
+    metadata_limit: int | None = None,
+    created_at: str | None = None,
+) -> dict[str, Any]:
+    memory_id = uuid.uuid4().hex
+    scope_id = _memory_scope(workspace)
+    normalized_metadata = dict(metadata or {})
+    normalized_metadata.setdefault("checkout_id", _checkout_scope(workspace))
+    normalized_metadata.setdefault("repo_family_id", scope_id)
+    return {
+        "id": memory_id,
+        "correlation_id": scope_id,
+        "agent_type": agent.agent_type,
+        "session_id_hash": _session_hash(agent),
+        "event_type": clean(event_type, 80),
+        "tool_name": clean(tool_name, 80) or None,
+        "summary": clean(summary, _MAX_SUMMARY),
+        "metadata_json": _metadata_json(normalized_metadata, limit=metadata_limit),
+        "created_at": created_at or datetime.now(timezone.utc).isoformat(),
+    }
 
 
 def _insert_observation(
-    cursor: Any,
+    repo: Any,
     workspace: Any,
     agent: Any,
     event_type: str,
@@ -269,32 +258,22 @@ def _insert_observation(
     metadata_limit: int | None = None,
     created_at: str | None = None,
 ) -> str:
-    memory_id = uuid.uuid4().hex
-    scope_id = _memory_scope(workspace)
-    normalized_metadata = dict(metadata or {})
-    normalized_metadata.setdefault("checkout_id", _checkout_scope(workspace))
-    normalized_metadata.setdefault("repo_family_id", scope_id)
-    cursor.execute(
-        """
-        INSERT INTO agent_observations (
-            id, correlation_id, agent_type, session_id_hash, event_type,
-            tool_name, summary, metadata_json, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            memory_id,
-            scope_id,
-            agent.agent_type,
-            _session_hash(agent),
-            clean(event_type, 80),
-            clean(tool_name, 80) or None,
-            clean(summary, _MAX_SUMMARY),
-            _metadata_json(normalized_metadata, limit=metadata_limit),
-            created_at or datetime.now(timezone.utc).isoformat(),
-        ),
+    record = _observation_record(
+        workspace,
+        agent,
+        event_type,
+        summary,
+        tool_name=tool_name,
+        metadata=metadata,
+        metadata_limit=metadata_limit,
+        created_at=created_at,
     )
-    _prune_observations(cursor, scope_id)
-    return memory_id
+    return memory_repository(repo).insert_observation(
+        record,
+        marker_event=_CONTEXT_INJECTED_EVENT,
+        max_observations=_MAX_OBSERVATIONS_PER_WORKSPACE,
+        max_markers=_MAX_CONTEXT_MARKERS_PER_WORKSPACE,
+    )
 
 
 def record_observation(
@@ -308,25 +287,16 @@ def record_observation(
     metadata: dict[str, Any] | None = None,
     metadata_limit: int | None = None,
 ) -> None:
-    ensure_schema(repo)
-    with repo._lock:
-        cursor = repo._connection.cursor()
-        try:
-            cursor.execute("BEGIN IMMEDIATE")
-            _insert_observation(
-                cursor,
-                workspace,
-                agent,
-                event_type,
-                summary,
-                tool_name=tool_name,
-                metadata=metadata,
-                metadata_limit=metadata_limit,
-            )
-            repo._connection.commit()
-        except Exception:
-            repo._connection.rollback()
-            raise
+    _insert_observation(
+        repo,
+        workspace,
+        agent,
+        event_type,
+        summary,
+        tool_name=tool_name,
+        metadata=metadata,
+        metadata_limit=metadata_limit,
+    )
 
 
 def record_unique_session_observation(
@@ -341,60 +311,30 @@ def record_unique_session_observation(
 ) -> bool:
     """Insert one exact observation at most once per client session."""
 
-    ensure_schema(repo)
-    session_hash = _session_hash(agent)
-    scopes = _memory_ids(workspace)
-    placeholders = ",".join("?" for _ in scopes)
-    cleaned_summary = clean(summary, _MAX_SUMMARY)
-    with repo._lock:
-        cursor = repo._connection.cursor()
-        try:
-            cursor.execute("BEGIN IMMEDIATE")
-            existing = cursor.execute(
-                f"""
-                SELECT 1 FROM agent_observations
-                WHERE correlation_id IN ({placeholders})
-                  AND session_id_hash = ? AND event_type = ? AND summary = ?
-                LIMIT 1
-                """,
-                (*scopes, session_hash, clean(event_type, 80), cleaned_summary),
-            ).fetchone()
-            if existing is not None:
-                repo._connection.commit()
-                return False
-            _insert_observation(
-                cursor,
-                workspace,
-                agent,
-                event_type,
-                cleaned_summary,
-                tool_name=tool_name,
-                metadata=metadata,
-            )
-            repo._connection.commit()
-            return True
-        except Exception:
-            repo._connection.rollback()
-            raise
+    record = _observation_record(
+        workspace,
+        agent,
+        event_type,
+        summary,
+        tool_name=tool_name,
+        metadata=metadata,
+    )
+    return memory_repository(repo).insert_unique_observation(
+        record,
+        scopes=_memory_ids(workspace),
+        marker_event=_CONTEXT_INJECTED_EVENT,
+        max_observations=_MAX_OBSERVATIONS_PER_WORKSPACE,
+        max_markers=_MAX_CONTEXT_MARKERS_PER_WORKSPACE,
+    )
 
 
 def reset_context_injection(repo: Any, workspace: Any, agent: Any) -> None:
-    ensure_schema(repo)
-    with repo._lock:
-        repo._connection.execute(
-            """
-            DELETE FROM agent_observations
-            WHERE correlation_id = ? AND agent_type = ? AND session_id_hash = ?
-              AND event_type = ?
-            """,
-            (
-                _memory_scope(workspace),
-                agent.agent_type,
-                _session_hash(agent),
-                _CONTEXT_INJECTED_EVENT,
-            ),
-        )
-        repo._connection.commit()
+    memory_repository(repo).reset_context_marker(
+        scope=_memory_scope(workspace),
+        agent_type=agent.agent_type,
+        session_hash=_session_hash(agent),
+        marker_event=_CONTEXT_INJECTED_EVENT,
+    )
 
 
 def claim_context_injection(
@@ -406,52 +346,33 @@ def claim_context_injection(
 ) -> bool:
     """Atomically deduplicate repository-context injection per distinct request."""
 
-    ensure_schema(repo)
-    now = datetime.now(timezone.utc).isoformat()
     key_hash = (
         hashlib.sha256(clean(context_key, 500).encode("utf-8")).hexdigest()[:16]
         if context_key
         else "session"
     )
     marker_summary = f"Read-only repository context injected ({key_hash})."
-    with repo._lock:
-        cursor = repo._connection.cursor()
-        try:
-            cursor.execute("BEGIN IMMEDIATE")
-            existing = cursor.execute(
-                """
-                SELECT 1 FROM agent_observations
-                WHERE correlation_id = ? AND agent_type = ? AND session_id_hash = ?
-                  AND event_type = ? AND summary = ? LIMIT 1
-                """,
-                (
-                    _memory_scope(workspace),
-                    agent.agent_type,
-                    _session_hash(agent),
-                    _CONTEXT_INJECTED_EVENT,
-                    marker_summary,
-                ),
-            ).fetchone()
-            if existing is not None:
-                repo._connection.commit()
-                return False
-            _insert_observation(
-                cursor,
-                workspace,
-                agent,
-                _CONTEXT_INJECTED_EVENT,
-                marker_summary,
-                metadata={"internal": True, "context_key_hash": key_hash},
-                created_at=now,
-            )
-            repo._connection.commit()
-            return True
-        except Exception:
-            repo._connection.rollback()
-            raise
+    record = _observation_record(
+        workspace,
+        agent,
+        _CONTEXT_INJECTED_EVENT,
+        marker_summary,
+        metadata={"internal": True, "context_key_hash": key_hash},
+    )
+    return memory_repository(repo).claim_context_marker(
+        record,
+        marker_event=_CONTEXT_INJECTED_EVENT,
+        max_observations=_MAX_OBSERVATIONS_PER_WORKSPACE,
+        max_markers=_MAX_CONTEXT_MARKERS_PER_WORKSPACE,
+    )
 
 
-def _row_to_observation(row: Any, *, score: float | None = None) -> dict[str, Any]:
+def _row_to_observation(
+    row: Any,
+    *,
+    score: float | None = None,
+    matched_by: tuple[str, ...] | list[str] | None = None,
+) -> dict[str, Any]:
     metadata = _metadata_dict(row["metadata_json"])
     item: dict[str, Any] = {
         "id": row["id"],
@@ -473,12 +394,44 @@ def _row_to_observation(row: Any, *, score: float | None = None) -> dict[str, An
         if metadata.get(field) not in (None, "", []):
             item[field] = metadata[field]
     if row["event_type"] == "session_capsule":
-        for field in ("goal", "progress", "failures", "next"):
+        for field in ("goal", "constraints", "progress", "failures", "next"):
             if metadata.get(field) not in (None, "", []):
                 item[field] = metadata[field]
     if score is not None:
         item["score"] = round(float(score), 4)
+    if matched_by:
+        item["matched_by"] = list(matched_by)
+    if metadata.get("provenance"):
+        item["provenance"] = metadata["provenance"]
     return item
+
+
+def _valid_rows(repo: Any, rows: list[Any], *, component: str) -> list[Any]:
+    valid: list[Any] = []
+    for row in rows:
+        raw = row["metadata_json"]
+        if isinstance(raw, dict):
+            valid.append(row)
+            continue
+        try:
+            decoded = json.loads(str(raw or "{}"))
+        except (TypeError, json.JSONDecodeError):
+            decoded = None
+        if isinstance(decoded, dict):
+            valid.append(row)
+            continue
+        from djobs.diagnostics import record_failure
+
+        record_failure(
+            repo,
+            component,
+            ValueError("invalid passive-memory metadata JSON"),
+            context={
+                "memory_id": str(row["id"]),
+                "event_type": str(row["event_type"]),
+            },
+        )
+    return valid
 
 
 def _active_rows(rows: list[Any]) -> list[Any]:
@@ -486,21 +439,14 @@ def _active_rows(rows: list[Any]) -> list[Any]:
 
 
 def recent_observations(repo: Any, workspace: Any, limit: int = 6) -> list[dict[str, Any]]:
-    ensure_schema(repo)
-    scopes = _memory_ids(workspace)
-    placeholders = ",".join("?" for _ in scopes)
     capped = max(1, min(limit, 20))
-    with repo._lock:
-        rows = repo._connection.execute(
-            f"""
-            SELECT id, agent_type, event_type, tool_name, summary, metadata_json, created_at
-            FROM agent_observations
-            WHERE correlation_id IN ({placeholders}) AND event_type != ?
-            ORDER BY created_at DESC, id DESC LIMIT ?
-            """,
-            (*scopes, _CONTEXT_INJECTED_EVENT, capped * 5),
-        ).fetchall()
-    return [_row_to_observation(row) for row in _active_rows(list(rows))[:capped]]
+    rows = memory_repository(repo).recent_rows(
+        scopes=_memory_ids(workspace),
+        marker_event=_CONTEXT_INJECTED_EVENT,
+        limit=capped * 5,
+    )
+    valid = _valid_rows(repo, rows, component="memory.recent.corrupt_row")
+    return [_row_to_observation(row) for row in _active_rows(valid)[:capped]]
 
 
 def _search_terms(query: str) -> list[str]:
@@ -519,76 +465,50 @@ def search_observations(
     query: str,
     limit: int = 6,
 ) -> list[dict[str, Any]]:
-    """Return active repository memories ranked for the current request."""
+    """Return active repository memories with deterministic explanations."""
 
-    ensure_schema(repo)
     cleaned_query = clean(query, 500)
     if not cleaned_query:
         return recent_observations(repo, workspace, limit=limit)
     capped = max(1, min(limit, 20))
+    adapter = memory_repository(repo)
     scopes = _memory_ids(workspace)
-    placeholders = ",".join("?" for _ in scopes)
+    candidates: dict[str, dict[str, Any]] = {}
     fts = _fts_query(cleaned_query)
     if fts:
-        try:
-            with repo._lock:
-                rows = repo._connection.execute(
-                    f"""
-                    SELECT o.id, o.agent_type, o.event_type, o.tool_name, o.summary,
-                           o.metadata_json, o.created_at,
-                           bm25(agent_observations_fts, 0.0, 0.0, 1.0, 1.0, 2.5)
-                             + CASE o.event_type
-                                 WHEN 'session_capsule' THEN -2.0
-                                 WHEN 'user_intent' THEN -1.0
-                                 WHEN 'tool_failure' THEN -0.4
-                                 ELSE 0.0 END AS relevance
-                    FROM agent_observations_fts
-                    JOIN agent_observations AS o ON o.id = agent_observations_fts.observation_id
-                    WHERE agent_observations_fts MATCH ?
-                      AND o.correlation_id IN ({placeholders}) AND o.event_type != ?
-                    ORDER BY relevance ASC, o.created_at DESC LIMIT ?
-                    """,
-                    (fts, *scopes, _CONTEXT_INJECTED_EVENT, capped * 5),
-                ).fetchall()
-            active = _active_rows(list(rows))[:capped]
-            if active:
-                return [_row_to_observation(row, score=-float(row["relevance"])) for row in active]
-        except sqlite3.OperationalError:
-            pass
+        for row in adapter.fts_rows(
+            scopes=scopes,
+            query=fts,
+            marker_event=_CONTEXT_INJECTED_EVENT,
+            limit=max(40, capped * 8),
+        ):
+            candidates[str(row["id"])] = row
+    for row in adapter.scan_rows(
+        scopes=scopes,
+        marker_event=_CONTEXT_INJECTED_EVENT,
+        limit=300,
+    ):
+        candidates.setdefault(str(row["id"]), row)
 
-    with repo._lock:
-        rows = repo._connection.execute(
-            f"""
-            SELECT id, agent_type, event_type, tool_name, summary, metadata_json, created_at
-            FROM agent_observations
-            WHERE correlation_id IN ({placeholders}) AND event_type != ?
-            ORDER BY created_at DESC, id DESC LIMIT 300
-            """,
-            (*scopes, _CONTEXT_INJECTED_EVENT),
-        ).fetchall()
-    rows = _active_rows(list(rows))
-    needle = cleaned_query.casefold()
-    terms = [term.casefold() for term in _search_terms(cleaned_query)]
-    scored: list[tuple[float, Any]] = []
-    seen_summaries: set[str] = set()
-    for index, row in enumerate(rows):
-        haystack = f"{row['event_type']} {row['tool_name'] or ''} {row['summary']}".casefold()
-        overlap = sum(1 for term in terms if term in haystack)
-        exact = 4.0 if needle in haystack else 0.0
-        type_boost = {
-            "session_capsule": 2.0,
-            "user_intent": 1.4,
-            "tool_failure": 0.8,
-            "repository_change": 0.4,
-        }.get(str(row["event_type"]), 0.0)
-        recency = max(0.0, 1.0 - index / 300)
-        score = exact + float(overlap) + type_boost + recency
-        normalized_summary = clean(row["summary"], 500).casefold()
-        if (score > recency or not terms) and normalized_summary not in seen_summaries:
-            scored.append((score, row))
-            seen_summaries.add(normalized_summary)
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return [_row_to_observation(row, score=score) for score, row in scored[:capped]]
+    valid_candidates = _valid_rows(
+        repo,
+        list(candidates.values()),
+        component="memory.search.corrupt_row",
+    )
+    ranked = rank_memory_rows(
+        valid_candidates,
+        query=cleaned_query,
+        workspace_root=workspace.root,
+        limit=capped,
+    )
+    return [
+        _row_to_observation(
+            item.row,
+            score=item.score,
+            matched_by=item.matched_by,
+        )
+        for item in ranked
+    ]
 
 
 def memory_context_hash(memory: Any) -> str:
@@ -597,17 +517,25 @@ def memory_context_hash(memory: Any) -> str:
     if isinstance(memory, dict):
         payload: Any = memory
     elif isinstance(memory, list):
-        payload = [
-            {
-                "id": item.get("id"),
-                "status": item.get("status"),
-                "event": item.get("event"),
-                "summary": item.get("summary"),
-                "commit_sha": item.get("commit_sha"),
-            }
-            for item in memory
-            if isinstance(item, dict)
-        ]
+        payload = sorted(
+            (
+                {
+                    "id": item.get("id"),
+                    "status": item.get("status"),
+                    "event": item.get("event"),
+                    "summary": item.get("summary"),
+                    "commit_sha": item.get("commit_sha"),
+                    "branch": item.get("branch"),
+                }
+                for item in memory
+                if isinstance(item, dict)
+            ),
+            key=lambda item: (
+                str(item.get("event") or ""),
+                str(item.get("summary") or ""),
+                str(item.get("id") or ""),
+            ),
+        )
     else:
         payload = []
     encoded = json.dumps(
@@ -629,69 +557,29 @@ def update_observation_status(
 
     if status not in {"active", "resolved", "superseded", "stale", "contradicted"}:
         raise ValueError(f"unsupported memory status: {status}")
-    ensure_schema(repo)
-    scopes = _memory_ids(workspace)
-    placeholders = ",".join("?" for _ in scopes)
-    with repo._lock:
-        cursor = repo._connection.cursor()
-        try:
-            cursor.execute("BEGIN IMMEDIATE")
-            row = cursor.execute(
-                (
-                    "SELECT metadata_json FROM agent_observations "
-                    f"WHERE id = ? AND correlation_id IN ({placeholders})"
-                ),
-                (memory_id, *scopes),
-            ).fetchone()
-            if row is None:
-                repo._connection.commit()
-                return False
-            metadata = _metadata_dict(row["metadata_json"])
-            metadata["memory_status"] = status
-            metadata["updated_at"] = datetime.now(timezone.utc).isoformat()
-            if replacement_id:
-                metadata["superseded_by"] = replacement_id
-            if resolved_by_commit:
-                metadata["resolved_by_commit"] = clean(resolved_by_commit, 64)
-            cursor.execute(
-                "UPDATE agent_observations SET metadata_json = ? WHERE id = ?",
-                (_metadata_json(metadata), memory_id),
-            )
-            repo._connection.commit()
-            return True
-        except Exception:
-            repo._connection.rollback()
-            raise
+    adapter = memory_repository(repo)
+    raw = adapter.observation_metadata(memory_id=memory_id, scopes=_memory_ids(workspace))
+    if raw is None:
+        return False
+    metadata = _metadata_dict(raw)
+    metadata["memory_status"] = status
+    metadata["updated_at"] = datetime.now(timezone.utc).isoformat()
+    if replacement_id:
+        metadata["superseded_by"] = replacement_id
+    if resolved_by_commit:
+        metadata["resolved_by_commit"] = clean(resolved_by_commit, 64)
+    return adapter.update_observation_metadata(
+        memory_id=memory_id,
+        metadata_json=_metadata_json(metadata),
+    )
 
 
 def session_observations(repo: Any, workspace: Any, agent: Any, limit: int = 40) -> list[Any]:
-    ensure_schema(repo)
-    scopes = _memory_ids(workspace)
-    placeholders = ",".join("?" for _ in scopes)
-    session_hash = _session_hash(agent)
-    with repo._lock:
-        capsule = repo._connection.execute(
-            f"""
-            SELECT created_at FROM agent_observations
-            WHERE correlation_id IN ({placeholders}) AND session_id_hash = ?
-              AND event_type = 'session_capsule'
-            ORDER BY created_at DESC, id DESC LIMIT 1
-            """,
-            (*scopes, session_hash),
-        ).fetchone()
-        after = str(capsule["created_at"]) if capsule is not None else ""
-        rows = repo._connection.execute(
-            f"""
-            SELECT id, agent_type, event_type, tool_name, summary, metadata_json, created_at
-            FROM agent_observations
-            WHERE correlation_id IN ({placeholders}) AND session_id_hash = ?
-              AND event_type IN ('user_intent', 'tool_result', 'tool_failure', 'repository_change')
-              AND created_at > ?
-            ORDER BY created_at ASC, id ASC LIMIT ?
-            """,
-            (*scopes, session_hash, after, max(1, min(limit, 100))),
-        ).fetchall()
-    return list(rows)
+    return memory_repository(repo).session_rows(
+        scopes=_memory_ids(workspace),
+        session_hash=_session_hash(agent),
+        limit=max(1, min(limit, 100)),
+    )
 
 
 def record_session_capsule(
@@ -705,15 +593,24 @@ def record_session_capsule(
     rows = session_observations(repo, workspace, agent)
     if not rows:
         return False
-    intents = [clean(row["summary"], 320) for row in rows if row["event_type"] == "user_intent"]
-    progress = [
-        clean(row["summary"], 220)
+    intents = [
+        (str(row["id"]), clean(row["summary"], 320))
         for row in rows
-        if row["event_type"] in {"tool_result", "repository_change"}
+        if row["event_type"] == "user_intent"
     ]
-    failures = [clean(row["summary"], 220) for row in rows if row["event_type"] == "tool_failure"]
-    goal = intents[-1] if intents else "Continue the repository work recorded in this session."
+    progress_rows = [
+        row for row in rows if row["event_type"] in {"tool_result", "repository_change"}
+    ]
+    failure_rows = [row for row in rows if row["event_type"] == "tool_failure"]
+    goal_id, goal = (
+        intents[-1] if intents else ("", "Continue the repository work recorded in this session.")
+    )
+    constraints = [summary for _memory_id, summary in intents[:-1]][-3:]
+    progress = [clean(row["summary"], 220) for row in progress_rows]
+    failures = [clean(row["summary"], 220) for row in failure_rows]
     parts = [f"Goal: {goal}"]
+    if constraints:
+        parts.append("Constraints: " + " | ".join(constraints))
     if progress:
         parts.append("Progress: " + " | ".join(progress[-3:]))
     if failures:
@@ -727,13 +624,38 @@ def record_session_capsule(
         "session_capsule",
         clean(" || ".join(parts), _MAX_SUMMARY),
         metadata={
-            "capsule_schema": 1,
+            "capsule_schema": 2,
             "reason": clean(reason, 80),
             "goal": goal,
+            "constraints": constraints,
             "progress": progress[-5:],
             "failures": failures[-3:],
             "next": clean(next_hint, 240) if next_hint else None,
             "source_event_ids": [str(row["id"]) for row in rows[-20:]],
+            "source": "agent_summary",
+            "provenance": {
+                "goal": {"source": "user_intent", "evidence_id": goal_id},
+                "constraints": [
+                    {"source": "user_intent", "evidence_id": memory_id}
+                    for memory_id, _summary in intents[:-1][-3:]
+                ],
+                "progress": [
+                    {
+                        "source": str(row["event_type"]),
+                        "evidence_id": str(row["id"]),
+                    }
+                    for row in progress_rows[-5:]
+                ],
+                "failures": [
+                    {"source": "tool_failure", "evidence_id": str(row["id"])}
+                    for row in failure_rows[-3:]
+                ],
+                "next": {
+                    "source": "agent_summary",
+                    "kind": "derived_next_step",
+                    "advisory": True,
+                },
+            },
         },
         metadata_limit=_MAX_CAPSULE_METADATA,
     )
@@ -741,34 +663,69 @@ def record_session_capsule(
 
 
 def forget_observation(repo: Any, workspace: Any, memory_id: str) -> bool:
-    ensure_schema(repo)
-    scopes = _memory_ids(workspace)
-    placeholders = ",".join("?" for _ in scopes)
-    with repo._lock:
-        cursor = repo._connection.execute(
-            f"DELETE FROM agent_observations WHERE id = ? AND correlation_id IN ({placeholders})",
-            (memory_id, *scopes),
-        )
-        repo._connection.commit()
-        return cursor.rowcount == 1
+    return memory_repository(repo).forget(
+        memory_id=memory_id,
+        scopes=_memory_ids(workspace),
+    )
 
 
 def clear_workspace_memory(repo: Any, workspace: Any) -> int:
-    ensure_schema(repo)
-    scopes = _memory_ids(workspace)
-    placeholders = ",".join("?" for _ in scopes)
-    with repo._lock:
-        cursor = repo._connection.execute(
-            f"DELETE FROM agent_observations WHERE correlation_id IN ({placeholders})",
-            scopes,
+    return memory_repository(repo).clear(
+        scopes=_memory_ids(workspace),
+        checkout_id=_checkout_scope(workspace),
+    )
+
+
+def workspace_memory_stats(repo: Any, workspace: Any) -> dict[str, Any]:
+    """Return bounded retention statistics without reading explicit tasks."""
+
+    raw = memory_repository(repo).stats(scopes=_memory_ids(workspace))
+    by_event: dict[str, int] = {}
+    by_status: dict[str, int] = {}
+    for row in raw.get("rows", []):
+        count = int(row.get("count", 0))
+        event = str(row.get("event_type") or "unknown")
+        status = _memory_status(row.get("metadata_json"))
+        by_event[event] = by_event.get(event, 0) + count
+        by_status[status] = by_status.get(status, 0) + count
+    return {
+        "total": int(raw.get("total", 0)),
+        "by_event": dict(sorted(by_event.items())),
+        "by_status": dict(sorted(by_status.items())),
+        "explicit_tasks_included": False,
+    }
+
+
+def compact_workspace_memory(
+    repo: Any,
+    workspace: Any,
+    *,
+    keep_recent: int = 100,
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """Remove bounded duplicate/inactive passive memory only."""
+
+    maintenance = storage_maintenance(repo)
+    integrity = maintenance.integrity_check()
+    if not integrity.get("ok"):
+        raise RuntimeError("storage integrity check failed before memory compaction")
+    backup = None if dry_run else maintenance.backup()
+    if backup is not None and not backup.get("ok"):
+        raise RuntimeError(
+            f"storage backup is required before compaction: {backup.get('reason', 'unknown')}"
         )
-        count = int(cursor.rowcount)
-        repo._connection.execute(
-            "DELETE FROM repository_snapshots WHERE workspace_id = ?",
-            (_checkout_scope(workspace),),
-        )
-        repo._connection.commit()
-    return count
+    result = memory_repository(repo).compact(
+        scopes=_memory_ids(workspace),
+        keep_recent=max(1, min(int(keep_recent), 10_000)),
+        dry_run=bool(dry_run),
+    )
+    return {
+        **result,
+        "dry_run": bool(dry_run),
+        "integrity": integrity,
+        "backup": backup,
+        "explicit_tasks_preserved": True,
+    }
 
 
 def _hash_command(digest: Any, command: list[str]) -> bool:
@@ -838,7 +795,7 @@ def _hash_untracked(digest: Any, root: str) -> bool:
     return True
 
 
-def _git_state(root: str) -> tuple[str, str, bool] | None:
+def _git_state(root: str) -> tuple[str, str, bool, str, str, list[str]] | None:
     try:
         head = subprocess.run(
             ["git", "-C", root, "rev-parse", "--verify", "HEAD"],
@@ -903,7 +860,24 @@ def _git_state(root: str) -> tuple[str, str, bool] | None:
         summary = f"HEAD {head_text[:12]}; " + "; ".join(shown)
         if extra:
             summary += f"; +{extra} more"
-    return digest.hexdigest(), summary, bool(lines)
+    branch = ""
+    affected_files: list[str] = []
+    try:
+        branch_result = subprocess.run(
+            ["git", "-C", root, "branch", "--show-current"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+        if branch_result.returncode == 0:
+            branch = clean(branch_result.stdout.strip(), 160)
+        affected_files = [
+            clean(line[3:], 240) for line in lines[:20] if len(line) > 3 and clean(line[3:], 240)
+        ]
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return digest.hexdigest(), summary, bool(lines), head_text, branch, affected_files
 
 
 def capture_repository_snapshot(repo: Any, workspace: Any, agent: Any) -> bool:
@@ -912,43 +886,31 @@ def capture_repository_snapshot(repo: Any, workspace: Any, agent: Any) -> bool:
     state = _git_state(workspace.root)
     if state is None:
         return False
-    digest, summary, dirty = state
-    ensure_schema(repo)
+    digest, summary, dirty, commit_sha, branch, affected_files = state
     now = datetime.now(timezone.utc).isoformat()
     checkout_id = _checkout_scope(workspace)
-    with repo._lock:
-        cursor = repo._connection.cursor()
-        try:
-            cursor.execute("BEGIN IMMEDIATE")
-            previous = cursor.execute(
-                "SELECT digest FROM repository_snapshots WHERE workspace_id = ?",
-                (checkout_id,),
-            ).fetchone()
-            cursor.execute(
-                """
-                INSERT INTO repository_snapshots (workspace_id, digest, summary, updated_at)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(workspace_id) DO UPDATE SET
-                    digest = excluded.digest,
-                    summary = excluded.summary,
-                    updated_at = excluded.updated_at
-                """,
-                (checkout_id, digest, summary, now),
-            )
-            changed = previous is None or previous["digest"] != digest
-            should_record = changed and (previous is not None or dirty)
-            if should_record:
-                _insert_observation(
-                    cursor,
-                    workspace,
-                    agent,
-                    "repository_change",
-                    summary,
-                    metadata={"source": "git_snapshot", "checkout_id": checkout_id},
-                    created_at=now,
-                )
-            repo._connection.commit()
-            return should_record
-        except Exception:
-            repo._connection.rollback()
-            raise
+    observation = _observation_record(
+        workspace,
+        agent,
+        "repository_change",
+        summary,
+        metadata={
+            "source": "git_snapshot",
+            "checkout_id": checkout_id,
+            "commit_sha": commit_sha,
+            "branch": branch,
+            "affected_files": affected_files,
+        },
+        created_at=now,
+    )
+    return memory_repository(repo).upsert_snapshot(
+        checkout_id=checkout_id,
+        digest=digest,
+        summary=summary,
+        updated_at=now,
+        observation=observation,
+        record_initial=dirty,
+        marker_event=_CONTEXT_INJECTED_EVENT,
+        max_observations=_MAX_OBSERVATIONS_PER_WORKSPACE,
+        max_markers=_MAX_CONTEXT_MARKERS_PER_WORKSPACE,
+    )

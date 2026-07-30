@@ -63,3 +63,34 @@ def test_setup_action_is_routed_without_duplicate_action(monkeypatch):
         assert exc.code == 0
 
     assert observed == [(["copilot"], "setup")]
+
+
+def test_storage_check_and_backup_commands_use_shared_database(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    database = tmp_path / "shared.db"
+    backup = tmp_path / "shared.backup.db"
+    monkeypatch.setenv("DJOBS_DB", str(database))
+
+    assert entrypoint._run_storage(["check", "--json"]) == 0
+    check = __import__("json").loads(capsys.readouterr().out)
+    assert check["ok"] is True
+    assert check["database_path"] == str(database.resolve())
+
+    assert entrypoint._run_storage(["backup", str(backup), "--json"]) == 0
+    result = __import__("json").loads(capsys.readouterr().out)
+    assert result["created"] is True
+    assert backup.exists()
+
+
+def test_storage_command_routes_from_public_entrypoint(monkeypatch) -> None:
+    observed: list[list[str]] = []
+    monkeypatch.setattr(entrypoint, "_run_storage", lambda argv: observed.append(list(argv)) or 0)
+    monkeypatch.setattr(entrypoint.sys, "argv", ["djobs", "storage", "check"])
+
+    try:
+        entrypoint.main()
+    except SystemExit as exc:
+        assert exc.code == 0
+
+    assert observed == [["check"]]

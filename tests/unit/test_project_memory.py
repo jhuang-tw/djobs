@@ -10,7 +10,11 @@ import pytest
 from djobs import handoff, lifecycle
 from djobs.handoff import checkpoint, sync_workspace
 from djobs.memory import memory_action
-from djobs.observations import recent_observations, search_observations
+from djobs.observations import (
+    recent_observations,
+    search_observations,
+    update_observation_status,
+)
 from djobs.queue.service import QueueService
 from djobs.storage.sqlite import SQLiteJobRepository
 from djobs.workspace import resolve_agent_session, resolve_workspace
@@ -152,6 +156,8 @@ def test_search_prefers_relevant_older_memory(memory_env) -> None:
     assert results
     assert "OAuth callback" in results[0]["summary"]
     assert results[0]["id"]
+    assert "query_terms" in results[0]["matched_by"]
+    assert results[0]["score"] > 0
 
 
 def test_sync_workspace_query_returns_relevant_memory(memory_env) -> None:
@@ -300,6 +306,34 @@ def test_memory_forget_and_clear_preserve_explicit_tasks(memory_env) -> None:
     assert any(task["id"] == created["task_id"] for task in synced["tasks"])
 
 
+def test_corrupted_memory_row_is_skipped_and_diagnosable(memory_env) -> None:
+    root, _database, repository = memory_env
+    workspace = resolve_workspace(cwd=str(root))
+    agent = resolve_agent_session(workspace, agent_type="copilot", session_id="corrupt")
+    from djobs.observations import record_observation
+
+    record_observation(
+        repository,
+        workspace,
+        agent,
+        "tool_result",
+        "valid parser result",
+    )
+    repository.execute_write(
+        "UPDATE agent_observations SET metadata_json = ? WHERE summary = ?",
+        ("{broken-json", "valid parser result"),
+    )
+
+    results = search_observations(repository, workspace, "parser", limit=5)
+
+    assert results == []
+    from djobs.diagnostics import list_diagnostics
+
+    diagnostics = list_diagnostics(repository)
+    assert any(item["component"] == "memory.search.corrupt_row" for item in diagnostics)
+    assert "broken-json" not in json.dumps(diagnostics)
+
+
 def test_duplicate_prompt_is_stored_once_per_session(memory_env) -> None:
     root, _database, repository = memory_env
     payload = {
@@ -356,3 +390,72 @@ def test_new_prompt_in_same_session_receives_new_relevant_context(memory_env) ->
     assert "state normalization" in first["additionalContext"]
     assert duplicate == {}
     assert second["additionalContext"]
+
+
+def test_memory_stats_and_compaction_preserve_explicit_tasks(memory_env) -> None:
+    root, _database, repository = memory_env
+    workspace = resolve_workspace(cwd=str(root))
+    agent = resolve_agent_session(workspace, agent_type="copilot", session_id="retention")
+    from djobs.observations import record_observation
+
+    for _ in range(3):
+        record_observation(
+            repository,
+            workspace,
+            agent,
+            "tool_result",
+            "duplicate parser result",
+        )
+    record_observation(
+        repository,
+        workspace,
+        agent,
+        "tool_failure",
+        "old parser failure",
+    )
+    stale_id = next(
+        item["id"]
+        for item in recent_observations(repository, workspace, limit=10)
+        if item["summary"] == "old parser failure"
+    )
+    assert update_observation_status(repository, workspace, stale_id, "resolved")
+    explicit = json.loads(
+        checkpoint(
+            "Preserve explicit task during compaction",
+            cwd=str(root),
+            agent_type="copilot",
+            session_id="retention",
+        )
+    )
+
+    stats = json.loads(
+        memory_action("stats", cwd=str(root), agent_type="copilot", session_id="retention")
+    )
+    preview = json.loads(
+        memory_action(
+            "compact",
+            dry_run=True,
+            keep_recent=1,
+            cwd=str(root),
+            agent_type="copilot",
+            session_id="retention",
+        )
+    )
+    applied = json.loads(
+        memory_action(
+            "compact",
+            dry_run=False,
+            confirm=True,
+            keep_recent=1,
+            cwd=str(root),
+            agent_type="copilot",
+            session_id="retention",
+        )
+    )
+
+    assert stats["total"] == 4
+    assert stats["by_status"] == {"active": 3, "resolved": 1}
+    assert preview["dry_run"] is True and preview["total"] >= 2
+    assert applied["dry_run"] is False and applied["total"] == preview["total"]
+    synced = json.loads(sync_workspace(cwd=str(root), agent_type="copilot", session_id="reader"))
+    assert any(task["id"] == explicit["task_id"] for task in synced["tasks"])

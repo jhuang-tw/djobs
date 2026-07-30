@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
 
@@ -25,6 +26,27 @@ def test_create_job_persists_job_and_event(tmp_path) -> None:
     assert stored_job.payload == {"message": "hello"}
     assert stored_job.status == JobStatus.PENDING
     assert [event.event_type for event in events] == ["job_created"]
+
+
+def test_duplicate_create_rolls_back_before_followup_transaction(tmp_path) -> None:
+    database = tmp_path / "jobs.db"
+    repository = SQLiteJobRepository.from_path(database)
+    first = Job(type="demo.echo", idempotency_key="same-key")
+    duplicate = Job(type="demo.echo", idempotency_key="same-key")
+    repository.create_job(first)
+
+    with pytest.raises(sqlite3.IntegrityError):
+        repository.create_job(duplicate)
+
+    assert repository.in_transaction is False
+    with repository.transaction(immediate=True) as transaction:
+        transaction.execute(
+            "UPDATE jobs SET status = 'running' WHERE id = ?",
+            (first.id,),
+        )
+
+    observer = SQLiteJobRepository.from_path(database)
+    assert observer.require_job(first.id).status == JobStatus.RUNNING
 
 
 def test_claim_next_job_marks_running_and_records_event(tmp_path) -> None:
@@ -440,3 +462,47 @@ def test_list_jobs_by_correlation_ids_empty_input(tmp_path) -> None:
     repository.create_job(Job(type="a", correlation_id="wf"))
 
     assert repository.list_jobs_by_correlation_ids([]) == []
+
+
+def test_repository_applies_canonical_sqlite_settings(tmp_path) -> None:
+    repository = SQLiteJobRepository.from_path(tmp_path / "settings.db")
+
+    assert repository.read_one("PRAGMA foreign_keys")[0] == 1
+    assert repository.read_one("PRAGMA busy_timeout")[0] == 5000
+    assert repository.read_one("PRAGMA synchronous")[0] == 1
+    assert repository.read_one("PRAGMA temp_store")[0] == 2
+    assert repository.read_one("PRAGMA journal_mode")[0] == "wal"
+
+
+def test_custom_busy_timeout_is_applied_for_fail_open_clients(tmp_path) -> None:
+    repository = SQLiteJobRepository.from_path(
+        tmp_path / "diagnostics.db",
+        busy_timeout_ms=75,
+    )
+
+    assert repository.read_one("PRAGMA busy_timeout")[0] == 75
+
+
+def test_repository_transaction_rolls_back_and_supports_nested_savepoints(tmp_path) -> None:
+    repository = SQLiteJobRepository.from_path(tmp_path / "transactions.db")
+    repository.execute_write("CREATE TABLE transaction_probe (value TEXT NOT NULL)")
+
+    with (
+        pytest.raises(RuntimeError, match="rollback"),
+        repository.transaction(immediate=True) as transaction,
+    ):
+        transaction.execute("INSERT INTO transaction_probe (value) VALUES (?)", ("outer",))
+        raise RuntimeError("rollback")
+    assert repository.read_all("SELECT value FROM transaction_probe") == []
+
+    with repository.transaction(immediate=True) as transaction:
+        transaction.execute("INSERT INTO transaction_probe (value) VALUES (?)", ("kept",))
+        with (
+            pytest.raises(ValueError, match="nested"),
+            repository.transaction() as nested,
+        ):
+            nested.execute("INSERT INTO transaction_probe (value) VALUES (?)", ("discarded",))
+            raise ValueError("nested")
+
+    rows = repository.read_all("SELECT value FROM transaction_probe ORDER BY value")
+    assert [row["value"] for row in rows] == ["kept"]

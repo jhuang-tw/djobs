@@ -86,7 +86,14 @@ def main(argv: list[str] | None = None) -> int:
             "stop": lifecycle.stop,
         }
         result = handlers[args.event](data, agent_type=client)
-    except Exception:
+    except Exception as exc:
+        from djobs.diagnostics import record_shared_failure
+
+        record_shared_failure(
+            "hook_entrypoint.dispatch",
+            exc,
+            context={"event": args.event, "client": client},
+        )
         result = {}
 
     _emit(result, args.output)

@@ -12,13 +12,15 @@ from djobs.handoff import _resolve
 from djobs.observations import (
     MemoryStatus,
     clear_workspace_memory,
+    compact_workspace_memory,
     forget_observation,
     recent_observations,
     search_observations,
     update_observation_status,
+    workspace_memory_stats,
 )
 
-MemoryAction = Literal["list", "search", "status", "forget", "clear"]
+MemoryAction = Literal["list", "search", "status", "forget", "clear", "stats", "compact"]
 
 
 def _dumps(value: Any) -> str:
@@ -49,6 +51,8 @@ def memory_action(
     replacement_id: str | None = None,
     resolved_by_commit: str | None = None,
     confirm: bool = False,
+    dry_run: bool = True,
+    keep_recent: int = 100,
     roots: list[Any] | tuple[Any, ...] | None = None,
     cwd: str | None = None,
     agent_type: str | None = None,
@@ -134,6 +138,45 @@ def memory_action(
                     "forgotten": forgotten,
                 }
             )
+        if action == "stats":
+            stats = workspace_memory_stats(repo, workspace)
+            return _dumps(
+                {
+                    "ok": True,
+                    "action": action,
+                    "workspace": workspace.name,
+                    "repo_family_id": workspace.repo_family_id,
+                    **stats,
+                }
+            )
+        if action == "compact":
+            if not dry_run and not confirm:
+                return _dumps(
+                    {
+                        "ok": False,
+                        "action": action,
+                        "requires_confirmation": True,
+                        "message": (
+                            "Set confirm=true to delete duplicate and inactive passive memory. "
+                            "Explicit tasks are always preserved."
+                        ),
+                    }
+                )
+            result = compact_workspace_memory(
+                repo,
+                workspace,
+                keep_recent=keep_recent,
+                dry_run=dry_run,
+            )
+            return _dumps(
+                {
+                    "ok": True,
+                    "action": action,
+                    "workspace": workspace.name,
+                    "repo_family_id": workspace.repo_family_id,
+                    **result,
+                }
+            )
         if action == "clear":
             if not confirm:
                 return _dumps(
@@ -160,6 +203,9 @@ def memory_action(
             )
         return _dumps({"ok": False, "error": f"unsupported memory action: {action}"})
     except Exception as exc:
+        from djobs.diagnostics import record_shared_failure
+
+        record_shared_failure("memory.action", exc, context={"action": action})
         return _dumps(
             {
                 "ok": False,
@@ -188,11 +234,20 @@ def main(argv: list[str] | None = None) -> int:
     status_parser.add_argument("--resolved-by-commit")
     forget_parser = subparsers.add_parser("forget", help="Forget one memory id")
     forget_parser.add_argument("memory_id")
+    subparsers.add_parser("stats", help="Show passive-memory retention statistics")
+    compact_parser = subparsers.add_parser(
+        "compact", help="Remove duplicate and inactive passive memory"
+    )
+    compact_parser.add_argument(
+        "--dry-run", action="store_true", help="Preview removals without deleting rows"
+    )
+    compact_parser.add_argument("--keep-recent", type=int, default=100)
+    compact_parser.add_argument("--yes", action="store_true", help="Confirm compaction")
     clear_parser = subparsers.add_parser("clear", help="Clear passive memory for this repo family")
     clear_parser.add_argument("--yes", action="store_true", help="Confirm destructive clear")
     args = parser.parse_args(argv)
     raw_action = args.action or "list"
-    if raw_action not in {"list", "search", "status", "forget", "clear"}:
+    if raw_action not in {"list", "search", "status", "forget", "clear", "stats", "compact"}:
         parser.error(f"unsupported memory action: {raw_action}")
     action = cast(MemoryAction, raw_action)
     raw_status = getattr(args, "status", None)
@@ -205,6 +260,8 @@ def main(argv: list[str] | None = None) -> int:
         replacement_id=getattr(args, "replacement_id", None),
         resolved_by_commit=getattr(args, "resolved_by_commit", None),
         confirm=bool(getattr(args, "yes", False)),
+        dry_run=bool(getattr(args, "dry_run", False)),
+        keep_recent=int(getattr(args, "keep_recent", 100)),
         cwd=os.getcwd(),
         agent_type="cli",
     )

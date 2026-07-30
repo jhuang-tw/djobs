@@ -102,6 +102,9 @@ def run() -> dict[str, Any]:
 
         stale_probe = search_observations(repository, target, "Zustand store", limit=3)
         selected = search_observations(repository, target, "continue parser OAuth work", limit=6)
+        selected_again = search_observations(
+            repository, target, "continue parser OAuth work", limit=6
+        )
         context_hash = memory_context_hash(selected)
         replay = json.dumps(
             {
@@ -122,6 +125,10 @@ def run() -> dict[str, Any]:
                 1.0 if any(item["id"] == obsolete["id"] for item in stale_probe) else 0.0
             ),
             "selected_context_items": len(selected),
+            "explainable_context_items": sum(
+                1 for item in selected if item.get("score") is not None and item.get("matched_by")
+            ),
+            "deterministic_selection": selected == selected_again,
             "unchanged_replay_items": len(unchanged.get("observations", [])),
             "context_hash_noop": unchanged.get("memory_unchanged") is True,
             "pass": (
@@ -129,6 +136,8 @@ def run() -> dict[str, Any]:
                 and source.checkout_id != target.checkout_id
                 and hits == len(cases)
                 and all(item["id"] != obsolete["id"] for item in stale_probe)
+                and selected == selected_again
+                and all(item.get("matched_by") for item in selected)
                 and unchanged.get("memory_unchanged") is True
                 and unchanged.get("observations") == []
             ),

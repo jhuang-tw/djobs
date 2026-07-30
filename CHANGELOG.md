@@ -14,6 +14,12 @@ public interfaces may still change between minor versions. Entries below use
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-07-31
+
+### Added
+- `[release]` Harden storage, recovery, diagnostics, and privacy (#53)
+
+
 ## [0.18.4] - 2026-07-26
 
 ### Fixed

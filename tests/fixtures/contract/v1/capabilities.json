@@ -1,0 +1,20 @@
+{
+  "schema": {"major": 1, "minor": 0},
+  "provider": {"name": "djobs", "version": "0.19.0", "build_commit": "unavailable"},
+  "operation": "capabilities",
+  "authority": "advisory",
+  "side_effects": false,
+  "writes_database": false,
+  "generated_at": "2026-08-05T08:00:00+00:00",
+  "ok": true,
+  "mode": "advisory",
+  "supported_schema_versions": [{"major": 1, "min_minor": 0, "max_minor": 0}],
+  "compatibility": {},
+  "operations": {
+    "capabilities": {},
+    "observation": {},
+    "receipt": {},
+    "checkpoint": {},
+    "handoff": {}
+  }
+}

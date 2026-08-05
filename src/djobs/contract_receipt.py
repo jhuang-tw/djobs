@@ -33,13 +33,15 @@ def _counts_are_consistent(
     budget_candidates = _integer(budget.get("candidate_count"))
     budget_selected = _integer(budget.get("selected_count"))
     observations = response.get("repository_observations")
-    if None in (candidate_count, selected_count, rejected_count):
+    if candidate_count is None or selected_count is None or rejected_count is None:
         return False
     if not isinstance(observations, list):
         return False
     if candidate_count < 0 or selected_count < 0 or rejected_count < 0:
         return False
-    if selected_count > candidate_count or rejected_count != candidate_count - selected_count:
+    if selected_count > candidate_count:
+        return False
+    if rejected_count != candidate_count - selected_count:
         return False
     if selected_count != len(observations):
         return False

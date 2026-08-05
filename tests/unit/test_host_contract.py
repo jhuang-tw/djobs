@@ -272,9 +272,7 @@ def test_contract_json_is_ascii_safe_under_cp950() -> None:
 def test_runtime_payloads_validate_against_published_schemas(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    schema_root = (
-        Path(contract.__file__).parent / "schemas" / "host_contract" / "v1"
-    )
+    schema_root = Path(contract.__file__).parent / "schemas" / "host_contract" / "v1"
     capability_schema = json.loads(
         (schema_root / "capabilities.schema.json").read_text(encoding="utf-8")
     )

@@ -15,7 +15,14 @@ from urllib.parse import quote
 
 from djobs import __version__
 from djobs.privacy import redact_text
-from djobs.workspace import resolve_workspace, shared_db_path
+from djobs.workspace import (
+    _family_id,
+    _normalize_remote,
+    _workspace_id,
+    normalize_path,
+    path_key,
+    shared_db_path,
+)
 
 
 def _clean(value: Any, limit: int) -> str:
@@ -40,21 +47,55 @@ def _text(raw: bytes | None) -> str:
     return (raw or b"").decode("utf-8", errors="replace").strip()
 
 
+def _repository_root(cwd: str | None) -> str:
+    candidate = Path(cwd or os.getcwd()).expanduser()
+    with suppress(OSError):
+        candidate = candidate.resolve(strict=False)
+    if candidate.is_file():
+        candidate = candidate.parent
+    discovered = _text(_git(str(candidate), "rev-parse", "--show-toplevel"))
+    return normalize_path(discovered or str(candidate))
+
+
+def _repository_family_identity(root: str, checkout_identity: str) -> str:
+    remote = _text(_git(root, "config", "--get", "remote.origin.url"))
+    roots = _text(_git(root, "rev-list", "--max-parents=0", "--all"))
+    root_commit = sorted(roots.splitlines())[0] if roots else ""
+    common_dir = _text(
+        _git(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    )
+    if remote:
+        identity = f"remote:{_normalize_remote(remote)}"
+        if root_commit:
+            identity += f"|root:{root_commit}"
+        return identity
+    if common_dir:
+        identity = f"common:{path_key(common_dir)}"
+        if root_commit:
+            identity += f"|root:{root_commit}"
+        return identity
+    return f"checkout:{checkout_identity}"
+
+
 def repository_state(cwd: str | None) -> dict[str, Any]:
-    workspace = resolve_workspace(cwd=cwd or os.getcwd())
-    head_raw = _git(workspace.root, "rev-parse", "--verify", "HEAD")
-    status = _git(workspace.root, "status", "--porcelain=v1", "-z") or b""
+    root = _repository_root(cwd)
+    checkout_identity = path_key(root)
+    checkout_id = _workspace_id(checkout_identity)
+    family_identity = _repository_family_identity(root, checkout_identity)
+    repo_family_id = _family_id(family_identity)
+    head_raw = _git(root, "rev-parse", "--verify", "HEAD")
+    status = _git(root, "status", "--porcelain=v1", "-z") or b""
     digest = hashlib.sha256((head_raw or b"unborn") + b"\x00" + status).hexdigest()
     return {
-        "name": Path(workspace.root).name,
-        "fingerprint": workspace.repo_family_id,
+        "name": Path(root).name,
+        "fingerprint": repo_family_id,
         "head": _text(head_raw) or "unborn",
-        "branch": _text(_git(workspace.root, "branch", "--show-current")),
+        "branch": _text(_git(root, "branch", "--show-current")),
         "dirty": bool(status),
-        "checkout_id": workspace.checkout_id,
+        "checkout_id": checkout_id,
         "workspace_fingerprint": "sha256:" + digest,
         "identity_confidence": "exact" if head_raw is not None else "directory_only",
-        "_scopes": tuple(dict.fromkeys((workspace.repo_family_id, workspace.checkout_id))),
+        "_scopes": tuple(dict.fromkeys((repo_family_id, checkout_id))),
     }
 
 

@@ -127,9 +127,7 @@ def capabilities_payload() -> dict[str, Any]:
         {
             "ok": True,
             "mode": "advisory",
-            "supported_schema_versions": [
-                {"major": 1, "min_minor": 0, "max_minor": SCHEMA_MINOR}
-            ],
+            "supported_schema_versions": [{"major": 1, "min_minor": 0, "max_minor": SCHEMA_MINOR}],
             "compatibility": {
                 "same_major": "additive-only",
                 "unknown_fields": "ignore",
@@ -253,9 +251,7 @@ def build_observation_response(
                 "request_id": request_id,
                 "state": "ready" if candidates else "empty",
                 "repository": {
-                    key: value
-                    for key, value in repository.items()
-                    if not key.startswith("_")
+                    key: value for key, value in repository.items() if not key.startswith("_")
                 },
                 "requested_filters": filters,
                 "filter_execution": "sqlite_query_stage",

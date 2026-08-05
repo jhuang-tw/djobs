@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jhuang-tw.github.io/djobs/schemas/host-contract/v1/capabilities.schema.json",
+  "title": "djobs advisory host capabilities v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "provider",
+    "operation",
+    "authority",
+    "side_effects",
+    "writes_database",
+    "generated_at",
+    "ok",
+    "mode",
+    "supported_schema_versions",
+    "compatibility",
+    "operations"
+  ],
+  "properties": {
+    "schema": {
+      "type": "object",
+      "required": ["major", "minor"],
+      "properties": {
+        "major": {"const": 1},
+        "minor": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": true
+    },
+    "provider": {"type": "object"},
+    "operation": {"const": "capabilities"},
+    "authority": {"const": "advisory"},
+    "side_effects": {"const": false},
+    "writes_database": {"const": false},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "ok": {"const": true},
+    "mode": {"const": "advisory"},
+    "supported_schema_versions": {"type": "array", "minItems": 1},
+    "compatibility": {"type": "object"},
+    "operations": {
+      "type": "object",
+      "required": ["capabilities", "observation", "receipt", "checkpoint", "handoff"]
+    }
+  },
+  "additionalProperties": true
+}

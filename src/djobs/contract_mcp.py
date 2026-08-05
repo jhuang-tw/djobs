@@ -8,12 +8,12 @@ from urllib.parse import unquote, urlparse
 
 from mcp.server.fastmcp import Context, FastMCP
 
+from djobs.contract_receipt import verify_receipt_payload
 from djobs.host_contract import (
     ObservationRequest,
     build_observation_response,
     capabilities_payload,
     dumps,
-    verify_receipt_payload,
 )
 
 _server = FastMCP(

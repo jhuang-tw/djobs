@@ -330,29 +330,8 @@ def _receipt(result, filters, repository, candidates, limited, selected, started
 
 
 def verify_receipt_payload(response: Any) -> dict[str, Any]:
-    result = envelope("receipt")
-    receipt = response.get("receipt") if isinstance(response, dict) else None
-    if not isinstance(receipt, dict):
-        result.update(
-            {
-                "ok": False,
-                "continue_workflow": True,
-                "valid": False,
-                "error": {"code": "missing_receipt", "message": "response has no receipt"},
-            }
-        )
-        return result
-    actual = _hash({key: value for key, value in response.items() if key != "receipt"})
-    expected = str(receipt.get("output_hash") or "")
-    result.update(
-        {
-            "ok": True,
-            "continue_workflow": True,
-            "valid": bool(expected) and expected == actual,
-            "request_id": receipt.get("request_id"),
-            "expected_output_hash": expected,
-            "actual_output_hash": actual,
-            "receipt": receipt,
-        }
-    )
-    return result
+    """Compatibility wrapper for the hardened receipt verifier."""
+
+    from djobs.contract_receipt import verify_receipt_payload as verify
+
+    return verify(response)

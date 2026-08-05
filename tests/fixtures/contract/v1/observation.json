@@ -1,0 +1,38 @@
+{
+  "schema": {"major": 1, "minor": 0},
+  "provider": {"name": "djobs", "version": "0.19.0", "build_commit": "unavailable"},
+  "operation": "observation",
+  "authority": "advisory",
+  "side_effects": false,
+  "writes_database": false,
+  "generated_at": "2026-08-05T08:00:00+00:00",
+  "ok": true,
+  "continue_workflow": true,
+  "request_id": "request-1",
+  "repository": {
+    "fingerprint": "family:test",
+    "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "dirty": false,
+    "checkout_id": "repo:test",
+    "workspace_fingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "identity_confidence": "exact"
+  },
+  "requested_filters": {},
+  "repository_observations": [],
+  "budget": {
+    "requested_tokens": 800,
+    "tokens_before_truncation": 400,
+    "estimated_selected_tokens": 450,
+    "candidate_count": 0,
+    "selected_count": 0,
+    "dropped_for_budget_count": 0,
+    "truncated": false,
+    "ranking_method": "djobs-observation-rank-v1",
+    "critical_evidence_omitted": false
+  },
+  "receipt": {
+    "receipt_kind": "observation_query",
+    "request_id": "request-1",
+    "output_hash": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  }
+}

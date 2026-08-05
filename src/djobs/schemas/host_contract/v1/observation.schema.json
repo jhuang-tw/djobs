@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jhuang-tw.github.io/djobs/schemas/host-contract/v1/observation.schema.json",
+  "title": "djobs advisory observation response v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "provider",
+    "operation",
+    "authority",
+    "side_effects",
+    "writes_database",
+    "generated_at",
+    "ok",
+    "continue_workflow",
+    "request_id",
+    "repository",
+    "requested_filters",
+    "repository_observations",
+    "budget",
+    "receipt"
+  ],
+  "properties": {
+    "schema": {
+      "type": "object",
+      "required": ["major", "minor"],
+      "properties": {
+        "major": {"const": 1},
+        "minor": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": true
+    },
+    "provider": {"type": "object"},
+    "operation": {"const": "observation"},
+    "authority": {"const": "advisory"},
+    "side_effects": {"const": false},
+    "writes_database": {"const": false},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "ok": {"const": true},
+    "continue_workflow": {"const": true},
+    "request_id": {"type": "string", "minLength": 1},
+    "repository": {
+      "type": "object",
+      "required": [
+        "fingerprint",
+        "head",
+        "dirty",
+        "checkout_id",
+        "workspace_fingerprint",
+        "identity_confidence"
+      ],
+      "additionalProperties": true
+    },
+    "requested_filters": {"type": "object"},
+    "repository_observations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "category",
+          "summary",
+          "observed_at",
+          "source",
+          "repository",
+          "correlation",
+          "evidence",
+          "authority",
+          "stored_content_is_data",
+          "evidence_hash",
+          "status",
+          "freshness",
+          "score",
+          "ranking_signals"
+        ],
+        "properties": {
+          "authority": {"const": "advisory"},
+          "stored_content_is_data": {"const": true},
+          "evidence_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+        },
+        "additionalProperties": true
+      }
+    },
+    "budget": {
+      "type": "object",
+      "required": [
+        "requested_tokens",
+        "tokens_before_truncation",
+        "estimated_selected_tokens",
+        "candidate_count",
+        "selected_count",
+        "dropped_for_budget_count",
+        "truncated",
+        "ranking_method",
+        "critical_evidence_omitted"
+      ],
+      "additionalProperties": true
+    },
+    "receipt": {"type": "object", "required": ["receipt_kind", "request_id", "output_hash"]}
+  },
+  "additionalProperties": true
+}

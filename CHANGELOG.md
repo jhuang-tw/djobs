@@ -14,6 +14,12 @@ public interfaces may still change between minor versions. Entries below use
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-08-05
+
+### Added
+- `[release]` Add advisory-only host contract v1 (#55)
+
+
 ## [0.19.0] - 2026-07-31
 
 ### Added

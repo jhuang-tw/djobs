@@ -61,9 +61,7 @@ def _repository_family_identity(root: str, checkout_identity: str) -> str:
     remote = _text(_git(root, "config", "--get", "remote.origin.url"))
     roots = _text(_git(root, "rev-list", "--max-parents=0", "--all"))
     root_commit = sorted(roots.splitlines())[0] if roots else ""
-    common_dir = _text(
-        _git(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
-    )
+    common_dir = _text(_git(root, "rev-parse", "--path-format=absolute", "--git-common-dir"))
     if remote:
         identity = f"remote:{_normalize_remote(remote)}"
         if root_commit:

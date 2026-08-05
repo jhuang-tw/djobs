@@ -127,9 +127,7 @@ def capabilities_payload() -> dict[str, Any]:
         {
             "ok": True,
             "mode": "advisory",
-            "supported_schema_versions": [
-                {"major": 1, "min_minor": 0, "max_minor": SCHEMA_MINOR}
-            ],
+            "supported_schema_versions": [{"major": 1, "min_minor": 0, "max_minor": SCHEMA_MINOR}],
             "compatibility": {
                 "same_major": "additive-only",
                 "unknown_fields": "ignore",

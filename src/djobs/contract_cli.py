@@ -8,6 +8,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from djobs.contract_receipt import verify_receipt_payload
 from djobs.host_contract import (
     SCHEMA_MAJOR,
     STATUSES,
@@ -16,7 +17,6 @@ from djobs.host_contract import (
     capabilities_payload,
     dumps,
     error_payload,
-    verify_receipt_payload,
 )
 
 
@@ -31,7 +31,13 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="operation", required=True)
     commands.add_parser("capabilities")
     observation = commands.add_parser("observation")
-    for flag in ("query", "task-id", "feature-id", "repository-head", "repository-fingerprint"):
+    for flag in (
+        "query",
+        "task-id",
+        "feature-id",
+        "repository-head",
+        "repository-fingerprint",
+    ):
         observation.add_argument(f"--{flag}")
     observation.add_argument("--kind")
     observation.add_argument("--status", default="active", choices=STATUSES)

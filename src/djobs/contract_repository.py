@@ -137,7 +137,7 @@ def _query_rows(connection, repository, request, now) -> list[dict[str, Any]]:
         SELECT id, correlation_id, agent_type, session_id_hash, event_type,
                tool_name, summary, metadata_json, created_at
         FROM agent_observations
-        WHERE {' AND '.join(where)}
+        WHERE {" AND ".join(where)}
         ORDER BY created_at DESC, id DESC LIMIT ?
     """
     return [dict(row) for row in connection.execute(sql, values).fetchall()]
@@ -206,8 +206,7 @@ def _item(row, meta, repository, request, now, score, signals, hash_value):
     if request.max_age_seconds is not None:
         try:
             expires = _iso(
-                parse_time(observed_at, "created_at")
-                + timedelta(seconds=request.max_age_seconds)
+                parse_time(observed_at, "created_at") + timedelta(seconds=request.max_age_seconds)
             )
         except ValueError:
             pass

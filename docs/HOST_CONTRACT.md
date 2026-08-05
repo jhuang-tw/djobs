@@ -46,7 +46,14 @@ consumer opt-in.
 
 ## Receipt semantics
 
-The embedded receipt proves which deterministic query produced a response and binds the output
-hash, filters, repository identity, HEAD, budget, counts, and truncation state. It does not prove
-that an external host consumed or accepted the evidence. The host must keep its own audit record
-of accepted and rejected observation IDs.
+The embedded receipt deterministically binds the response body to the requested filters,
+repository identity, HEAD, provider build, budget, counts, and truncation state. The
+`djobs contract ... receipt` command and advisory MCP `receipt` tool verify both the output
+digest and cross-field consistency. Verification returns per-field `checks` and
+`failed_checks`, allowing hosts to record the exact rejection reason.
+
+The SHA-256 digest is an integrity checksum, not a signature or proof of authentic producer
+identity. A valid result means that the response and receipt are internally consistent. It does
+not prove that an external host consumed or accepted the evidence. The host must keep its own
+audit record of accepted and rejected observation IDs and must fail open when verification is
+unavailable.

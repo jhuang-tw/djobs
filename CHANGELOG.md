@@ -14,6 +14,12 @@ public interfaces may still change between minor versions. Entries below use
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-08-05
+
+### Fixed
+- `[release]` Harden advisory receipt verification (#57)
+
+
 ## [0.20.0] - 2026-08-05
 
 ### Added

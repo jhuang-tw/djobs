@@ -1,0 +1,19 @@
+{
+  "receipt_kind": "observation_query",
+  "request_id": "request-1",
+  "query_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "requested_at": "2026-08-05T08:00:00+00:00",
+  "completed_at": "2026-08-05T08:00:01+00:00",
+  "candidate_count": 1,
+  "selected_count": 1,
+  "rejected_count": 0,
+  "rejection_reasons": {},
+  "output_hash": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "hash_scope": "response_without_receipt",
+  "provider_version": "0.19.0",
+  "provider_build_commit": "unavailable",
+  "repository_fingerprint": "family:test",
+  "repository_head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "token_budget": {},
+  "truncated": false
+}

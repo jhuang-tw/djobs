@@ -7,6 +7,7 @@ import json
 import os
 import sqlite3
 import subprocess
+from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -204,12 +205,10 @@ def _item(row, meta, repository, request, now, score, signals, hash_value):
     )
     expires = None
     if request.max_age_seconds is not None:
-        try:
+        with suppress(ValueError):
             expires = _iso(
                 parse_time(observed_at, "created_at") + timedelta(seconds=request.max_age_seconds)
             )
-        except ValueError:
-            pass
     code = meta.get("return_code", meta.get("returncode"))
     result = {
         "id": str(row.get("id") or ""),

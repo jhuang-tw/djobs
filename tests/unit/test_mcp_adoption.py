@@ -15,8 +15,7 @@ def test_remember_current_request_is_passive_bounded_and_scoped(monkeypatch) -> 
     monkeypatch.setattr(
         mcp_adoption,
         "_resolve",
-        lambda **kwargs: calls.append(("resolve", kwargs))
-        or (workspace, agent, object(), repo),
+        lambda **kwargs: calls.append(("resolve", kwargs)) or (workspace, agent, object(), repo),
     )
     monkeypatch.setattr(
         mcp_adoption,

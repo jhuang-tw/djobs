@@ -94,8 +94,9 @@ def test_public_surfaces_share_memory_first_recovery_positioning() -> None:
             assert marker in text, f"{path} is missing shared public marker: {marker}"
 
     readme = surfaces["README.md"]
-    assert "continue the repository" in readme
-    assert "see it work in 60 seconds" in readme
+    assert "shared local project memory" in readme
+    assert "see what it knows before trusting it" in readme
+    assert "djobs context" in readme
     assert "djobs memory list" in readme
     assert "compatibility" in readme
 

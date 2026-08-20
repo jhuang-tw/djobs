@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from djobs import contract_cli, public_cli
+from djobs import context_cli, contract_cli, public_cli
 
 
 def test_contract_cli_rejects_unknown_major_as_fail_open(capsys) -> None:
@@ -34,3 +34,22 @@ def test_public_cli_routes_contract_without_entering_established_cli(
 
     assert exc.value.code == 0
     assert called == [["capabilities"]]
+
+
+def test_public_cli_routes_context_without_entering_established_cli(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    called: list[list[str]] = []
+
+    def fake_context(argv):
+        called.append(list(argv))
+        return 0
+
+    monkeypatch.setattr(context_cli, "main", fake_context)
+    monkeypatch.setattr(sys, "argv", ["djobs", "context", "fix oauth"])
+
+    with pytest.raises(SystemExit) as exc:
+        public_cli.main()
+
+    assert exc.value.code == 0
+    assert called == [["fix oauth"]]

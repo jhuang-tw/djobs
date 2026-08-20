@@ -1,8 +1,8 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
   "name": "io.github.jhuang-tw/djobs",
-  "title": "djobs \u2014 Local Agent Memory",
-  "description": "Local project memory that recovers coding goals, failures, progress, and Git changes.",
+  "title": "djobs — Shared Project Memory for Coding Agents",
+  "description": "Shared local project memory and context recovery for AI coding agents over MCP.",
   "version": "0.20.1",
   "repository": {
     "url": "https://github.com/jhuang-tw/djobs",

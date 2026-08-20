@@ -7,8 +7,8 @@
 <h1 align="center">djobs</h1>
 
 <p align="center">
-  <strong>Local project memory for AI coding agents.</strong><br>
-  Continue the repository instead of explaining it again in every new session.
+  <strong>Remember the project. Coordinate the work. Finish with evidence.</strong><br>
+  Local project memory and cross-agent coordination for AI coding agents, with optional ARUN Project Mode for durable goals and verified completion.
 </p>
 
 <p align="center">
@@ -19,7 +19,24 @@
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/License-MIT-blue.svg"></a>
 </p>
 
-## See it work in 60 seconds
+## Why djobs
+
+AI coding agents usually lose the most useful state at session boundaries: the user's real constraint,
+the failed approach that should not be repeated, the files already changed, the remaining test, and
+who currently owns a piece of work.
+
+`djobs` keeps that state attached to the repository instead of one chat window.
+
+| Layer | What it answers | djobs capability |
+|---|---|---|
+| Memory | **What already happened?** | Local SQLite memory, query-aware recall, session capsules, Git state |
+| Coordination | **Who owns this work?** | Explicit checkpoint/handoff, leases, duplicate-work avoidance |
+| Completion | **Is the project actually done?** | Optional ARUN Project Mode for durable goals, recovery, scope and evidence-gated completion |
+
+The default product stays lightweight and local. ARUN is optional and is never required for normal
+memory or coordination.
+
+## Start in 60 seconds
 
 Install the VS Code extension, or install the CLI once:
 
@@ -27,124 +44,149 @@ Install the VS Code extension, or install the CLI once:
 pipx install djobs
 # or: uv tool install djobs
 
-djobs setup          # defaults to Copilot; add codex/claude/gemini/kimi/all as needed
+djobs setup          # defaults to Copilot; codex/claude/gemini/kimi/all are supported
 djobs doctor
 djobs memory list
 ```
 
-A healthy first run does **not** require a project-local `.vscode/mcp.json`. `djobs setup`
-explicitly configures user-level host adapters. The VS Code extension can register MCP natively and,
-on the first MCP call, may create `~/.djobs/global.db` and configure the detected Copilot adapter.
-Those are local user-level changes rather than a read-only probe; use `djobs doctor` to inspect them
-and `djobs remove copilot` to remove the managed adapter.
+A healthy first run does **not** require a project-local `.vscode/mcp.json`. `djobs setup` configures
+user-level host adapters. The VS Code extension can register the MCP server natively.
 
-After an agent session records work, `djobs memory list` shows what can be recovered:
+After a configured coding session, memory can contain bounded observations such as:
 
 ```json
 {
-  "ok": true,
-  "workspace": "oauth-service",
-  "count": 3,
-  "memories": [
-    {
-      "id": "6f3c...",
-      "event": "user_intent",
-      "summary": "Fix the OAuth callback loop without changing the public API.",
-      "status": "active"
-    },
-    {
-      "id": "ab91...",
-      "event": "tool_failure",
-      "summary": "Normalization removed '+' from the state parameter.",
-      "status": "active"
-    },
-    {
-      "id": "d204...",
-      "event": "session_capsule",
-      "summary": "Parser updated; one integration test remains.",
-      "status": "active"
-    }
-  ]
+  "event": "tool_failure",
+  "summary": "Normalization removed '+' from the OAuth state parameter.",
+  "status": "active"
 }
 ```
 
-The next session can call:
+The next session calls:
 
 ```text
 sync_workspace(query="Continue the OAuth callback fix")
 ```
 
-and receive a compact continuation capsule containing the goal, constraints, progress, failures,
-next step, and current Git state. Stored text is returned as untrusted data; the current user request
-always remains authoritative.
+and receives a compact continuation capsule containing the goal, constraints, progress, failures,
+next action, task ownership, and current Git state. Stored text is always returned as untrusted data;
+the current user request remains authoritative.
 
-## The normal CLI
+## Five focused MCP tools
 
-`djobs --help` is intentionally focused on the memory product:
+The normal MCP surface stays small:
 
-| Command | Use it for |
+| Tool | Use it for |
 |---|---|
-| `djobs setup [host]` | Configure MCP and passive lifecycle capture for one supported host |
-| `djobs doctor` | Check local storage and integrations, with a concrete next action |
-| `djobs memory list` | See what the current repository remembers |
-| `djobs memory search "query"` | Find a prior goal, failure, decision, or result |
-| `djobs memory status ID stale` | Retire outdated memory without erasing its audit trail |
-| `djobs memory forget ID` | Delete one memory item |
-| `djobs memory clear --yes` | Clear passive memory for this repository family |
-| `djobs gain` | Inspect heuristic recovery and verified-task efficiency estimates |
-| `djobs pause` / `djobs unpause` | Temporarily disable or resume automatic behavior |
-| `djobs receipt` | Show an evidence-backed work summary |
+| `sync_workspace` | Start or continue repository work with query-aware recovery |
+| `memory` | Inspect, search, retire, forget, or clear passive memory |
+| `checkpoint` | Explicitly claim one bounded unit of work |
+| `handoff` | Release or complete claimed work with evidence |
+| `resume_delta` | Compatibility recovery for integrations that already persist queue revisions |
 
-The original durable job queue engine is retained for compatibility, but it no longer dominates the
-first-run experience. Its operational commands are available through `djobs legacy --help`.
-Direct historical invocations still work for scripts and hooks, with a compatibility notice.
+Passive capture never silently becomes task ownership. Use checkpoint/handoff only when coordination
+actually needs an explicit lease.
 
-## What djobs remembers
+### Query-aware local recall
 
-A normal coding session can record bounded local observations such as:
+Memory search uses SQLite FTS5/BM25 ranking. No hosted account, remote vector database, or repository
+upload is required.
 
-| Memory type | Example |
-|---|---|
-| User intent | “Keep Python 3.10 support.” |
-| Tool result | “Updated `src/parser.py`; focused tests passed.” |
-| Tool failure | “State normalization removed plus signs.” |
-| Repository change | Tracked, staged, and bounded untracked Git changes |
-| Session capsule | Goal, constraints, progress, failures, and next step |
+Start with the smallest recovery tier:
 
-Passive memory never silently claims a task. Explicit ownership is a separate feature for coordinated
-work that genuinely needs leases and handoff evidence.
-
-## Five MCP tools, with clear roles
-
-| Tool | Call it when |
-|---|---|
-| `sync_workspace` | Starting or continuing repository work. This is the default recovery entry point. |
-| `memory` | Inspecting, searching, retiring, forgetting, or clearing passive memory. |
-| `checkpoint` | Deliberately claiming one bounded unit so another agent does not duplicate it. |
-| `handoff` | Releasing or completing a claimed unit with bounded evidence. |
-| `resume_delta` | Maintaining an older integration that already stores correlation IDs and revisions. |
-
-### Choosing a recovery detail level
-
-Start with `sync_workspace(..., context_tier="resume")`:
+```text
+sync_workspace(query=current_request, context_tier="resume")
+```
 
 | Tier | Use it for | Returned detail |
 |---|---|---|
-| `resume` | Normal continuation | Goal, constraints, progress, failures, next step, tasks, and Git state |
-| `evidence` | Checking why a conclusion was selected | Resume capsule plus compact supporting observations |
-| `audit` | Lifecycle changes or diagnosis | Full memory IDs, timestamps, scores, and audit fields |
+| `resume` | Normal continuation | Goal, constraints, progress, failures, next action, tasks, Git state |
+| `evidence` | Inspect why context was selected | Resume capsule plus supporting observations |
+| `audit` | Lifecycle/debugging work | IDs, timestamps, scores, and audit fields |
 
-Persist the returned `context_hash` and pass it back as `known_context_hash` on an equivalent later
-recovery. If passive memory did not change, djobs suppresses repeated observations while still
-returning current task state.
+Persist the returned `context_hash` and pass it back as `known_context_hash` to suppress unchanged
+context replay.
 
-## Install and host support
+## Cross-agent coordination
+
+When two agents could duplicate work, claim only the bounded unit that needs ownership:
+
+```text
+checkpoint("Implement OAuth callback parser", path="src/oauth/callback.py")
+  -> this checkout owns one expiring lease
+
+handoff(task_id, "Parser fixed; integration test remains", completed=false)
+  -> releases the unit with bounded continuation evidence
+```
+
+Sibling Git worktrees share passive repository memory while explicit leases remain checkout-scoped.
+Another agent can see that work is occupied without silently stealing it.
+
+## Optional ARUN Project Mode
+
+Memory and handoff are useful, but long engineering tasks also need durable completion semantics:
+what is the active goal, what failed, what evidence is required, whether scope drifted, and whether
+acceptance is actually satisfied.
+
+If ARUN is installed, djobs exposes it as an **optional higher-level project mode** without copying
+ARUN's state machine into djobs:
+
+```bash
+djobs project doctor
+
+djobs project init \
+  --objective "Fix the OAuth callback loop" \
+  --constraint "Do not change the public API" \
+  --acceptance "Focused callback tests pass" \
+  --acceptance "No unrelated files change"
+
+djobs project status
+djobs project next
+```
+
+The boundary is deliberate:
+
+```text
+current reasoning model
+        |
+        +-- djobs: memory, recall, checkpoint, handoff, leases
+        |
+        +-- ARUN: durable goal, failure/recovery, scope, evidence, verification
+```
+
+`djobs project next` only creates/resumes the next ARUN external-control packet. It does **not** start
+another LLM or executor and does not auto-run tools. ARUN remains the authoritative project state
+engine; the current agent/executor performs real work and supplies evidence through ARUN's control
+contract.
+
+If ARUN is absent, normal djobs behavior is unchanged. See
+[`docs/PROJECT_MODE.md`](docs/PROJECT_MODE.md) for the exact authority and safety boundary.
+
+## CLI
+
+| Command | Use it for |
+|---|---|
+| `djobs setup [host]` | Configure MCP and passive lifecycle capture |
+| `djobs doctor` | Check local storage and host integrations |
+| `djobs memory list` | See what this repository remembers |
+| `djobs memory search "query"` | Find an earlier goal, failure, decision, or result |
+| `djobs memory status ID stale` | Retire outdated memory without deleting its audit trail |
+| `djobs gain` | Inspect local recovery and verified-task efficiency heuristics |
+| `djobs pause` / `djobs unpause` | Disable or resume automatic capture/recovery |
+| `djobs receipt` | Show an evidence-backed work summary |
+| `djobs project ...` | Optional ARUN durable project mode |
+| `djobs legacy ...` | Compatibility CLI for the original durable queue engine |
+
+The original queue, worker, scheduler, dashboard, and audit machinery remains available for existing
+integrations, but it no longer dominates first-run onboarding.
+
+## Host support
 
 ### VS Code / GitHub Copilot
 
 Install the **[djobs VS Code extension](https://marketplace.visualstudio.com/items?itemName=jhuang-tw.djobs)**.
-It registers the compact MCP server and exposes setup, diagnostics, pause, and resume without a
-permanent sidebar, hosted account, polling service, or cloud database.
+It registers the compact MCP server and exposes setup, diagnostics, pause, and resume without a hosted
+account or permanent cloud service.
 
 ### CLI-managed hosts
 
@@ -154,7 +196,7 @@ djobs setup codex
 djobs setup claude
 djobs setup gemini
 djobs setup kimi
-# or configure all detected hosts:
+# configure every detected host:
 djobs setup all
 ```
 
@@ -182,34 +224,19 @@ djobs remove claude
 
 - State defaults to `~/.djobs/global.db` and stays on the local machine.
 - No hosted account, vector database, remote queue, or repository upload is required.
-- Sibling Git worktrees share passive repository memory; explicit leases remain checkout-scoped.
 - Common API keys, bearer tokens, passwords, authorization values, and URL credentials are redacted
   on a best-effort basis before storage.
 - Add `[djobs:no-memory]` to skip one prompt.
 - Set `DJOBS_CAPTURE_USER_INTENT=0` to disable automatic prompt-intent capture.
-- Run `djobs pause` to stop automatic prompt/tool capture, session capsules, repository snapshots,
-  first-call bootstrap, and `sync_workspace` recovery. Manual memory inspection and deletion remain
-  available; pausing deletes nothing.
+- `djobs pause` stops automatic prompt/tool capture, session capsules, repository snapshots, first-call
+  bootstrap, and `sync_workspace` recovery without deleting stored data.
 - Mark memory `resolved`, `superseded`, `stale`, or `contradicted` when it should stop influencing
-  normal recovery. Inactive observations remain locally inspectable only while retained by bounded
-  storage; djobs is not a permanent audit archive.
+  normal recovery.
 - Use `forget` for one item or `clear --yes` for passive memory in the repository family. Explicit
   checkpoint tasks are preserved by memory clear.
 - Hook, search, and storage failures are fail-open and must not block the coding request.
 
-See [docs/USER_GUIDE.md](docs/USER_GUIDE.md) for troubleshooting, field meanings, and cleanup examples.
-
-## Explicit ownership, only when needed
-
-```text
-checkpoint("Implement parser", path="src/parser.py")
-  -> this checkout owns one expiring lease
-
-handoff(task_id, "Parser updated; edge tests remain", completed=false)
-  -> releases the task with bounded evidence
-```
-
-Do not create a checkpoint for every prompt. Passive observations are enough for ordinary continuation.
+See [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) for troubleshooting and memory lifecycle details.
 
 ## Benchmarks
 
@@ -223,25 +250,13 @@ python scripts/benchmark_resume_quality.py
 | Re-read every bundled synthetic source file | ~7,805 tokens | 18 file reads |
 | Query-aware `sync_workspace` resume tier | ~224 tokens | 1 MCP call |
 
-This is a payload-size regression fixture, not an end-to-end savings claim. Its reread baseline
-assumes every bundled source file is sent again and does not model modern agents that summarize,
-cache, or selectively read files. Do not interpret the comparison as provider-token savings,
-billing reduction, latency improvement, or model-quality improvement. Use it to detect changes in
-djobs payload shape and inspect the benchmark methodology yourself. The companion quality fixture
-checks cross-worktree recall, checkout ownership isolation, stale-memory exclusion, and
-unchanged-context replay suppression.
+This is a payload-size regression fixture, not an end-to-end provider-token or billing claim. Modern
+agents can summarize, cache, or selectively read files. The quality fixture separately checks
+cross-worktree recall, ownership isolation, stale-memory exclusion, and unchanged-context suppression.
 
-`djobs gain` complements the fixture with local workflow heuristics:
-
-```bash
-djobs gain
-djobs gain --history
-djobs gain --format json
-```
-
-It reports first-pass verified rate, repair attempts, average attempts per verified task, cycle-time
-proxy, and simple context-size estimates. These are explainable local estimates, not observed model
-usage or guaranteed savings.
+`djobs gain` reports explainable local heuristics such as first-pass verified rate, repair attempts,
+average attempts per verified task, cycle-time proxy, and context-size estimates. They are not
+provider telemetry or guaranteed savings.
 
 ## Requirements
 
@@ -251,6 +266,7 @@ usage or guaranteed savings.
 | VS Code extension | VS Code 1.101 or newer |
 | Storage | Local SQLite by default |
 | Operating systems | Windows, macOS, Linux |
+| ARUN Project Mode | Optional `arun` executable; normal djobs does not require it |
 
 Node.js is only required to develop or package the extension.
 
@@ -268,10 +284,9 @@ python scripts/preflight.py --profile quick --fix --base-ref origin/main
 python scripts/preflight.py --profile full --check --base-ref origin/main
 ```
 
-The top-level product is local agent memory. Queue, worker, scheduler, and dashboard modules are a
-compatibility subsystem; new examples and user documentation should not present them as the default
-experience. See `CONTRIBUTING.md`, `AGENTS.md`, `examples/README.md`, and `docs/RELEASE.md` before
-changing public behavior.
+New product work should preserve the layer boundary: djobs owns memory/coordination; ARUN Project Mode
+is optional and ARUN remains authoritative for durable completion state. Do not duplicate either
+state machine into the other project.
 
 <p align="center">
   <a href="https://pypi.org/project/djobs/"><strong>PyPI</strong></a>

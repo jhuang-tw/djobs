@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import json
 import subprocess
 from pathlib import Path
@@ -63,7 +62,11 @@ def test_init_refuses_duplicate_project(monkeypatch, tmp_path: Path, capsys) -> 
     assert "already owns this root" in capsys.readouterr().err
 
 
-def test_init_forwards_only_bounded_create_arguments(monkeypatch, tmp_path: Path, capsys) -> None:
+def test_init_forwards_only_bounded_create_arguments(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+) -> None:
     monkeypatch.setattr(project_mode, "resolve_project_id", lambda root: None)
     seen: list[list[str]] = []
 
@@ -109,7 +112,11 @@ def test_init_forwards_only_bounded_create_arguments(monkeypatch, tmp_path: Path
     assert "PROJECT_ID:project-new" in capsys.readouterr().out
 
 
-def test_status_resolves_then_requests_read_only_control_status(monkeypatch, tmp_path: Path, capsys) -> None:
+def test_status_resolves_then_requests_read_only_control_status(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+) -> None:
     monkeypatch.setattr(project_mode, "resolve_project_id", lambda root: "project-123")
     seen: list[list[str]] = []
 
@@ -124,7 +131,11 @@ def test_status_resolves_then_requests_read_only_control_status(monkeypatch, tmp
     assert json.loads(capsys.readouterr().out)["status"] == "running"
 
 
-def test_next_is_explicit_and_does_not_execute_an_executor(monkeypatch, tmp_path: Path, capsys) -> None:
+def test_next_is_explicit_and_does_not_execute_an_executor(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+) -> None:
     monkeypatch.setattr(project_mode, "resolve_project_id", lambda root: "project-123")
     seen: list[list[str]] = []
 
@@ -140,7 +151,7 @@ def test_next_is_explicit_and_does_not_execute_an_executor(monkeypatch, tmp_path
     assert payload["execution_mode"] == "external"
 
 
-def test_nonzero_arun_result_is_reported_without_retry(monkeypatch, tmp_path: Path, capsys) -> None:
+def test_nonzero_arun_result_is_reported_without_retry(monkeypatch, tmp_path: Path) -> None:
     calls = 0
 
     def fake_run(arguments, *, root, timeout=30.0):

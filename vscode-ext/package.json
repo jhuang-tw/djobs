@@ -1,7 +1,7 @@
 {
   "name": "djobs",
-  "displayName": "djobs \u2014 Local Agent Memory",
-  "description": "Local project memory that helps coding agents continue work across AI sessions.",
+  "displayName": "djobs — Shared Agent Memory",
+  "description": "Shared local project memory and explicit coordination for AI coding agents across sessions and tools.",
   "version": "0.20.1",
   "publisher": "jhuang-tw",
   "license": "MIT",
@@ -20,10 +20,11 @@
   "keywords": [
     "djobs",
     "coding agent",
+    "shared agent memory",
     "local agent memory",
     "repository memory",
+    "agent coordination",
     "cross-agent handoff",
-    "passive hooks",
     "context recovery",
     "MCP",
     "Model Context Protocol",

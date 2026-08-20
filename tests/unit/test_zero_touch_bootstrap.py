@@ -157,7 +157,9 @@ def test_unknown_mcp_client_can_build_memory_without_host_hooks(monkeypatch) -> 
     from djobs import coding_mcp
 
     class Session:
-        client_params = SimpleNamespace(clientInfo=SimpleNamespace(name="Unknown Client", title=None))
+        client_params = SimpleNamespace(
+            clientInfo=SimpleNamespace(name="Unknown Client", title=None)
+        )
 
         async def list_roots(self):
             return SimpleNamespace(roots=["repo-root"])

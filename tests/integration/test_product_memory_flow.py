@@ -11,7 +11,7 @@ import pytest
 
 from djobs import mcp_server
 from djobs.handoff import checkpoint, handoff, sync_workspace
-from djobs.mcp_adoption import remember_current_request
+from djobs.mcp_adoption import remember_agent_memory, remember_current_request
 
 
 def _repo(path: Path) -> Path:
@@ -69,6 +69,36 @@ def test_generic_mcp_memory_survives_session_and_agent_handoff(
     assert "Fix the OAuth callback without changing the API" in json.dumps(
         recovered["observations"], ensure_ascii=False
     )
+
+    # A generic MCP client cannot expose arbitrary sibling tool results to djobs.
+    # Significant facts can still be preserved explicitly through the existing
+    # memory tool contract without creating ownership or another MCP tool.
+    assert remember_agent_memory(
+        "OAuth callback parser updated; focused tests pass.",
+        kind="progress",
+        roots=None,
+        cwd=str(repo),
+        agent_type=None,
+    )
+    assert remember_agent_memory(
+        "OAuth callback integration still fails when state contains '+'.",
+        kind="failure",
+        roots=None,
+        cwd=str(repo),
+        agent_type=None,
+    )
+
+    continued = _json(
+        sync_workspace(
+            cwd=str(repo),
+            agent_type="codex",
+            session_id="second-b",
+            query="OAuth callback",
+            context_tier="resume",
+        )
+    )
+    assert any("focused tests pass" in item for item in continued["resume"]["progress"])
+    assert any("still fails" in item for item in continued["resume"]["failures"])
 
     created = _json(
         checkpoint(

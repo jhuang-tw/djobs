@@ -1,8 +1,8 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
   "name": "io.github.jhuang-tw/djobs",
-  "title": "djobs \u2014 Local Agent Memory",
-  "description": "Local project memory that recovers coding goals, failures, progress, and Git changes.",
+  "title": "djobs — Shared Project Memory for Coding Agents",
+  "description": "Shared local repository memory for AI coding agents. Agents should use sync_workspace at the start of repository work to recover prior goals, constraints, progress, failures, Git state, and explicit ownership before rereading the project from scratch.",
   "version": "0.20.1",
   "repository": {
     "url": "https://github.com/jhuang-tw/djobs",

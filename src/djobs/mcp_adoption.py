@@ -21,12 +21,15 @@ from djobs.privacy import redact_text
 _NO_MEMORY_MARKERS = ("[djobs:no-memory]", "<djobs:no-memory>")
 _FALSE_VALUES = {"0", "false", "no", "off", "disabled"}
 MemoryNoteKind = Literal["progress", "failure", "decision", "constraint", "note"]
+
+# Reuse the established resume compiler vocabulary instead of creating a second
+# memory taxonomy. Metadata retains the agent-authored note kind for audit views.
 _NOTE_EVENT = {
-    "progress": "agent_progress",
-    "failure": "agent_failure",
-    "decision": "agent_decision",
-    "constraint": "agent_constraint",
-    "note": "agent_note",
+    "progress": "tool_result",
+    "failure": "tool_failure",
+    "decision": "tool_result",
+    "constraint": "user_intent",
+    "note": "tool_result",
 }
 
 

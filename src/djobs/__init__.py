@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from importlib import import_module
 
-__version__ = "0.20.1"
+__version__ = "0.21.0"
 
 from djobs.core.errors import (
     DJobsError,

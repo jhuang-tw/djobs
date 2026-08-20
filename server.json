@@ -1,9 +1,9 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
   "name": "io.github.jhuang-tw/djobs",
-  "title": "djobs — Shared Project Memory for Coding Agents",
+  "title": "djobs \u2014 Shared Project Memory for Coding Agents",
   "description": "Shared local project memory and context recovery for AI coding agents over MCP.",
-  "version": "0.20.1",
+  "version": "0.21.0",
   "repository": {
     "url": "https://github.com/jhuang-tw/djobs",
     "source": "github"
@@ -14,7 +14,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "djobs",
-      "version": "0.20.1",
+      "version": "0.21.0",
       "runtimeHint": "uvx",
       "transport": {
         "type": "stdio"

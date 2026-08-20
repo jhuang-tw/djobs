@@ -14,6 +14,12 @@ public interfaces may still change between minor versions. Entries below use
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-08-20
+
+### Added
+- `[release]` Make djobs natural for MCP coding agents
+
+
 ## [0.20.1] - 2026-08-05
 
 ### Fixed

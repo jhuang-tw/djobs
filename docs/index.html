@@ -3,9 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>djobs — local project memory for AI coding agents</title>
-  <meta name="description" content="djobs gives coding agents local repository memory, layered query-aware recovery, and explicit handoff across AI sessions.">
-  <meta name="keywords" content="AI coding agent, project memory, layered recovery, repository memory, MCP, GitHub Copilot, Claude Code, Codex, Gemini CLI, Kimi Code, VS Code, Python, SQLite">
+  <title>djobs — memory, coordination, and verified completion for AI coding agents</title>
+  <meta name="description" content="djobs gives AI coding agents local repository memory, explicit cross-agent coordination, and optional ARUN Project Mode for durable goals and verified completion.">
+  <meta name="keywords" content="AI coding agent, agent memory, agent coordination, project memory, verified completion, durable project state, ARUN, MCP, Claude Code, Codex, Copilot, Gemini CLI, SQLite">
   <meta name="author" content="jhuang-tw">
   <meta name="robots" content="index, follow, max-image-preview:large">
   <meta name="theme-color" content="#272a3a">
@@ -16,14 +16,14 @@
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="djobs">
   <meta property="og:url" content="https://jhuang-tw.github.io/djobs/">
-  <meta property="og:title" content="djobs — local project memory for AI coding agents">
-  <meta property="og:description" content="Continue the repository instead of explaining it again in every new AI session.">
+  <meta property="og:title" content="djobs — remember, coordinate, finish">
+  <meta property="og:description" content="Local project memory and coordination for AI coding agents, with optional verified completion through ARUN Project Mode.">
   <meta property="og:image" content="https://raw.githubusercontent.com/jhuang-tw/djobs/main/vscode-ext/media/icon-128.png">
   <meta property="og:image:alt" content="djobs logo">
 
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="djobs — local project memory for AI coding agents">
-  <meta name="twitter:description" content="Continue the repository instead of explaining it again in every new AI session.">
+  <meta name="twitter:title" content="djobs — remember, coordinate, finish">
+  <meta name="twitter:description" content="Local memory, cross-agent coordination, and optional verified project completion.">
   <meta name="twitter:image" content="https://raw.githubusercontent.com/jhuang-tw/djobs/main/vscode-ext/media/icon-128.png">
 
   <script type="application/ld+json">
@@ -31,7 +31,7 @@
     "@context": "https://schema.org",
     "@type": "SoftwareApplication",
     "name": "djobs",
-    "description": "Local project memory and explicit handoff for AI coding agents.",
+    "description": "Local project memory and coordination for AI coding agents, with optional ARUN Project Mode for durable verified completion.",
     "applicationCategory": "DeveloperApplication",
     "operatingSystem": "Windows, macOS, Linux",
     "url": "https://jhuang-tw.github.io/djobs/",
@@ -51,7 +51,6 @@
       --ink: #23252f;
       --muted: #626876;
       --line: #e2ded4;
-      --line-soft: #ece8df;
       --navy: #272a3a;
       --term: #111510;
       --violet: #6d6ff1;
@@ -61,389 +60,242 @@
       --green-dark: #23734a;
       --grad: linear-gradient(135deg, #6d6ff1 0%, #b3a6ef 100%);
       --shadow-sm: 0 1px 2px rgba(31,33,45,.05), 0 8px 24px rgba(31,33,45,.06);
-      --shadow-lg: 0 26px 70px rgba(31,33,45,.16);
+      --shadow-lg: 0 26px 70px rgba(31,33,45,.14);
       --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, ui-serif, serif;
       --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
     }
-
     * { box-sizing: border-box; }
     html { scroll-behavior: smooth; }
     body {
       margin: 0;
       color: var(--ink);
       font-family: var(--sans);
-      line-height: 1.62;
+      line-height: 1.6;
       background:
         radial-gradient(920px 520px at 88% -10%, rgba(109,111,241,.10), transparent 60%),
         radial-gradient(820px 480px at -8% 2%, rgba(52,163,104,.07), transparent 55%),
         var(--paper);
       -webkit-font-smoothing: antialiased;
     }
-
     a { color: inherit; }
     code { font-family: var(--mono); }
     .wrap { width: min(1140px, calc(100% - 40px)); margin: 0 auto; }
-    .skip { position: absolute; left: -999px; top: 0; padding: 10px 16px; background: var(--navy); color: #fff; z-index: 20; }
-    .skip:focus { left: 0; }
-
-    .site-header {
-      position: sticky;
-      top: 0;
-      z-index: 10;
-      border-bottom: 1px solid rgba(226,222,212,.9);
-      background: rgba(245,243,238,.86);
-      backdrop-filter: saturate(140%) blur(12px);
-    }
-
+    header { position: sticky; top: 0; z-index: 10; border-bottom: 1px solid rgba(226,222,212,.9); background: rgba(245,243,238,.88); backdrop-filter: blur(12px); }
     nav { min-height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
     .brand { display: inline-flex; align-items: center; gap: 11px; text-decoration: none; font-weight: 850; font-size: 1.16rem; }
-    .brand img { width: 36px; height: 36px; border-radius: 10px; box-shadow: 0 5px 16px rgba(39,42,58,.16); }
-    .nav-links { display: flex; align-items: center; gap: 4px; }
+    .brand img { width: 36px; height: 36px; border-radius: 10px; box-shadow: var(--shadow-sm); }
+    .nav-links { display: flex; gap: 4px; }
     .nav-links a { padding: 8px 11px; border-radius: 8px; color: var(--muted); text-decoration: none; font-size: .93rem; font-weight: 650; }
-    .nav-links a:hover { color: var(--ink); background: var(--line-soft); }
-
-    .hero {
-      min-height: 610px;
-      display: grid;
-      grid-template-columns: minmax(0, 1.04fr) minmax(380px, .96fr);
-      gap: clamp(34px, 5vw, 64px);
-      align-items: center;
-      padding: clamp(52px, 8vw, 92px) 0 64px;
-    }
-
-    .eyebrow { display: inline-flex; align-items: center; gap: 9px; margin: 0 0 22px; padding: 6px 13px 6px 11px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--muted); font-size: .82rem; font-weight: 700; box-shadow: var(--shadow-sm); }
+    .nav-links a:hover { background: rgba(255,255,255,.65); color: var(--ink); }
+    .hero { min-height: 610px; display: grid; grid-template-columns: minmax(0,1.05fr) minmax(360px,.95fr); gap: clamp(34px,5vw,64px); align-items: center; padding: clamp(56px,8vw,94px) 0 68px; }
+    .eyebrow { display: inline-flex; align-items: center; gap: 9px; margin: 0 0 22px; padding: 6px 13px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--muted); font-size: .82rem; font-weight: 700; box-shadow: var(--shadow-sm); }
     .eyebrow i { width: 8px; height: 8px; border-radius: 50%; background: var(--grad); }
-    h1 { max-width: 13ch; margin: 0; font-family: var(--serif); font-weight: 620; font-size: clamp(2.8rem, 5.6vw, 4.9rem); line-height: 1.02; letter-spacing: -.025em; }
+    h1, h2 { font-family: var(--serif); font-weight: 620; letter-spacing: -.025em; }
+    h1 { max-width: 11ch; margin: 0; font-size: clamp(3rem,5.8vw,5rem); line-height: 1.01; }
     h1 .accent { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
-    .lead { max-width: 61ch; margin: 26px 0 0; color: var(--muted); font-size: clamp(1.06rem, 1.4vw, 1.23rem); }
+    h2 { margin: 10px 0 14px; font-size: clamp(2rem,3.6vw,3rem); line-height: 1.08; }
+    .lead { max-width: 62ch; margin: 26px 0 0; color: var(--muted); font-size: clamp(1.05rem,1.4vw,1.22rem); }
     .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 30px; }
-    .button { min-height: 48px; display: inline-flex; align-items: center; justify-content: center; gap: 9px; padding: 0 17px; border: 1px solid var(--navy); border-radius: 10px; text-decoration: none; font-weight: 760; transition: transform .15s ease, box-shadow .15s ease; }
-    .button.primary { background: var(--navy); color: #fff; box-shadow: var(--shadow-sm); }
+    .button { min-height: 48px; display: inline-flex; align-items: center; justify-content: center; padding: 0 18px; border: 1px solid var(--navy); border-radius: 10px; text-decoration: none; font-weight: 760; }
+    .button.primary { background: var(--navy); color: #fff; }
     .button.secondary { background: var(--panel); }
-    .button:hover { transform: translateY(-1px); box-shadow: var(--shadow-sm); }
-
-    .command { margin-top: 15px; width: fit-content; max-width: 100%; display: flex; align-items: center; gap: 11px; padding: 11px 14px; border: 1px solid #20222e; border-radius: 10px; background: var(--term); color: #eff5f0; font: 650 .92rem var(--mono); cursor: pointer; box-shadow: var(--shadow-sm); }
+    .command { margin-top: 15px; width: fit-content; max-width: 100%; display: flex; gap: 11px; align-items: center; padding: 11px 14px; border: 1px solid #20222e; border-radius: 10px; background: var(--term); color: #eff5f0; font: 650 .92rem var(--mono); cursor: pointer; }
     .command span { color: #8188f4; }
     .command small { color: #89918d; font: 600 .75rem var(--sans); }
-    .command.copied { border-color: var(--green); }
-
-    .trust { margin: 22px 0 0; display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--muted); font-size: .88rem; }
+    .trust { margin-top: 20px; display: flex; flex-wrap: wrap; gap: 8px 18px; color: var(--muted); font-size: .88rem; }
     .trust b { color: var(--green-dark); }
-    .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 23px; }
-    .badges img { display: block; height: 22px; }
-
-    .demo-shell { overflow: hidden; border: 1px solid #20222e; border-radius: 16px; background: var(--term); box-shadow: var(--shadow-lg); }
-    .demo-bar { display: flex; align-items: center; gap: 8px; padding: 13px 15px; border-bottom: 1px solid rgba(255,255,255,.08); }
+    .demo-shell, .code-card { overflow: hidden; border: 1px solid #20222e; border-radius: 16px; background: var(--term); box-shadow: var(--shadow-lg); }
+    .demo-bar { display: flex; align-items: center; gap: 8px; padding: 13px 15px; border-bottom: 1px solid rgba(255,255,255,.08); color: #8d948f; font: 600 .8rem var(--mono); }
     .demo-bar i { width: 11px; height: 11px; border-radius: 50%; }
     .demo-bar i:nth-child(1) { background: #ec6a5e; }
     .demo-bar i:nth-child(2) { background: #f4bf4f; }
     .demo-bar i:nth-child(3) { background: #61c554; }
-    .demo-bar span { margin-left: 6px; color: #8d948f; font: 600 .8rem var(--mono); }
-    .demo-shell img { display: block; width: 100%; height: auto; }
-
+    .demo-shell img { display: block; width: 100%; }
     .compat { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: rgba(255,253,249,.66); }
     .compat .wrap { min-height: 76px; display: flex; align-items: center; gap: 16px 28px; flex-wrap: wrap; }
     .compat strong { color: var(--muted); font-size: .79rem; letter-spacing: .09em; text-transform: uppercase; }
     .compat span { font-weight: 720; }
-
-    section.band { padding: clamp(62px, 8vw, 96px) 0; }
-    .section-head { max-width: 65ch; margin-bottom: 42px; }
+    section.band { padding: clamp(62px,8vw,96px) 0; }
+    .section-head { max-width: 68ch; margin-bottom: 38px; }
     .label { margin: 0; color: var(--violet-deep); font-size: .8rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
-    h2 { margin: 12px 0 14px; font-family: var(--serif); font-weight: 620; font-size: clamp(2rem, 3.5vw, 3rem); line-height: 1.08; letter-spacing: -.02em; }
-    .section-head > p:last-child { margin: 0; color: var(--muted); font-size: 1.08rem; }
-
-    .cards, .flow, .requirements, .tool-grid, .tiers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
-    .card, .step, .req, .tool, .tier { padding: 27px 24px; border: 1px solid var(--line); border-radius: 15px; background: var(--panel); box-shadow: var(--shadow-sm); }
-    .card:hover, .tool:hover, .tier:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
-    .card-icon { width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 16px; border-radius: 12px; color: var(--violet-deep); background: linear-gradient(135deg, rgba(109,111,241,.16), rgba(179,166,239,.24)); font-size: 1.1rem; font-weight: 850; }
-    .card h3, .step h3, .tool h3, .tier h3 { margin: 0 0 8px; font-size: 1.12rem; }
-    .card p, .step p, .tool p, .tier p { margin: 0; color: var(--muted); }
-    .flow { counter-reset: step; }
-    .step::before { counter-increment: step; content: counter(step); width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 15px; border-radius: 50%; background: var(--navy); color: #fff; font-weight: 800; }
-    .tier code { display: inline-block; margin-bottom: 9px; color: var(--violet-deep); font-size: 1.06rem; font-weight: 800; }
-
-    .two-layer { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
-    .layer { padding: 28px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); box-shadow: var(--shadow-sm); }
-    .layer h3 { margin: 0 0 10px; font-size: 1.32rem; }
-    .layer p { color: var(--muted); }
-    .layer ul { margin-bottom: 0; padding-left: 20px; }
-
-    .install-band { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: radial-gradient(700px 360px at 100% 0%, rgba(109,111,241,.08), transparent 60%), rgba(255,253,249,.68); }
-    .install-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 470px); gap: clamp(30px, 5vw, 60px); align-items: center; }
-    .code-card { overflow: hidden; border: 1px solid #20222e; border-radius: 15px; background: var(--term); box-shadow: var(--shadow-lg); }
-    .code-card pre { overflow-x: auto; margin: 0; padding: 22px 24px; color: #e8efe9; font: .92rem/1.8 var(--mono); }
+    .section-head > p:last-child { margin: 0; color: var(--muted); font-size: 1.07rem; }
+    .cards { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 20px; }
+    .card { padding: 27px 24px; border: 1px solid var(--line); border-radius: 15px; background: var(--panel); box-shadow: var(--shadow-sm); }
+    .card-icon { width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; margin-bottom: 16px; border-radius: 12px; color: var(--violet-deep); background: linear-gradient(135deg,rgba(109,111,241,.16),rgba(179,166,239,.24)); font-weight: 850; }
+    .card h3 { margin: 0 0 8px; font-size: 1.13rem; }
+    .card p { margin: 0; color: var(--muted); }
+    .project-grid { display: grid; grid-template-columns: minmax(0,1fr) minmax(340px,.9fr); gap: 34px; align-items: center; }
+    .project-list { padding-left: 20px; }
+    .project-list li { margin: 8px 0; }
+    .code-card pre { margin: 0; padding: 22px 24px; overflow-x: auto; color: #e8efe9; font: .9rem/1.75 var(--mono); }
     .code-card .c { color: #79817d; }
     .code-card .p { color: #8b91f4; }
     .code-card .g { color: #69cf8e; }
-
-    .requirements { margin-top: 26px; }
-    .req { padding: 16px 18px; }
-    .req b { display: block; margin-bottom: 3px; }
-    .req span { color: var(--muted); font-size: .92rem; }
-
-    .tool-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    .tool code { display: inline-block; margin-bottom: 8px; color: var(--violet-deep); font-weight: 760; }
-
-    .metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
-    .metric { padding: 30px; border: 1px solid var(--line); border-radius: 16px; background: var(--panel); box-shadow: var(--shadow-sm); }
-    .metric strong { display: block; color: var(--green-dark); font-size: clamp(2.5rem, 5vw, 4rem); line-height: 1; letter-spacing: -.05em; }
+    .metrics { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 20px; }
+    .metric { padding: 28px; border: 1px solid var(--line); border-radius: 15px; background: var(--panel); box-shadow: var(--shadow-sm); }
+    .metric strong { display: block; color: var(--green-dark); font-size: clamp(2.4rem,5vw,3.8rem); line-height: 1; }
     .metric span { color: var(--muted); }
-    .gain-note { margin-top: 20px; padding: 20px 22px; border-left: 4px solid var(--violet); border-radius: 0 12px 12px 0; background: rgba(255,253,249,.78); color: var(--muted); }
-
-    .cta { padding: clamp(70px, 9vw, 108px) 0; text-align: center; }
+    .cta { padding: clamp(72px,9vw,108px) 0; text-align: center; }
     .cta h2 { max-width: 18ch; margin-left: auto; margin-right: auto; }
-    .cta p { max-width: 60ch; margin: 0 auto 28px; color: var(--muted); font-size: 1.1rem; }
+    .cta p { max-width: 62ch; margin: 0 auto; color: var(--muted); font-size: 1.08rem; }
     .cta .actions { justify-content: center; }
-
     footer { border-top: 1px solid var(--line); padding: 34px 0 44px; color: var(--muted); }
     .footer-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
     .footer-links { display: flex; gap: 18px; flex-wrap: wrap; }
     .footer-links a { text-decoration: none; font-weight: 650; }
-    .footer-links a:hover { color: var(--ink); }
-
     @media (max-width: 900px) {
-      .hero, .install-grid { grid-template-columns: 1fr; }
+      .hero, .project-grid { grid-template-columns: 1fr; }
       .hero { min-height: auto; }
-      .cards, .flow, .requirements, .tiers { grid-template-columns: 1fr; }
-      .two-layer, .metrics, .tool-grid { grid-template-columns: 1fr; }
+      .cards { grid-template-columns: 1fr; }
       .nav-links a:not(:last-child) { display: none; }
     }
-
     @media (max-width: 520px) {
-      .wrap { width: min(100% - 26px, 1140px); }
-      .badges { display: none; }
-      h1 { font-size: 2.75rem; }
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-      html { scroll-behavior: auto; }
-      * { transition: none !important; }
+      .wrap { width: min(100% - 26px,1140px); }
+      h1 { font-size: 2.8rem; }
+      .metrics { grid-template-columns: 1fr; }
     }
   </style>
 </head>
 <body>
-  <a class="skip" href="#main">Skip to content</a>
-
-  <header class="site-header">
+  <header>
     <nav class="wrap" aria-label="Primary navigation">
       <a class="brand" href="https://jhuang-tw.github.io/djobs/">
         <img src="https://raw.githubusercontent.com/jhuang-tw/djobs/main/vscode-ext/media/icon-128.png" alt="djobs logo">
         <span>djobs</span>
       </a>
       <div class="nav-links">
-        <a href="#how">How it works</a>
-        <a href="#install">Install</a>
+        <a href="#layers">Layers</a>
+        <a href="#project-mode">Project Mode</a>
         <a href="#benchmarks">Benchmarks</a>
         <a href="https://github.com/jhuang-tw/djobs">GitHub</a>
       </div>
     </nav>
   </header>
 
-  <main id="main">
+  <main>
     <section class="wrap hero">
       <div>
-        <p class="eyebrow"><i></i> Local repository memory over MCP</p>
-        <h1>Continue the repository. <span class="accent">Skip the re-explanation.</span></h1>
-        <p class="lead"><strong>Local project memory and explicit handoff for AI coding agents.</strong> Continue the repository instead of explaining it again in every new AI session.</p>
-
+        <p class="eyebrow"><i></i> Local durable context for coding agents</p>
+        <h1>Remember. Coordinate. <span class="accent">Finish.</span></h1>
+        <p class="lead"><strong>djobs keeps repository memory and explicit work ownership local.</strong> When a long task needs durable goals, failure recovery, scope guards, and verified completion, optional ARUN Project Mode adds that layer without replacing the memory system.</p>
         <div class="actions">
           <a class="button primary" href="https://marketplace.visualstudio.com/items?itemName=jhuang-tw.djobs">Install for VS Code</a>
-          <a class="button secondary" href="https://pypi.org/project/djobs/">View on PyPI</a>
+          <a class="button secondary" href="https://github.com/jhuang-tw/djobs">View source</a>
         </div>
-
-        <button class="command" type="button" data-copy="uvx djobs mcp" aria-label="Copy uvx djobs mcp">
-          <span>$</span> uvx djobs mcp <small>copy</small>
-        </button>
-
+        <button class="command" type="button" data-copy="uvx djobs mcp"><span>$</span> uvx djobs mcp <small>copy</small></button>
         <div class="trust">
-          <span><b>✓</b> MIT licensed</span>
           <span><b>✓</b> Local SQLite</span>
-          <span><b>✓</b> Python 3.10–3.14</span>
+          <span><b>✓</b> Explicit ownership</span>
           <span><b>✓</b> No hosted account</span>
-        </div>
-
-        <div class="badges" aria-label="Package status">
-          <img src="https://github.com/jhuang-tw/djobs/actions/workflows/ci.yml/badge.svg" alt="CI status">
-          <img src="https://img.shields.io/pypi/v/djobs.svg" alt="PyPI version">
-          <img src="https://img.shields.io/visual-studio-marketplace/v/jhuang-tw.djobs?label=VS%20Code" alt="VS Code Marketplace version">
-          <img src="https://img.shields.io/badge/Python-3.10%E2%80%933.14-3776AB?logo=python&logoColor=white" alt="Python 3.10 to 3.14">
-          <img src="https://img.shields.io/badge/Node.js-20%2B-339933?logo=node.js&logoColor=white" alt="Node.js 20 or newer for extension development">
+          <span><b>✓</b> ARUN optional</span>
         </div>
       </div>
-
       <figure class="demo-shell" style="margin:0">
         <div class="demo-bar"><i></i><i></i><i></i><span>repository recovery</span></div>
-        <img src="demo.svg" alt="Animated djobs checkpoint and crash-recovery demo" loading="eager" decoding="async">
+        <img src="demo.svg" alt="Animated djobs recovery demo" loading="eager" decoding="async">
       </figure>
     </section>
 
     <div class="compat">
       <div class="wrap">
         <strong>Works locally with</strong>
-        <span>GitHub Copilot</span>
-        <span>Claude Code</span>
-        <span>Codex</span>
-        <span>Gemini CLI</span>
-        <span>Kimi Code</span>
-        <span>Any MCP host</span>
+        <span>GitHub Copilot</span><span>Claude Code</span><span>Codex</span><span>Gemini CLI</span><span>Kimi Code</span><span>Any MCP host</span>
       </div>
     </div>
 
-    <section class="wrap band" aria-labelledby="why-title">
+    <section class="wrap band" id="layers">
       <div class="section-head">
-        <p class="label">Why djobs</p>
-        <h2 id="why-title">Stop paying the restart tax on every new chat.</h2>
-        <p>A coding agent may already know the failed approach, the project constraint, the remaining test, and the exact files it changed. djobs keeps that context attached to the repository instead of the chat window.</p>
+        <p class="label">Three clear layers</p>
+        <h2>Different state, different authority.</h2>
+        <p>djobs does not turn every prompt into a task and does not pretend memory alone proves completion. Each layer answers a different engineering question.</p>
       </div>
-
       <div class="cards">
-        <article class="card"><span class="card-icon" aria-hidden="true">01</span><h3>Local-first memory</h3><p>Goals, observations, structured session capsules, and task state stay in local SQLite. No broker, daemon, cloud database, or hosted login.</p></article>
-        <article class="card"><span class="card-icon" aria-hidden="true">02</span><h3>Relevant recall</h3><p>The current request searches older memory, so a useful constraint or failed approach can rank above newer unrelated activity.</p></article>
-        <article class="card"><span class="card-icon" aria-hidden="true">03</span><h3>Worktree-aware handoff</h3><p>Sibling worktrees share passive repository memory while explicit ownership and leases stay isolated to each checkout.</p></article>
+        <article class="card"><span class="card-icon">01</span><h3>Memory</h3><p><strong>What already happened?</strong><br>Query-aware local recall, goals, failures, session capsules, and Git state survive the chat window.</p></article>
+        <article class="card"><span class="card-icon">02</span><h3>Coordination</h3><p><strong>Who owns this work?</strong><br>Checkpoint, handoff, leases, and worktree-aware ownership prevent agents from silently duplicating bounded work.</p></article>
+        <article class="card"><span class="card-icon">03</span><h3>Completion</h3><p><strong>Is it actually done?</strong><br>Optional ARUN Project Mode owns durable goals, failure/recovery state, scope, evidence coverage, acceptance, and verification.</p></article>
       </div>
     </section>
 
-    <section class="wrap band" id="how" aria-labelledby="how-title">
-      <div class="section-head">
-        <p class="label">How it works</p>
-        <h2 id="how-title">Capture, search, continue.</h2>
-        <p>Ordinary sessions use passive memory. Exact task ownership remains explicit, so observation never silently becomes control.</p>
-      </div>
-
-      <div class="flow">
-        <article class="step"><h3>Capture the session</h3><p>Bounded user intent, tool results, failures, Git changes, and a deterministic structured capsule are stored as local data.</p></article>
-        <article class="step"><h3>Search for the request</h3><p><code>sync_workspace(query=..., context_tier="resume")</code> retrieves relevant repository memory under a token budget.</p></article>
-        <article class="step"><h3>Continue with evidence</h3><p>The agent resumes useful state and can checkpoint or hand off exact work only when coordination requires it.</p></article>
-      </div>
-    </section>
-
-    <section class="wrap band" aria-labelledby="tiers-title">
-      <div class="section-head">
-        <p class="label">Layered recovery</p>
-        <h2 id="tiers-title">Pay only for the detail the session needs.</h2>
-        <p>The MCP defaults to the smallest continuation capsule. Deeper evidence and full audit detail remain available when requested.</p>
-      </div>
-
-      <div class="tiers">
-        <article class="tier"><code>resume</code><h3>Normal continuation</h3><p>Goal, constraints, progress, failures, next step, task state, and Git state.</p></article>
-        <article class="tier"><code>evidence</code><h3>Supporting context</h3><p>The resume capsule plus compact observations without memory IDs or timestamps.</p></article>
-        <article class="tier"><code>audit</code><h3>Diagnosis and lifecycle</h3><p>Full identifiers, timestamps, and memory detail for debugging or status updates.</p></article>
-      </div>
-    </section>
-
-    <section class="wrap band" aria-labelledby="layers-title">
-      <div class="section-head">
-        <p class="label">Clear boundaries</p>
-        <h2 id="layers-title">Memory is not task ownership.</h2>
-        <p>djobs separates what the repository remembers from who owns a unit of work.</p>
-      </div>
-
-      <div class="two-layer">
-        <article class="layer">
-          <h3>Passive project memory</h3>
-          <p>Best for normal coding sessions and context recovery.</p>
-          <ul>
-            <li>user goals and constraints</li>
-            <li>successful and failed tool results</li>
-            <li>Git working-tree observations</li>
-            <li>structured session capsules and memory lifecycle states</li>
-            <li>query-aware recall with unchanged-context suppression</li>
-          </ul>
-        </article>
-        <article class="layer">
-          <h3>Explicit checkpoint and handoff</h3>
-          <p>Best for coordinated tasks that need exact ownership.</p>
-          <ul>
-            <li>checkout-scoped leases</li>
-            <li>bounded completion or release evidence</li>
-            <li>safe worktree isolation</li>
-            <li>no silent prompt-to-task conversion</li>
-            <li>lower-level queue tools available only when requested</li>
-          </ul>
-        </article>
-      </div>
-    </section>
-
-    <section class="install-band band" id="install" aria-labelledby="install-title">
-      <div class="wrap install-grid">
+    <section class="wrap band" id="project-mode">
+      <div class="project-grid">
         <div>
-          <p class="label">Install once</p>
-          <h2 id="install-title">Open any repository and continue.</h2>
-          <p class="lead">The VS Code extension is the easiest route. Its first MCP call may create the local database and configure the detected Copilot adapter at user level; Diagnose Setup makes that visible. Other MCP hosts can launch djobs through <code>uvx</code>.</p>
-          <div class="requirements">
-            <div class="req"><b>Python 3.10+</b><span>Python 3.10–3.14 tested in CI</span></div>
-            <div class="req"><b>VS Code 1.101+</b><span>For the Marketplace extension</span></div>
-            <div class="req"><b>Node.js 20+</b><span>Only for extension development</span></div>
+          <p class="label">Optional ARUN Project Mode</p>
+          <h2>Memory tells the next agent where to start. Project state tells it when to stop.</h2>
+          <p class="lead">Project Mode is an integration boundary, not a rewrite. djobs keeps memory and coordination. ARUN remains the authoritative durable project state engine and stays executor-neutral.</p>
+          <ul class="project-list">
+            <li>No second LLM, planner, worker, reviewer, or supervisor is started.</li>
+            <li>No ARUN ledgers or promotion gates are copied into djobs.</li>
+            <li>One canonical repository root resolves to one ARUN project.</li>
+            <li>ARUN command failures surface once; the bridge does not hide them with retries.</li>
+            <li>Without ARUN, normal djobs memory continues unchanged.</li>
+          </ul>
+          <div class="actions">
+            <a class="button secondary" href="https://github.com/jhuang-tw/djobs/blob/main/docs/PROJECT_MODE.md">Read Project Mode docs</a>
           </div>
         </div>
-
         <div class="code-card">
-          <div class="demo-bar"><i></i><i></i><i></i><span>setup</span></div>
-          <pre><code><span class="c"># VS Code / GitHub Copilot</span>
-<span class="g">Install:</span> djobs — Local Agent Memory
+          <div class="demo-bar"><i></i><i></i><i></i><span>project mode</span></div>
+          <pre><code><span class="c"># optional readiness check</span>
+<span class="p">djobs</span> project doctor
 
-<span class="c"># Any MCP host</span>
-<span class="p">uvx</span> djobs mcp
+<span class="c"># create durable project state</span>
+<span class="p">djobs</span> project init \
+  --objective <span class="g">"Fix OAuth callback"</span> \
+  --constraint <span class="g">"No API change"</span> \
+  --acceptance <span class="g">"Focused tests pass"</span>
 
-<span class="c"># Manual repair only</span>
-<span class="p">pipx</span> install djobs
-<span class="p">djobs</span> setup
-<span class="p">djobs</span> doctor</code></pre>
+<span class="p">djobs</span> project status
+<span class="p">djobs</span> project next</code></pre>
         </div>
       </div>
     </section>
 
-    <section class="wrap band" aria-labelledby="tools-title">
+    <section class="wrap band">
       <div class="section-head">
-        <p class="label">Five compact MCP tools</p>
-        <h2 id="tools-title">Small surface, clear responsibility.</h2>
-        <p>Passive memory stays lightweight. Lower-level queue and worker tools remain available through <code>djobs-mcp-full</code>.</p>
-      </div>
-
-      <div class="tool-grid">
-        <article class="tool"><code>sync_workspace(...)</code><p>Recover a minimal continuation capsule, compact evidence, or full audit detail under a token budget.</p></article>
-        <article class="tool"><code>memory(...)</code><p>List, search, deactivate, forget, or explicitly clear passive repository memory.</p></article>
-        <article class="tool"><code>checkpoint(...)</code><p>Deliberately create or resume one checkout-scoped unit of work.</p></article>
-        <article class="tool"><code>handoff(...)</code><p>Release or complete tracked work with bounded evidence.</p></article>
-        <article class="tool"><code>resume_delta(...)</code><p>Compatibility path for integrations that already persist revision IDs.</p></article>
-      </div>
-    </section>
-
-    <section class="wrap band" id="benchmarks" aria-labelledby="bench-title">
-      <div class="section-head">
-        <p class="label">Reproducible benchmarks</p>
-        <h2 id="bench-title">Measure payload shape, not a marketing percentage.</h2>
-        <p>The bundled deterministic fixture compares a deliberately simple full-reread baseline with one query-aware resume-tier response.</p>
-      </div>
-
-      <div class="metrics">
-        <article class="metric"><strong>~7,805</strong><span>simple estimate for rereading all 18 synthetic files</span></article>
-        <article class="metric"><strong>~224</strong><span>simple estimate for one query-aware <code>sync_workspace</code> resume response</span></article>
-      </div>
-      <p style="color:var(--muted);margin-top:18px">This is a payload-size regression fixture, not an end-to-end savings claim. The baseline does not model modern agents that summarize, cache, or selectively read files. It is not provider billing, measured model usage, latency, or quality. Run <code>python scripts/benchmark_project_memory.py</code> and inspect the assumptions.</p>
-      <div class="gain-note"><strong>djobs gain</strong> reports local task-efficiency and context-size heuristics. Treat them as explainable estimates, not guaranteed savings.</div>
-    </section>
-
-    <section class="wrap band" aria-labelledby="privacy-title">
-      <div class="section-head">
-        <p class="label">Privacy and control</p>
-        <h2 id="privacy-title">Local, inspectable, and reversible.</h2>
-        <p>State defaults to <code>~/.djobs/global.db</code>. Pause stops automatic capture and recovery without deleting data. Common credentials are redacted on a best-effort basis, stored text is untrusted data, retention is bounded, and failures remain fail-open.</p>
+        <p class="label">Small MCP surface</p>
+        <h2>Five tools for normal coding sessions.</h2>
+        <p>Keep the common path compact. Project Mode stays explicit instead of bloating every MCP call.</p>
       </div>
       <div class="cards">
-        <article class="card"><span class="card-icon" aria-hidden="true">01</span><h3>Opt out per prompt</h3><p>Add <code>[djobs:no-memory]</code> for one prompt or set <code>DJOBS_CAPTURE_USER_INTENT=0</code> globally.</p></article>
-        <article class="card"><span class="card-icon" aria-hidden="true">02</span><h3>Retire without selecting</h3><p>Mark memory resolved, superseded, stale, or contradicted. It remains inspectable only while retained by bounded local storage.</p></article>
-        <article class="card"><span class="card-icon" aria-hidden="true">03</span><h3>Forget or clear</h3><p>Delete one memory or explicitly clear passive memory for the repository family.</p></article>
+        <article class="card"><span class="card-icon">M</span><h3>sync_workspace + memory</h3><p>Recover the right context under a token budget, inspect lifecycle state, and retire stale facts without deleting the audit trail.</p></article>
+        <article class="card"><span class="card-icon">C</span><h3>checkpoint + handoff</h3><p>Claim one bounded unit only when ownership matters, then release or complete it with evidence.</p></article>
+        <article class="card"><span class="card-icon">Δ</span><h3>resume_delta</h3><p>Compatibility recovery remains available for integrations that already persist queue revisions.</p></article>
+      </div>
+    </section>
+
+    <section class="wrap band" id="benchmarks">
+      <div class="section-head">
+        <p class="label">Reproducible fixtures</p>
+        <h2>Measure payload shape without pretending it is provider billing.</h2>
+        <p>The bundled fixture compares a deliberately simple full-reread baseline with one query-aware resume response. It is a regression aid, not an end-to-end savings guarantee.</p>
+      </div>
+      <div class="metrics">
+        <article class="metric"><strong>~7,805</strong><span>simple token estimate for rereading 18 synthetic source files</span></article>
+        <article class="metric"><strong>~224</strong><span>simple token estimate for one query-aware resume-tier payload</span></article>
+      </div>
+    </section>
+
+    <section class="wrap band">
+      <div class="section-head">
+        <p class="label">Local and reversible</p>
+        <h2>State stays inspectable.</h2>
+        <p>Memory defaults to <code>~/.djobs/global.db</code>. Pause stops automatic capture without deleting data. Common credentials are redacted on a best-effort basis, inactive memory can be retired, and storage failures remain fail-open.</p>
+      </div>
+      <div class="cards">
+        <article class="card"><span class="card-icon">01</span><h3>No hosted account</h3><p>No cloud database or repository upload is required for normal djobs memory.</p></article>
+        <article class="card"><span class="card-icon">02</span><h3>Memory is data</h3><p>Recovered text is explicitly untrusted context. The current user request remains authoritative.</p></article>
+        <article class="card"><span class="card-icon">03</span><h3>Opt out and delete</h3><p>Skip one prompt, pause automatic behavior, retire stale memory, forget one item, or explicitly clear passive memory.</p></article>
       </div>
     </section>
 
     <section class="wrap cta">
-      <h2>Give the repository a memory that survives the chat.</h2>
-      <p>Open source, MIT licensed, local by default, and designed for coding agents that need to continue real work without replaying the entire project.</p>
+      <p class="label">djobs</p>
+      <h2>Give coding agents durable context without giving memory control of the task.</h2>
+      <p>Start with local memory and explicit coordination. Add ARUN only when the project needs durable completion semantics.</p>
       <div class="actions">
         <a class="button primary" href="https://marketplace.visualstudio.com/items?itemName=jhuang-tw.djobs">Install the extension</a>
-        <a class="button secondary" href="https://github.com/jhuang-tw/djobs">Read the source</a>
+        <a class="button secondary" href="https://pypi.org/project/djobs/">View on PyPI</a>
       </div>
     </section>
   </main>
@@ -453,7 +305,7 @@
       <span><strong>djobs</strong> · MIT licensed</span>
       <div class="footer-links">
         <a href="https://pypi.org/project/djobs/">PyPI</a>
-        <a href="https://marketplace.visualstudio.com/items?itemName=jhuang-tw.djobs">VS Code Marketplace</a>
+        <a href="https://marketplace.visualstudio.com/items?itemName=jhuang-tw.djobs">VS Code</a>
         <a href="https://github.com/jhuang-tw/djobs">Source</a>
         <a href="https://github.com/jhuang-tw/djobs/issues">Issues</a>
       </div>
@@ -467,12 +319,8 @@
         try {
           await navigator.clipboard.writeText(text);
           const label = button.querySelector('small');
-          button.classList.add('copied');
           if (label) label.textContent = 'copied';
-          window.setTimeout(() => {
-            button.classList.remove('copied');
-            if (label) label.textContent = 'copy';
-          }, 1600);
+          window.setTimeout(() => { if (label) label.textContent = 'copy'; }, 1500);
         } catch (_) {
           window.prompt('Copy this command:', text);
         }

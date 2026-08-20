@@ -1,6 +1,6 @@
 {
   "name": "djobs",
-  "displayName": "djobs — Shared Agent Memory",
+  "displayName": "djobs — Local Agent Memory",
   "description": "Shared local project memory and explicit coordination for AI coding agents across sessions and tools.",
   "version": "0.20.1",
   "publisher": "jhuang-tw",

@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "djobs"
 dynamic = ["version"]
-description = "Local project memory that helps coding agents continue work across AI sessions."
+description = "Shared local project memory and explicit coordination for AI coding agents."
 requires-python = ">=3.10"
 license = "MIT"
 readme = "README.md"
@@ -13,9 +13,11 @@ keywords = [
     "ai-agent",
     "coding-agent",
     "local-agent-memory",
+    "shared-agent-memory",
     "repository-memory",
     "context-recovery",
     "cross-agent-handoff",
+    "agent-coordination",
     "model-context-protocol",
     "sqlite",
 ]

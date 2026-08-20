@@ -96,7 +96,7 @@ def test_bootstrap_failure_never_blocks_the_tool_flow(monkeypatch, tmp_path: Pat
     assert result.error == "read-only home"
 
 
-def test_minimal_sync_tool_bootstraps_before_reading_workspace(monkeypatch) -> None:
+def test_minimal_sync_tool_bootstraps_recovers_then_remembers_request(monkeypatch) -> None:
     import asyncio
 
     from djobs import coding_mcp
@@ -110,7 +110,7 @@ def test_minimal_sync_tool_bootstraps_before_reading_workspace(monkeypatch) -> N
 
         async def list_roots(self):
             order.append("roots")
-            return SimpleNamespace(roots=[])
+            return SimpleNamespace(roots=["repo-root"])
 
     context = SimpleNamespace(session=Session(), request_context=None, client_id=None)
     monkeypatch.setattr(
@@ -122,17 +122,68 @@ def test_minimal_sync_tool_bootstraps_before_reading_workspace(monkeypatch) -> N
         ),
     )
     captured: dict[str, object] = {}
+    remembered: dict[str, object] = {}
 
     def sync(**kwargs):
         captured.update(kwargs)
         order.append("sync")
-        return "{}"
+        return '{"ok":true}'
+
+    def remember(query, **kwargs):
+        remembered["query"] = query
+        remembered.update(kwargs)
+        order.append("remember")
 
     monkeypatch.setattr(coding_mcp, "_sync_workspace", sync)
+    monkeypatch.setattr(coding_mcp, "remember_current_request", remember)
 
-    assert asyncio.run(coding_mcp.sync_workspace(context)) == "{}"
-    assert order == ["bootstrap", "roots", "sync"]
+    result = asyncio.run(coding_mcp.sync_workspace(context, query="continue parser"))
+
+    assert order == ["bootstrap", "roots", "sync", "remember"]
     assert captured["agent_type"] == "copilot"
+    assert captured["roots"] == ["repo-root"]
+    assert remembered == {
+        "query": "continue parser",
+        "roots": ["repo-root"],
+        "cwd": None,
+        "agent_type": "copilot",
+    }
+    assert '"ok":true' in result
+
+
+def test_unknown_mcp_client_can_build_memory_without_host_hooks(monkeypatch) -> None:
+    import asyncio
+
+    from djobs import coding_mcp
+
+    class Session:
+        client_params = SimpleNamespace(clientInfo=SimpleNamespace(name="Unknown Client", title=None))
+
+        async def list_roots(self):
+            return SimpleNamespace(roots=["repo-root"])
+
+    context = SimpleNamespace(session=Session(), request_context=None, client_id=None)
+    monkeypatch.setattr(
+        coding_mcp,
+        "bootstrap_first_call",
+        lambda _context: zero_touch.BootstrapResult("ready", None, "/tmp/memory.db"),
+    )
+    monkeypatch.setattr(coding_mcp, "_sync_workspace", lambda **kwargs: '{"ok":true}')
+    calls: list[tuple[object, dict[str, object]]] = []
+    monkeypatch.setattr(
+        coding_mcp,
+        "remember_current_request",
+        lambda query, **kwargs: calls.append((query, kwargs)),
+    )
+
+    asyncio.run(coding_mcp.sync_workspace(context, query="fix parser"))
+
+    assert calls == [
+        (
+            "fix parser",
+            {"roots": ["repo-root"], "cwd": None, "agent_type": None},
+        )
+    ]
 
 
 def test_paused_bootstrap_is_side_effect_free(monkeypatch, tmp_path: Path) -> None:

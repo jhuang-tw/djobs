@@ -163,25 +163,22 @@ def _resume_view(observations: list[dict[str, Any]]) -> dict[str, Any]:
         progress = [
             str(item.get("summary", ""))
             for item in observations
-            if item.get("event")
-            in {"tool_result", "repository_change", "agent_progress", "agent_decision"}
+            if item.get("event") in {"tool_result", "repository_change"}
             and str(item.get("summary", "")).strip()
         ][:3]
     if not failures:
         failures = [
             str(item.get("summary", ""))
             for item in observations
-            if item.get("event") in {"tool_failure", "agent_failure"}
-            and str(item.get("summary", "")).strip()
+            if item.get("event") == "tool_failure" and str(item.get("summary", "")).strip()
         ][:2]
 
     constraints = [str(item) for item in capsule.get("constraints", []) if str(item).strip()]
     for item in observations:
-        event = item.get("event")
+        if item.get("event") != "user_intent":
+            continue
         value = str(item.get("summary", "")).strip()
-        if event == "agent_constraint" and value and value not in constraints:
-            constraints.append(value)
-        elif event == "user_intent" and value and value != goal and value not in constraints:
+        if value and value != goal and value not in constraints:
             constraints.append(value)
         if len(constraints) >= 3:
             break
@@ -254,43 +251,80 @@ def _bounded(result: dict[str, Any], token_budget: int) -> str:
         "workspace_id",
         "agent",
         "query",
-        "other_agents",
-        "recent_completed",
-        "failed",
+        "next_step",
     )
-    while _estimate_tokens(result) > budget:
-        removed = False
+    optional_task_fields = ("evidence", "error", "lease_expires_at", "path", "summary")
+
+    while True:
+        estimate = _estimate_tokens(result)
+        result["budget"]["estimated_tokens"] = estimate
+        final_estimate = _estimate_tokens(result)
+        if final_estimate <= budget:
+            result["budget"]["estimated_tokens"] = final_estimate
+            return _dumps(result)
+
+        changed = False
         for key in secondary_lists:
-            value = result.get(key)
-            if isinstance(value, list) and value:
-                value.pop()
-                removed = True
+            values = result.get(key)
+            if isinstance(values, list) and values:
+                values.pop()
+                changed = True
                 break
-        if removed:
+        if changed:
             continue
+
         resume = result.get("resume")
         if isinstance(resume, dict):
             for key in resume_lists:
-                value = resume.get(key)
-                if isinstance(value, list) and value:
-                    value.pop()
-                    removed = True
+                values = resume.get(key)
+                if isinstance(values, list) and values:
+                    values.pop()
+                    changed = True
                     break
-            if removed:
-                continue
+            if not changed:
+                for key in ("git", "next"):
+                    if key in resume:
+                        resume.pop(key, None)
+                        changed = True
+                        break
+        if changed:
+            continue
+
         tasks = result.get("tasks")
         if isinstance(tasks, list) and len(tasks) > 1:
             tasks.pop()
             continue
+
         for key in optional_top_level:
             if key in result:
                 result.pop(key, None)
-                removed = True
+                changed = True
                 break
-        if not removed:
-            break
-    result["budget"]["estimated_tokens"] = _estimate_tokens(result)
-    return _dumps(result)
+        if changed:
+            continue
+
+        if isinstance(tasks, list) and tasks and isinstance(tasks[0], dict):
+            task = tasks[0]
+            for key in optional_task_fields:
+                if key in task:
+                    task.pop(key, None)
+                    changed = True
+                    break
+        if changed:
+            continue
+
+        minimal: dict[str, Any] = {"ok": bool(result.get("ok", True))}
+        if result.get("workspace"):
+            minimal["workspace"] = result["workspace"]
+        if isinstance(tasks, list) and tasks and isinstance(tasks[0], dict):
+            compact_task = {
+                key: tasks[0][key] for key in ("id", "status", "owner") if key in tasks[0]
+            }
+            if compact_task:
+                minimal["tasks"] = [compact_task]
+        if _estimate_tokens(minimal) > budget:
+            minimal = {"ok": bool(result.get("ok", True))}
+        return _dumps(minimal)
 
 
 def sync_workspace(

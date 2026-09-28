@@ -660,6 +660,86 @@ def test_typed_contradiction_and_compaction_contract(repo):
     assert result["ambiguous"] and not result["memories"]
 
 
+def test_forgotten_conflict_requires_new_review_contract(repo):
+    from types import SimpleNamespace
+
+    from djobs.artifacts import ArtifactMemory
+    from djobs.memory_review import ReviewGate
+    from djobs.observations import forget_observation, record_observation
+    from djobs.storage.memory import memory_repository
+
+    workspace = _memory_scope()
+    agent = SimpleNamespace(agent_type="contract", session_id="forgotten-conflict")
+    memory = ArtifactMemory(repo, workspace)
+    gate = ReviewGate(lambda request: "accept", reviewer="synthetic-contract-reviewer")
+    ids, originals = [], []
+    for text in ("Billing owns deletion", "Accounts owns deletion"):
+        record_observation(repo, workspace, agent, "tool_result", text)
+        source = next(
+            row["id"]
+            for row in memory_repository(repo).scan_rows(
+                scopes=workspace.memory_correlation_ids, marker_event="context_injected", limit=10
+            )
+            if row["summary"] == text
+        )
+        item = memory.propose(
+            {
+                "kind": "fact",
+                "title": "Ownership",
+                "abstract": text,
+                "sources": [source],
+                "valid_from": "2020-01-01T00:00:00Z",
+            }
+        )["artifact"]["id"]
+        memory.review(item, gate)
+        ids.append(item)
+        originals.append(source)
+    memory.relate(ids[0], ids[1], "contradicts", at="2021-01-01T00:00:00Z", gate=gate)
+    before = memory.get(ids[1])["content_hash"]
+    assert forget_observation(repo, workspace, originals[0])
+    assert not memory.list_artifacts()["memories"]
+    pending = memory.get(ids[1], depth=2)
+    assert pending["status"] == "candidate" and pending["content_hash"] == before
+    assert ids[0] not in json.dumps(pending)
+    assert memory.review(ids[1], gate)["activated"]
+    assert memory.list_artifacts()["count"] == 1
+
+
+def test_capsule_copy_forget_contract(repo):
+    from types import SimpleNamespace
+
+    from djobs.artifacts import ArtifactMemory
+    from djobs.memory_review import ReviewGate
+    from djobs.observations import forget_observation, record_observation, record_session_capsule
+    from djobs.storage.memory import memory_repository
+
+    workspace = _memory_scope()
+    agent = SimpleNamespace(agent_type="contract", session_id="copied-context")
+    phrase = "SYNTHETIC ERASABLE EVIDENCE"
+    record_observation(repo, workspace, agent, "tool_result", phrase)
+    record_session_capsule(repo, workspace, agent, reason="contract")
+    rows = memory_repository(repo).scan_rows(
+        scopes=workspace.memory_correlation_ids, marker_event="context_injected", limit=10
+    )
+    raw = next(row["id"] for row in rows if row["event_type"] == "tool_result")
+    capsule = next(row["id"] for row in rows if row["event_type"] == "session_capsule")
+    memory = ArtifactMemory(repo, workspace)
+    item = memory.propose(
+        {"kind": "fact", "title": "Copied evidence", "abstract": phrase, "sources": [capsule]}
+    )["artifact"]["id"]
+    memory.review(
+        item, ReviewGate(lambda request: "accept", reviewer="synthetic-contract-reviewer")
+    )
+    assert forget_observation(repo, workspace, raw)
+    assert (
+        memory_repository(repo).scan_rows(
+            scopes=workspace.memory_correlation_ids, marker_event="context_injected", limit=10
+        )
+        == []
+    )
+    assert not memory.list_artifacts(exposure="audit")["memories"]
+
+
 def test_passive_pg_read_does_not_leak_or_commit_outer_transaction(repo):
     if not hasattr(repo, "_conn"):
         return
@@ -719,3 +799,112 @@ def test_external_candidate_boundary_contract(repo):
     assert result["pass"]
     assert result["after"]["native_revalidated_candidates"] == 1
     assert result["after"]["rejected_candidates"] == 2
+
+
+def test_concurrent_capsule_capture_does_not_restore_forgotten_source(repo, monkeypatch):
+    import threading
+    from types import SimpleNamespace
+
+    import djobs.observations as observations
+    from djobs.storage.memory import memory_repository
+
+    workspace = _memory_scope()
+    agent = SimpleNamespace(agent_type="contract", session_id="concurrent-capture")
+    observations.record_observation(
+        repo, workspace, agent, "tool_result", "Concurrent synthetic evidence"
+    )
+    original = memory_repository(repo).scan_rows(
+        scopes=workspace.memory_correlation_ids, marker_event="context_injected", limit=10
+    )[0]["id"]
+    captured, resume = threading.Event(), threading.Event()
+    read = observations.session_observations
+    result = []
+
+    def paused_read(*args, **kwargs):
+        rows = read(*args, **kwargs)
+        captured.set()
+        assert resume.wait(5)
+        return rows
+
+    def capture():
+        try:
+            result.append(
+                observations.record_session_capsule(repo, workspace, agent, reason="concurrent")
+            )
+        except Exception as exc:
+            result.append(type(exc).__name__)
+
+    monkeypatch.setattr(observations, "session_observations", paused_read)
+    thread = threading.Thread(target=capture, daemon=True)
+    thread.start()
+    try:
+        assert captured.wait(5)
+        assert observations.forget_observation(repo, workspace, original)
+    finally:
+        resume.set()
+        thread.join(5)
+    assert not thread.is_alive() and result == [False]
+    assert observations.recent_observations(repo, workspace) == []
+
+
+def test_nested_observation_insert_preserves_caller_rollback_contract(repo):
+    from types import SimpleNamespace
+
+    import pytest
+
+    from djobs.observations import record_observation
+    from djobs.storage.artifacts import ArtifactStore
+    from djobs.storage.memory import memory_repository
+
+    workspace = _memory_scope()
+    agent = SimpleNamespace(agent_type="contract", session_id="caller-owned-transaction")
+    adapter = memory_repository(repo)
+    adapter.ensure_schema()
+    with (
+        pytest.raises(RuntimeError, match="synthetic_rollback"),
+        ArtifactStore(repo).transaction(write=True, family=workspace.repo_family_id),
+    ):
+        record_observation(repo, workspace, agent, "tool_result", "Must rollback together")
+        raise RuntimeError("synthetic_rollback")
+    assert (
+        adapter.scan_rows(
+            scopes=workspace.memory_correlation_ids, marker_event="context_injected", limit=10
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize("invalid_metadata", ["{broken", "[]", "null"])
+def test_malformed_capsule_forget_rolls_back_contract(repo, invalid_metadata):
+    from types import SimpleNamespace
+
+    from djobs.memory_artifacts import ArtifactError
+    from djobs.observations import forget_observation, record_observation
+    from djobs.storage.artifacts import ArtifactStore
+    from djobs.storage.memory import memory_repository
+
+    workspace = _memory_scope()
+    agent = SimpleNamespace(agent_type="contract", session_id="target-session")
+    other = SimpleNamespace(agent_type="contract", session_id="copy-session")
+    record_observation(repo, workspace, agent, "tool_result", "synthetic erasure target")
+    record_observation(repo, workspace, other, "session_capsule", "corrupt copy")
+    store = ArtifactStore(repo)
+    with store.transaction(write=True, family=workspace.repo_family_id) as cursor:
+        store.execute(
+            cursor,
+            "UPDATE agent_observations SET metadata_json=? WHERE event_type='session_capsule'",
+            (invalid_metadata,),
+        )
+    adapter = memory_repository(repo)
+    before = adapter.scan_rows(
+        scopes=workspace.memory_correlation_ids, marker_event="context_injected", limit=10
+    )
+    original = next(row["id"] for row in before if row["event_type"] == "tool_result")
+    with pytest.raises(ArtifactError, match="capsule_forget_provenance_invalid"):
+        forget_observation(repo, workspace, original)
+    assert (
+        adapter.scan_rows(
+            scopes=workspace.memory_correlation_ids, marker_event="context_injected", limit=10
+        )
+        == before
+    )

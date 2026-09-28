@@ -275,6 +275,16 @@ def test_observation_retention_is_bounded(
     workspace = resolve_workspace(cwd=str(root))
     agent = resolve_agent_session(workspace, agent_type="custom", session_id="retention")
     monkeypatch.setattr(observations, "_MAX_OBSERVATIONS_PER_WORKSPACE", 3)
+    factory = observations._observation_record
+    ticks = iter(range(5))
+
+    def ordered_record(*args, **kwargs):
+        record = factory(*args, **kwargs)
+        record["created_at"] = f"2026-01-01T00:00:{next(ticks):02d}+00:00"
+        return record
+
+    # Retention sorts timestamps and IDs, not the wall clock's scheduling jitter.
+    monkeypatch.setattr(observations, "_observation_record", ordered_record)
 
     for index in range(5):
         observations.record_observation(
@@ -537,3 +547,36 @@ def test_passive_hooks_and_sync_do_not_renew_or_expire_an_explicit_lease(tmp_pat
         )
         == expired
     )
+
+
+def test_observation_retention_timestamp_ties_use_stable_id_order(tmp_path, monkeypatch):
+    root = _git_repo(tmp_path / "tie-project")
+    repository, _ = _queue(tmp_path / "tie.db")
+    workspace = resolve_workspace(cwd=str(root))
+    agent = resolve_agent_session(workspace, agent_type="custom", session_id="tied-retention")
+    factory = observations._observation_record
+    identities = [f"obs_{n:032x}" for n in (5, 1, 4, 2, 3)]
+    pending = iter(identities)
+
+    def tied_record(*args, **kwargs):
+        record = factory(*args, **kwargs)
+        record["created_at"] = "2026-01-01T00:00:00+00:00"
+        record["id"] = next(pending)
+        return record
+
+    monkeypatch.setattr(observations, "_MAX_OBSERVATIONS_PER_WORKSPACE", 3)
+    monkeypatch.setattr(observations, "_observation_record", tied_record)
+    try:
+        for n in range(5):
+            observations.record_observation(
+                repository, workspace, agent, "tool_result", f"event {n}"
+            )
+        actual = [
+            row[0]
+            for row in repository._connection.execute(
+                "SELECT id FROM agent_observations ORDER BY created_at DESC, id DESC"
+            )
+        ]
+        assert actual == sorted(identities, reverse=True)[:3]
+    finally:
+        repository.close()

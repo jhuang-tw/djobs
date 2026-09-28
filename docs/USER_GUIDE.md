@@ -358,6 +358,29 @@ the service never silently commits or rolls back that caller's work. Legacy pass
 their own transactions. Source loss suppresses the complete joint claim and dependent conclusions;
 remaining evidence requires a new proposal/review rather than silently rewriting accepted content.
 Routine compaction protects active accepted source chains. Explicit forget still removes content.
+Forgetting raw evidence also deletes same-time or later capsules in the same agent/session and explicitly linked
+capsule copies, together with their typed descendants and derived indexes. This is conservative:
+legacy truncated capsules cannot prove which copied fields depended on the source. Earlier capsules,
+unrelated unlinked sessions, and unrelated raw observations are preserved; an interrupted cascade rolls back.
+Equal-time legacy capsules are conservatively erased because the clock cannot establish their order.
+This does not identify arbitrary unlinked textual copies in other sessions.
+Automatic conflict invalidation preserves original authority and content while moving survivors
+back to candidate status. Its maintenance receipt is not a new human review or execution permission.
+Capsule source capture is locked and revalidated in the insertion transaction, so a source forgotten
+between read and write cannot be copied back into a new capsule. Explicit forget parses each capsule
+once and bounds the scan to 1,024 capsules, 16,000 metadata characters per capsule, 4 MiB total encoded
+metadata, and 65,536 traversal nodes. Malformed JSON or non-object capsule provenance also refuses
+the operation with a bounded error; no content is included in the error. Exceeding a bound refuses
+the whole transaction rather than
+reporting a partial deletion as success. Explicit repository-family clear remains a separate action.
+
+Deleting one side of an unresolved contradiction is not a reviewed resolution. The surviving facts
+and their dependent artifacts become candidates requiring fresh individual review, including known
+future-dated conflicts. Their own immutable content and previous review receipts remain available,
+and a non-sensitive invalidation receipt contains no forgotten endpoint ID or text. Marking a source
+stale does not erase an existing conflict either. Previously resolved conflicts are not reopened.
+While re-review is pending, historical resume is also conservatively withheld for demoted records;
+the surviving audit record remains inspectable, but this is not a complete bitemporal review archive.
 
 The additive component schema is `artifacts=1` in `migrations/012_memory_artifacts.sql`. Reads do not
 install it. The bounded native store holds at most 256 artifacts per family, 16 source references

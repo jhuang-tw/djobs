@@ -31,15 +31,26 @@ def _venv_executable(root: Path, name: str) -> Path:
 def _run(
     command: list[str], *, env: dict[str, str], cwd: Path
 ) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(
+    captured = subprocess.run(
         command,
         cwd=cwd,
-        env=env,
-        text=True,
+        env={"PYTHONIOENCODING": "utf-8", **env},
         capture_output=True,
         timeout=90,
         check=False,
     )
+    # Decoding inside Windows reader threads can fail while returncode stays 0.
+    # Controlled Python/Git output is UTF-8 (contract JSON is also ASCII-safe).
+    # Invalid bytes must fail this smoke check, not disappear from its result.
+    try:
+        result = subprocess.CompletedProcess(
+            captured.args,
+            captured.returncode,
+            captured.stdout.decode("utf-8"),
+            captured.stderr.decode("utf-8"),
+        )
+    except UnicodeDecodeError:
+        raise RuntimeError("installed smoke received invalid UTF-8 output") from None
     if result.returncode != 0:
         raise RuntimeError(
             f"command failed ({result.returncode}): {' '.join(command)}\n"
@@ -125,7 +136,11 @@ def _contract_smoke(
     workspace = root / "中文工作區-✅"
     workspace.mkdir()
     _run([git, "init", "-q", str(workspace)], env=contract_env, cwd=root)
-    _run([git, "-C", str(workspace), "config", "user.name", "Contract Smoke"], env=contract_env, cwd=root)
+    _run(
+        [git, "-C", str(workspace), "config", "user.name", "Contract Smoke"],
+        env=contract_env,
+        cwd=root,
+    )
     _run(
         [git, "-C", str(workspace), "config", "user.email", "smoke@example.invalid"],
         env=contract_env,
@@ -227,9 +242,7 @@ def _contract_smoke(
     response_text.encode("ascii")
     response = json.loads(response_text)
     observations = response.get("repository_observations", [])
-    if not response.get("ok") or [item.get("id") for item in observations] != [
-        "unicode-failure"
-    ]:
+    if not response.get("ok") or [item.get("id") for item in observations] != ["unicode-failure"]:
         raise AssertionError(f"installed observation contract failed: {response}")
     if observations[0].get("summary") != "中文 failure observation ✅":
         raise AssertionError("Unicode observation did not round-trip through CP950-safe JSON")

@@ -587,48 +587,64 @@ def record_session_capsule(
         parts.append("Failed: " + " | ".join(failures[-2:]))
     if next_hint:
         parts.append("Next: " + clean(next_hint, 240))
-    record_observation(
-        repo,
-        workspace,
-        agent,
-        "session_capsule",
-        clean(" || ".join(parts), _MAX_SUMMARY),
-        metadata={
-            "capsule_schema": 2,
-            "reason": clean(reason, 80),
-            "goal": goal,
-            "constraints": constraints,
-            "progress": progress[-5:],
-            "failures": failures[-3:],
-            "next": clean(next_hint, 240) if next_hint else None,
-            "source_event_ids": [str(row["id"]) for row in rows[-20:]],
-            "source": "agent_summary",
-            "provenance": {
-                "goal": {"source": "user_intent", "evidence_id": goal_id},
-                "constraints": [
-                    {"source": "user_intent", "evidence_id": memory_id}
-                    for memory_id, _summary in intents[:-1][-3:]
-                ],
-                "progress": [
-                    {
-                        "source": str(row["event_type"]),
-                        "evidence_id": str(row["id"]),
-                    }
-                    for row in progress_rows[-5:]
-                ],
-                "failures": [
-                    {"source": "tool_failure", "evidence_id": str(row["id"])}
-                    for row in failure_rows[-3:]
-                ],
-                "next": {
-                    "source": "agent_summary",
-                    "kind": "derived_next_step",
-                    "advisory": True,
+    from djobs.memory_policy import source_hash
+    from djobs.storage.artifacts import ArtifactStore
+
+    # Schema setup belongs before the critical section: SQLite executescript
+    # must not commit away our source validation/insert transaction.
+    memory_repository(repo).ensure_schema()
+    store = ArtifactStore(repo)
+    with store.transaction(write=True, family=_memory_scope(workspace)) as cursor:
+        current = store.observations(cursor, [str(row["id"]) for row in rows], lock=True)
+        if any(
+            str(row["id"]) not in current
+            or observation_exclusion(current[str(row["id"])], workspace) is not None
+            or source_hash(current[str(row["id"])]) != source_hash(row)
+            for row in rows
+        ):
+            return False
+        record_observation(
+            repo,
+            workspace,
+            agent,
+            "session_capsule",
+            clean(" || ".join(parts), _MAX_SUMMARY),
+            metadata={
+                "capsule_schema": 2,
+                "reason": clean(reason, 80),
+                "goal": goal,
+                "constraints": constraints,
+                "progress": progress[-5:],
+                "failures": failures[-3:],
+                "next": clean(next_hint, 240) if next_hint else None,
+                "source_event_ids": [str(row["id"]) for row in rows[-20:]],
+                "source": "agent_summary",
+                "provenance": {
+                    "goal": {"source": "user_intent", "evidence_id": goal_id},
+                    "constraints": [
+                        {"source": "user_intent", "evidence_id": memory_id}
+                        for memory_id, _summary in intents[:-1][-3:]
+                    ],
+                    "progress": [
+                        {
+                            "source": str(row["event_type"]),
+                            "evidence_id": str(row["id"]),
+                        }
+                        for row in progress_rows[-5:]
+                    ],
+                    "failures": [
+                        {"source": "tool_failure", "evidence_id": str(row["id"])}
+                        for row in failure_rows[-3:]
+                    ],
+                    "next": {
+                        "source": "agent_summary",
+                        "kind": "derived_next_step",
+                        "advisory": True,
+                    },
                 },
             },
-        },
-        metadata_limit=_MAX_CAPSULE_METADATA,
-    )
+            metadata_limit=_MAX_CAPSULE_METADATA,
+        )
     return True
 
 

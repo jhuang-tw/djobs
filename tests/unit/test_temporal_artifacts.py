@@ -64,6 +64,231 @@ def fact(
     return result["artifact"]["id"]
 
 
+@pytest.mark.parametrize("removal", ["observation", "artifact", "stale"])
+def test_disputed_source_removal_does_not_silently_elect_a_winner(env, removal):
+    from djobs.observations import forget_observation, update_observation_status
+
+    repo, workspace, _ = env
+    memory = ArtifactMemory(repo, workspace)
+    source_a = source(env, "Billing owns account deletion")
+    source_b = source(env, "Accounts owns account deletion")
+    a = fact(memory, source_a, "Billing owns account deletion.")
+    b = fact(memory, source_b, "Accounts owns account deletion.")
+    memory.review(a, gate())
+    memory.review(b, gate())
+    child = fact(memory, b, "Use Accounts for account deletion")
+    memory.review(child, gate())
+    memory.relate(a, b, "contradicts", at="2021-01-01T00:00:00Z", gate=gate())
+    assert memory.list_artifacts()["memories"] == []
+    if removal == "observation":
+        assert forget_observation(repo, workspace, source_a)
+    elif removal == "artifact":
+        assert memory.forget(a)
+    else:
+        assert update_observation_status(repo, workspace, source_a, "stale")
+    result = memory.list_artifacts(query="Accounts", explain=True)
+    assert not result["memories"], "Removing contrary evidence is not a resolution"
+    assert memory.get(b, depth=2)["content_hash"]
+    if removal != "stale":
+        assert "Billing owns account deletion" not in json.dumps(result)
+
+
+def test_forget_removes_capsule_copies_and_their_derived_artifacts(env):
+    from djobs.observations import (
+        forget_observation,
+        recent_observations,
+        record_session_capsule,
+    )
+
+    repo, workspace, agent = env
+    phrase = "SYNTHETIC FORGOTTEN CUSTOMER CHOICE"
+    observation = source(env, phrase)
+    assert record_session_capsule(repo, workspace, agent, reason="synthetic-regression")
+    capsule = repo._connection.execute(
+        "SELECT id FROM agent_observations WHERE event_type='session_capsule'"
+    ).fetchone()[0]
+    memory = ArtifactMemory(repo, workspace)
+    derived = fact(memory, capsule, phrase)
+    memory.review(derived, gate())
+    assert forget_observation(repo, workspace, observation)
+    assert phrase not in json.dumps(recent_observations(repo, workspace))
+    assert phrase not in json.dumps(memory.list_artifacts(exposure="audit", depth=2))
+    assert (
+        repo._connection.execute(
+            "SELECT count(*) FROM agent_observations WHERE id=?", (capsule,)
+        ).fetchone()[0]
+        == 0
+    )
+
+
+def test_disputed_survivors_require_fresh_individual_review_and_keep_content(env):
+    repo, workspace, _ = env
+    memory = ArtifactMemory(repo, workspace)
+    a = fact(memory, source(env, "Contrary evidence"), "First ownership claim")
+    b = fact(memory, source(env, "Independent evidence"), "Surviving ownership claim")
+    memory.review(a, gate())
+    memory.review(b, gate())
+    child = fact(memory, b, "Dependent ownership claim")
+    memory.review(child, gate())
+    before = {item: memory.get(item)["content_hash"] for item in (b, child)}
+    authorities = {item: memory.get(item)["authority"] for item in (b, child)}
+    memory.relate(a, b, "contradicts", at="2021-01-01T00:00:00Z", gate=gate())
+    assert memory.forget(a)
+    for item in (b, child):
+        stored = repo._connection.execute(
+            "SELECT * FROM memory_artifacts WHERE id=?", (item,)
+        ).fetchone()
+        assert stored["status"] == "candidate" and stored["content_hash"] == before[item]
+        assert stored["authority"] == authorities[item], "Maintenance must not invent review"
+        receipt = repo._connection.execute(
+            "SELECT receipt_json FROM memory_reviews WHERE artifact_id=? "
+            "AND decision LIKE 'invalidate:%'",
+            (item,),
+        ).fetchone()[0]
+        assert a not in receipt and "Contrary evidence" not in receipt
+        parsed = json.loads(receipt)
+        assert parsed["requires_human_review"] and not parsed["execution_authority"]
+        assert parsed["receipt_hash"] == digest(
+            {k: v for k, v in parsed.items() if k != "receipt_hash"}
+        )
+    with pytest.raises(ArtifactError, match="sources_unavailable"):
+        memory.review(child, gate())
+    assert memory.review(b, gate())["activated"]
+    assert [item["id"] for item in memory.list_artifacts()["memories"]] == [b]
+    assert memory.review(child, gate())["activated"]
+    assert memory.list_artifacts()["count"] == 2
+
+
+def test_future_unresolved_conflict_is_not_erased_by_forget(env):
+    repo, workspace, _ = env
+    memory = ArtifactMemory(repo, workspace)
+    a = fact(memory, source(env, "future A"), "Future ownership A")
+    b = fact(memory, source(env, "future B"), "Future ownership B")
+    memory.review(a, gate())
+    memory.review(b, gate())
+    memory.relate(a, b, "contradicts", at="2099-01-01T00:00:00Z", gate=gate())
+    assert memory.forget(a)
+    assert not memory.list_artifacts(at="2099-06-01T00:00:00Z")["memories"]
+    assert memory.get(b)["status"] == "candidate"
+
+
+def test_resolved_conflict_does_not_demote_survivor_when_old_fact_is_forgotten(env):
+    repo, workspace, _ = env
+    memory = ArtifactMemory(repo, workspace)
+    a = fact(memory, source(env, "old A"), "Old ownership A")
+    b = fact(memory, source(env, "new B"), "New ownership B", start="2021-01-01T00:00:00Z")
+    memory.review(a, gate())
+    memory.review(b, gate())
+    memory.relate(a, b, "contradicts", at="2021-01-01T00:00:00Z", gate=gate())
+    memory.relate(b, a, "supersedes", at="2021-01-01T00:00:00Z", gate=gate())
+    assert memory.forget(a)
+    assert memory.get(b)["status"] == "active"
+    assert [item["id"] for item in memory.list_artifacts()["memories"]] == [b]
+
+
+def test_capsule_forget_handles_legacy_and_linked_copies_but_preserves_unrelated_sessions(env):
+    from djobs.observations import forget_observation, record_session_capsule
+
+    repo, workspace, agent = env
+    source(env, "earlier evidence")
+    record_session_capsule(repo, workspace, agent, reason="before")
+    earlier = repo._connection.execute(
+        "SELECT id FROM agent_observations WHERE event_type='session_capsule'"
+    ).fetchone()[0]
+    # Real wall-clock reads can tie on Python 3.10/Windows; establish the
+    # claimed ordering explicitly instead of assuming timestamp granularity.
+    repo.execute_write(
+        "UPDATE agent_observations SET created_at=? WHERE id=?",
+        ("2020-01-01T00:00:00+00:00", earlier),
+    )
+    target = source(env, "synthetic copied target")
+    record_observation(
+        repo,
+        workspace,
+        agent,
+        "session_capsule",
+        "legacy copy with truncated linkage",
+        metadata={"truncated": True},
+    )
+    other = SimpleNamespace(agent_type="test", session_id="unrelated-session")
+    record_observation(repo, workspace, other, "session_capsule", "keep unrelated session")
+    linked = SimpleNamespace(agent_type="other-agent", session_id="linked-copy-session")
+    record_observation(
+        repo,
+        workspace,
+        linked,
+        "session_capsule",
+        "explicit linked copy",
+        metadata={"provenance": {"progress": [{"evidence_id": target}]}},
+    )
+    assert forget_observation(repo, workspace, target)
+    retained = repo._connection.execute("SELECT id,summary FROM agent_observations").fetchall()
+    assert earlier in {row["id"] for row in retained}
+    assert {row["summary"] for row in retained} >= {"earlier evidence", "keep unrelated session"}
+    assert not {"legacy copy with truncated linkage", "explicit linked copy"} & {
+        row["summary"] for row in retained
+    }
+
+
+def test_failed_cascade_rolls_back_copies_artifacts_and_sources_together(env, monkeypatch):
+    import djobs.storage.artifacts as store
+    from djobs.observations import forget_observation, record_session_capsule
+
+    repo, workspace, agent = env
+    original = source(env, "atomic forget evidence")
+    record_session_capsule(repo, workspace, agent, reason="atomic")
+    capsule = repo._connection.execute(
+        "SELECT id FROM agent_observations WHERE event_type='session_capsule'"
+    ).fetchone()[0]
+    memory = ArtifactMemory(repo, workspace)
+    child = fact(memory, capsule)
+    memory.review(child, gate())
+    before = list(repo._connection.iterdump())
+    delete = store.delete_artifacts
+
+    def fail_after_delete(cursor, sqlite, artifact_ids):
+        delete(cursor, sqlite, artifact_ids)
+        raise ArtifactError("synthetic_interrupted_forget")
+
+    monkeypatch.setattr(store, "delete_artifacts", fail_after_delete)
+    with pytest.raises(ArtifactError, match="interrupted_forget"):
+        forget_observation(repo, workspace, original)
+    assert list(repo._connection.iterdump()) == before
+
+
+def test_capsule_capture_revalidates_sources_forgotten_after_its_read(env, monkeypatch):
+    import djobs.observations as observations
+
+    repo, workspace, agent = env
+    original = source(env, "SYNTHETIC CAPTURE RACE EVIDENCE")
+    read = observations.session_observations
+
+    def capture_then_forget(*args, **kwargs):
+        captured = read(*args, **kwargs)
+        assert observations.forget_observation(repo, workspace, original)
+        return captured
+
+    monkeypatch.setattr(observations, "session_observations", capture_then_forget)
+    assert not observations.record_session_capsule(repo, workspace, agent, reason="race")
+    assert not observations.recent_observations(repo, workspace)
+
+
+def test_oversized_capsule_metadata_refuses_forget_atomically(env):
+    from djobs.observations import forget_observation
+
+    repo, workspace, agent = env
+    original = source(env, "bounded source")
+    record_observation(repo, workspace, agent, "session_capsule", "oversized metadata fixture")
+    repo.execute_write(
+        "UPDATE agent_observations SET metadata_json=? WHERE event_type='session_capsule'",
+        (json.dumps({"oversized": "x" * 20000}),),
+    )
+    before = list(repo._connection.iterdump())
+    with pytest.raises(ArtifactError, match="capsule_forget_scan_bound"):
+        forget_observation(repo, workspace, original)
+    assert list(repo._connection.iterdump()) == before
+
+
 def test_candidate_never_self_activates_and_acceptance_preserves_content(env):
     repo, workspace, _ = env
     memory = ArtifactMemory(repo, workspace)
@@ -495,3 +720,136 @@ def test_temporal_workflow_benchmark_is_offline_and_reports_measured_checks(monk
     assert result["answer_judge"] == "not_run"
     assert result["before"]["unrelated_persistence_claims"] == 2
     assert result["after"]["current_persistence_claims"] == 1
+
+
+@pytest.mark.parametrize(
+    "budget", ["CAPSULE_SCAN_ROWS", "CAPSULE_SCAN_BYTES", "CAPSULE_SCAN_NODES"]
+)
+def test_capsule_scan_budgets_refuse_without_partial_changes(env, monkeypatch, budget):
+    import djobs.storage.artifacts as storage
+    from djobs.observations import forget_observation, record_session_capsule
+
+    repo, workspace, agent = env
+    original = source(env, "bounded parsing evidence")
+    record_session_capsule(repo, workspace, agent, reason="budget")
+    before = list(repo._connection.iterdump())
+    monkeypatch.setattr(storage, budget, 0)
+    with pytest.raises(ArtifactError, match="capsule_forget_scan_bound"):
+        forget_observation(repo, workspace, original)
+    assert list(repo._connection.iterdump()) == before
+
+
+def test_transitive_capsule_closure_parses_each_metadata_only_once(env, monkeypatch):
+    import djobs.storage.artifacts as storage
+    from djobs.observations import forget_observation
+    from djobs.storage.memory import memory_repository
+
+    repo, workspace, _ = env
+    original = source(env, "one-pass capsule evidence")
+    adapter = memory_repository(repo)
+    for index in range(31, -1, -1):
+        parent = original if index == 0 else f"copy_{index - 1}"
+        adapter.insert_observation(
+            {
+                "id": f"copy_{index}",
+                "correlation_id": workspace.repo_family_id,
+                "agent_type": "different-agent",
+                "session_id_hash": "other-session",
+                "event_type": "session_capsule",
+                "tool_name": "fixture",
+                "summary": f"Synthetic linked copy {index}",
+                "metadata_json": json.dumps({"source_event_ids": [parent]}),
+                "created_at": "2026-01-01T00:00:00+00:00",
+            },
+            marker_event="context_injected",
+            max_observations=100,
+            max_markers=10,
+        )
+    loads = storage.json.loads
+    calls = []
+
+    def counted(raw, *args, **kwargs):
+        calls.append(None)
+        return loads(raw, *args, **kwargs)
+
+    monkeypatch.setattr(storage.json, "loads", counted)
+    assert forget_observation(repo, workspace, original)
+    assert len(calls) == 32
+    assert repo._connection.execute("SELECT count(*) FROM agent_observations").fetchone()[0] == 0
+
+
+def test_same_timestamp_legacy_capsule_is_conservatively_forgotten(env):
+    from djobs.observations import forget_observation
+
+    repo, workspace, agent = env
+    original = source(env, "same instant evidence")
+    record_observation(repo, workspace, agent, "session_capsule", "same instant copy")
+    repo.execute_write(
+        "UPDATE agent_observations SET created_at=?", ("2026-01-01T00:00:00+00:00",)
+    )
+    assert forget_observation(repo, workspace, original)
+    assert repo._connection.execute("SELECT count(*) FROM agent_observations").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("raw", ["{broken", "[]", "null"])
+def test_malformed_cross_session_capsule_refuses_atomic_forget(env, raw):
+    from djobs.observations import forget_observation
+
+    repo, workspace, _ = env
+    original = source(env, "synthetic erasure target")
+    other = SimpleNamespace(agent_type="another", session_id="another-session")
+    record_observation(repo, workspace, other, "session_capsule", "uninspectable capsule")
+    repo.execute_write(
+        "UPDATE agent_observations SET metadata_json=? WHERE event_type='session_capsule'",
+        (raw,),
+    )
+    before = list(repo._connection.iterdump())
+    with pytest.raises(ArtifactError, match="capsule_forget_provenance_invalid"):
+        forget_observation(repo, workspace, original)
+    assert list(repo._connection.iterdump()) == before
+
+
+def test_tied_legacy_capsule_is_erased_without_touching_an_unrelated_session(env):
+    from djobs.observations import forget_observation
+
+    repo, workspace, agent = env
+    original = source(env, "tied source")
+    record_observation(repo, workspace, agent, "session_capsule", "same-session tied copy")
+    other = SimpleNamespace(agent_type="test", session_id="different-session")
+    record_observation(repo, workspace, other, "session_capsule", "independent tied capsule")
+    repo.execute_write(
+        "UPDATE agent_observations SET created_at=?",
+        ("2026-01-01T00:00:00.000000+00:00",),
+    )
+    assert forget_observation(repo, workspace, original)
+    retained = {
+        row[0] for row in repo._connection.execute("SELECT summary FROM agent_observations")
+    }
+    assert retained == {"independent tied capsule"}
+
+
+def test_cross_session_capsule_cycles_are_erased_with_typed_descendants(env):
+    from djobs.observations import forget_observation
+
+    repo, workspace, _ = env
+    original = source(env, "synthetic linked cycle target")
+    for name in ("copy-a", "copy-b"):
+        agent = SimpleNamespace(agent_type="other", session_id=name)
+        record_observation(repo, workspace, agent, "session_capsule", name)
+    copies = {
+        row["summary"]: row["id"]
+        for row in repo._connection.execute(
+            "SELECT id,summary FROM agent_observations WHERE event_type='session_capsule'"
+        )
+    }
+    for name, links in (("copy-a", [original, copies["copy-b"]]), ("copy-b", [copies["copy-a"]])):
+        repo.execute_write(
+            "UPDATE agent_observations SET metadata_json=? WHERE id=?",
+            (json.dumps({"source_event_ids": links}), copies[name]),
+        )
+    memory = ArtifactMemory(repo, workspace)
+    child = fact(memory, copies["copy-b"], "derived cycle content")
+    memory.review(child, gate())
+    assert forget_observation(repo, workspace, original)
+    assert repo._connection.execute("SELECT count(*) FROM agent_observations").fetchone()[0] == 0
+    assert not memory.list_artifacts(exposure="audit", depth=2)["memories"]

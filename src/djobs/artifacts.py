@@ -30,7 +30,7 @@ from djobs.memory_policy import lexical_terms, metadata_object, observation_excl
 from djobs.memory_projection import FOLDERS, context_uri, parse_context_uri
 from djobs.memory_review import ReviewGate, ReviewRequest
 from djobs.privacy import redact_value
-from djobs.storage.artifacts import ArtifactStore
+from djobs.storage.artifacts import ArtifactStore, delete_artifacts
 
 
 def _scope_key(workspace: Any, scope: str, agent: str, session: str) -> str:
@@ -702,10 +702,7 @@ class ArtifactMemory:
                     pair = {relation["source_id"], relation["target_id"]}
                     endpoints = [view.data["artifacts"].get(key) for key in pair]
                     if not all(
-                        row
-                        and view.visible(row)
-                        and view.active_at(row, instant)
-                        and not view.provenance_reason(row["id"], at=instant)
+                        row and view.visible(row) and view.active_at(row, instant)
                         for row in endpoints
                     ):
                         continue
@@ -959,9 +956,5 @@ class ArtifactMemory:
                 doomed = expanded
             else:
                 raise ArtifactError("deep_provenance_requires_maintenance")
-            self.store.execute(
-                cursor,
-                "DELETE FROM memory_artifacts WHERE id IN (" + ",".join("?" for _ in doomed) + ")",
-                tuple(sorted(doomed)),
-            )
+            delete_artifacts(cursor, self.store.sqlite, sorted(doomed))
             return True

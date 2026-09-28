@@ -125,3 +125,34 @@ def test_ranking_excludes_inactive_and_deduplicates_summaries_deterministically(
     assert [item.row["id"] for item in second] == ["newest"]
     assert first[0].score == second[0].score
     assert first[0].matched_by == second[0].matched_by
+
+
+def test_unicode_branch_affinity_is_not_decoded_with_terminal_locale(tmp_path, monkeypatch):
+    import threading
+
+    from djobs.ranking import _git_value
+
+    root = tmp_path / "unicode-branch"
+    _git_repo(root)
+    branch = "feature-中文-✅"
+    subprocess.run(["git", "-C", str(root), "branch", "-m", branch], check=True)
+    import locale
+
+    errors = []
+    monkeypatch.setattr(locale, "getpreferredencoding", lambda do_setlocale=True: "cp950")
+    if hasattr(subprocess, "_text_encoding"):
+        monkeypatch.setattr(subprocess, "_text_encoding", lambda: "cp950")
+    monkeypatch.setattr(
+        threading, "excepthook", lambda args: errors.append(args.exc_type.__name__)
+    )
+    assert _git_value(str(root), "branch", "--show-current") == branch
+    assert not errors
+
+
+def test_invalid_utf8_branch_has_no_affinity_instead_of_invented_text(monkeypatch):
+    from djobs.ranking import _git_value
+
+    monkeypatch.setattr(
+        subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a, 0, bytes([255]), b"")
+    )
+    assert _git_value(".", "branch", "--show-current") == ""

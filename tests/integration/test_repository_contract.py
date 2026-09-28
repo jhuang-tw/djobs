@@ -710,3 +710,12 @@ def test_quarantined_session_portability_contract(repo):
     assert result["pass"]
     assert result["after"]["imported_sessions"] == 3
     assert not result["native_resumption_supported"]
+
+
+def test_external_candidate_boundary_contract(repo):
+    from scripts.benchmark_external_memory import run
+
+    result = run(repo)
+    assert result["pass"]
+    assert result["after"]["native_revalidated_candidates"] == 1
+    assert result["after"]["rejected_candidates"] == 2

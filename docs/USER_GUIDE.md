@@ -482,3 +482,61 @@ The original scripts/benchmark_session_portability.py exercises all three inputs
 redacted text roundtrip, quarantine, explicit reference review, no task change and clear. It runs
 with the same SQLite/PostgreSQL contract and no model/network dependency. Its output measures safe
 text portability, not complete conversation reconstruction, inference quality or token savings.
+
+
+## Optional external candidate comparisons and AMB bridge
+
+`ExternalMemorySession` accepts an explicitly injected trusted adapter, exact repository family,
+explicit enabled=true and a short deadline. The client contract is health/index/retrieve/
+delete_derived_copy with a namespace binding adapter revision, repository and redaction version.
+Only a confirmed index operation sends bounded redacted canonical text, IDs and hashes. It never
+passes a repository handle, task authority, review gate, or credential configuration to the adapter.
+This is not an OS sandbox for arbitrary Python code supplied by the embedding application.
+
+`ProjectMemory.external_memory(session, operation="retrieve", query=...)` returns the unchanged
+native lexical results plus separate external_candidates. Foreign candidate IDs/hashes are checked
+against native source/scope/lifecycle evidence. Foreign text, authority labels and probabilities are
+ignored even when the ID is valid. Unmatched, stale, imported-unverified, out-of-scope and forgotten
+records are excluded. No unmeasured vendor score alters default resume, activates a fact/skill or
+changes ownership. The response is still source-snapshot evidence, not a guarantee that a concurrent
+writer cannot change the live database after capture. Smaller payload budgets drop external candidates
+before native results.
+
+The same facade supports confirmed index and derived-copy deletion. A timeout returns lexical
+fallback and permits only one outstanding client call. Exceptions are reduced to bounded reason
+codes; late results have no callback that can write canonical state. External indexing/deletion may
+still complete after timeout, so its remote effect is explicitly unknown. A separate external copy
+requires external cleanup; canonical forget is protected by native revalidation, not a claim that
+an unreachable vendor has deleted its data. No adapter runs unless explicitly injected/enabled.
+
+Vendor-specific Hindsight, Mem0, Cognee, Graphiti and OpenViking transports are not included or
+live-validated by this milestone. Their appropriate boundary is this read-only/advisory index contract;
+reflection outputs still require a separate candidate proposal and explicit review. No vendor SDK,
+model account, AGPL implementation or external daemon is added to the default installation. The
+original scripts/benchmark_external_memory.py tests hostile fake responses and both repository
+backends; it measures the authority boundary, not external retrieval efficacy.
+
+`djobs.amb_adapter.create_amb_provider()` lazily loads the caller-installed Agent Memory Benchmark
+interface and returns a clean-room MemoryProvider bridge. It follows the inspected contract at
+vectorize-io/agent-memory-benchmark@03c1d0f1d27da63034f0931121c858faba512383, using the Document fields
+id/content/user_id/source_ids. No upstream implementation is copied or bundled, and no AMB package
+is imported by normal djobs startup. Interface tests use original fixtures, not a claim that the
+complete external AMB dataset or answer-judge suite has run.
+
+Call prepare with an explicit benchmark directory. It creates/reuses only an owner-marked
+`djobs-benchmark.db`, refusing to migrate/reset an unknown existing DB. It does not use DJOBS_DB,
+~/.djobs/global.db or production observations. Ingestion is redacted, source-ID-preserving, immutable
+per document ID, atomically deduplicated, bounded to 1000 documents per unit and 256 units, with
+2000-character content truncation explicitly counted. Native lexical retrieval enforces user/unit
+isolation, bounds k to 20 and returns exact original source IDs. Async wrappers call the same service.
+This V1 bridge does not support timestamp/filter queries or direct answer generation; those modes
+raise explicit unsupported errors rather than report fabricated results. It is a retrieval-only
+baseline; generation/judging and real model measurements remain separate benchmark phases.
+
+
+External family namespaces export only `repository_family` observations. Checkout, agent and
+session-scoped records are excluded even when locally readable; local eligibility is not permission
+to publish private scope into a shared external namespace. Returned candidate IDs are checked again
+against this narrower export policy. External mutation confirmation requires literal `true`.
+An index/delete timeout reports `external_effect=unknown`, not cancellation: the external operation
+may finish later. No retry is sent automatically; adapter-specific reconciliation remains explicit.

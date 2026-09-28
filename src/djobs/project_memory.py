@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from djobs.embedding import EmbeddingSession
+from djobs.external_memory import ExternalMemorySession
 from djobs.handoff import checkpoint as _checkpoint
 from djobs.handoff import handoff as _handoff
 from djobs.handoff import sync_workspace as _sync_workspace
@@ -188,6 +189,29 @@ class ProjectMemory:
 
     def record_episode(self, sources: list[str], *, title: str = "Observed coding episode") -> str:
         return self._memory("episode", document={"sources": sources, "title": title})
+
+    def external_memory(
+        self,
+        session: ExternalMemorySession,
+        *,
+        operation: str = "retrieve",
+        query: str = "",
+        record_ids: list[str] | None = None,
+        confirm: bool = False,
+        token_budget: int = 1500,
+    ) -> str:
+        """Compare explicit external candidates without changing native default recall."""
+        document: dict[str, Any] = {"operation": operation}
+        if record_ids is not None:
+            document["record_ids"] = record_ids
+        return self._memory(
+            "external",
+            external=session,
+            document=document,
+            query=query,
+            confirm=confirm,
+            token_budget=token_budget,
+        )
 
     def session_memory(
         self,

@@ -11,6 +11,7 @@ from typing import Any, Literal, cast
 
 from djobs.contract_repository import _connect
 from djobs.embedding import EmbeddingSession, UnavailableEmbeddingProvider
+from djobs.external_memory import ExternalMemorySession
 from djobs.memory_artifacts import ArtifactError
 from djobs.memory_review import ReviewGate
 from djobs.observations import (
@@ -47,6 +48,7 @@ MemoryAction = Literal[
     "export",
     "tree",
     "session",
+    "external",
 ]
 
 
@@ -76,6 +78,12 @@ def _bounded(result: dict[str, Any], token_budget: int) -> str:
         return _dumps(result)
 
     encoded = refresh()
+    candidates = result.get("external_candidates")
+    while isinstance(candidates, list) and candidates and math.ceil(len(encoded) / 4) > budget:
+        candidates.pop()
+        result["external_candidates_truncated"] = True
+        result["truncated"] = True
+        encoded = refresh()
     memories = result.get("memories")
     while isinstance(memories, list) and memories and math.ceil(len(encoded) / 4) > budget:
         memories.pop()
@@ -135,6 +143,7 @@ def memory_action(
     document: dict[str, Any] | None = None,
     review_gate: ReviewGate | None = None,
     private_scope: bool = False,
+    external: ExternalMemorySession | None = None,
 ) -> str:
     """Inspect or mutate passive repository memory without touching explicit tasks."""
 
@@ -162,6 +171,7 @@ def memory_action(
             "export",
             "tree",
             "session",
+            "external",
         }:
             return _dumps({"ok": False, "error": "unsupported memory action"})
         if action == "reindex" and (not confirm or embedding is None):
@@ -182,6 +192,13 @@ def memory_action(
                     "message": "Explicit confirmation is required before destructive maintenance.",
                 }
             )
+        if action == "external":
+            if not isinstance(external, ExternalMemorySession) or not isinstance(document, dict):
+                raise ArtifactError("explicit_external_session_required")
+            if set(document) - {"operation", "record_ids"}:
+                raise ArtifactError("unknown_external_operation_fields")
+            if document.get("operation") not in {"health", "index", "retrieve", "delete"}:
+                raise ArtifactError("unsupported_external_operation")
         session_operation = None
         if action == "session":
             if not isinstance(document, dict) or len(_dumps(document)) > 24000:
@@ -209,7 +226,18 @@ def memory_action(
         workspace = resolve_workspace(roots=roots, cwd=cwd)
         path = shared_db_path()
         if (
-            action in {"list", "search", "trace", "stats", "facts", "get", "candidates", "tree"}
+            action
+            in {
+                "list",
+                "search",
+                "trace",
+                "stats",
+                "facts",
+                "get",
+                "candidates",
+                "tree",
+                "external",
+            }
             or (action in {"review", "relate", "experience", "export"} and review_gate is None)
             or (action == "compact" and dry_run)
             or (
@@ -239,6 +267,21 @@ def memory_action(
             repo = SQLiteJobRepository(connection)
         else:
             repo = SQLiteJobRepository.from_path(path)
+        if action == "external":
+            assert external is not None and document is not None
+            external._check_workspace(workspace)
+            operation = document["operation"]
+            if operation == "health":
+                result = external.health()
+            elif operation == "index":
+                result = external.index(repo, workspace, confirm=confirm)
+            elif operation == "delete":
+                result = external.delete_derived_copy(
+                    document.get("record_ids", []), confirm=confirm
+                )
+            else:
+                result = external.retrieve(repo, workspace, query or "", limit=max_items)
+            return _bounded({"action": action, **result}, token_budget)
         if action == "session":
             from djobs.session_memory import SessionMemory
 

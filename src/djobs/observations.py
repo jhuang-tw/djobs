@@ -415,7 +415,11 @@ def _row_to_observation(
         "event": row["event_type"],
         "tool": row["tool_name"],
         "summary": redact_text(row["summary"]),
-        "created_at": row["created_at"],
+        "created_at": (
+            row["created_at"].isoformat()
+            if isinstance(row["created_at"], datetime)
+            else row["created_at"]
+        ),
         "status": _memory_status(metadata),
     }
     for field in (

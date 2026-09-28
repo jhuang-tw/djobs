@@ -291,8 +291,8 @@ The genuine v0.20.1 SQLite migration fixture was created using unmodified archiv
 synthetic content only. Forward migration, replay, interrupted schema creation, future-schema
 refusal, provenance hashes, deletion, and real PostgreSQL parity have separate tests. Component
 schema `retrieval=1` is installed only by explicit reindex (`migrations/011_memory_retrieval.sql`).
-No typed temporal fact/lesson/skill lifecycle, cross-harness session import, external memory runtime,
-or Memory Explorer is implied by this retrieval milestone.
+Typed temporal facts are described below. Verified experience/skill constructors, cross-harness
+session import, external memory runtimes and Memory Explorer are separate milestones.
 
 ### Method provenance and boundaries
 
@@ -324,3 +324,44 @@ SQLite runtime health must be assessed separately from package test success. SQL
 3.51.3, with backports including 3.50.7 and 3.44.6. The initial test interpreter's SQLite 3.50.4 is
 not that patched runtime. The candidate does not silently upgrade a user's Python/SQLite or change
 LIVE installation. Production concurrency review must include the actual bundled SQLite version.
+
+
+## Source-bound temporal facts
+
+`djobs memory propose --file candidate.json` stores a bounded candidate fact with title, abstract,
+source observation or artifact IDs, and optional observed_at/valid_from dates. It does not activate
+it. Repeating the same normalized proposal and pinned sources returns the existing record, including
+its rejected status. Explicitly different validity or source evidence creates a new candidate.
+
+`djobs memory review ID` previews exact content and sources. `--apply` requires an interactive
+terminal and an exact review hash typed by the user. The Python facade accepts a trusted product
+ReviewGate callback. Neither an agent-supplied authority label, confirm flag, nor model confidence
+can activate a candidate through MCP; MCP review and relate only return previews. The callback
+boundary is not a sandbox against arbitrary local code with access to the user's database.
+
+Accepted facts use a source-bound immutable content hash. `memory relate NEW OLD supersedes --at TIME`
+previews replacement, and interactive `--apply` records the relation without changing raw source
+text. `memory facts --at TIME` selects valid historical facts; a current query excludes superseded
+facts. `memory show ID --depth 2` inspects the retained provenance and review receipt. Content depth
+0/1/2 and resume/evidence/audit exposure are distinct choices.
+
+Unresolved contradictions exclude both claims and their dependent conclusions from normal resume,
+including when only a descendant matches the query. The response retains an ambiguity flag even
+under a very small token budget. Audit can inspect the conflicting retained evidence; it cannot
+recover deleted content. A historical descendant is eligible only when its source artifacts were
+valid at the requested instant. Raw-observation lifecycle metadata has no historical event journal,
+so a currently ineligible raw source remains conservatively excluded even from historical claims.
+
+Reads use one database snapshot across artifact, source, relation and review queries. PostgreSQL
+readers require repeatable-read or serializable isolation if the caller already owns a transaction;
+the service never silently commits or rolls back that caller's work. Legacy passive reads close
+their own transactions. Source loss suppresses the complete joint claim and dependent conclusions;
+remaining evidence requires a new proposal/review rather than silently rewriting accepted content.
+Routine compaction protects active accepted source chains. Explicit forget still removes content.
+
+The additive component schema is `artifacts=1` in `migrations/012_memory_artifacts.sql`. Reads do not
+install it. The bounded native store holds at most 256 artifacts per family, 16 source references
+per artifact and 16 provenance levels. Unsupported future schemas fail closed for typed memory
+while raw recall remains available. See the canonical preflight in CONTRIBUTING.md; the original
+`python scripts/benchmark_temporal_memory.py` adds an offline before/after temporal workflow fixture,
+not a model-accuracy, generation-quality or production acceptance claim.

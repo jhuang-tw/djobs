@@ -636,8 +636,10 @@ def forget_observation(repo: Any, workspace: Any, memory_id: str) -> bool:
 
 
 def clear_workspace_memory(repo: Any, workspace: Any) -> int:
+    from djobs.storage.artifacts import ArtifactStore
     from djobs.storage.retrieval import RetrievalIndex
 
+    ArtifactStore(repo).clear(_memory_scope(workspace))
     RetrievalIndex(repo).clear(_memory_scope(workspace))
     return memory_repository(repo).clear(
         scopes=_memory_ids(workspace),

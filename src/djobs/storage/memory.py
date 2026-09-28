@@ -122,7 +122,7 @@ class MemoryRepository(Protocol):
         scopes: tuple[str, ...],
         keep_recent: int,
         dry_run: bool,
-    ) -> dict[str, int]: ...
+    ) -> dict[str, Any]: ...
 
 
 @dataclass(slots=True)
@@ -192,29 +192,15 @@ class SQLiteMemoryRepository:
         max_observations: int,
         max_markers: int,
     ) -> None:
-        cursor.execute(
-            """
-            DELETE FROM agent_observations
-            WHERE correlation_id = ? AND event_type != ?
-              AND id NOT IN (
-                  SELECT id FROM agent_observations
-                  WHERE correlation_id = ? AND event_type != ?
-                  ORDER BY created_at DESC, id DESC LIMIT ?
-              )
-            """,
-            (scope, marker_event, scope, marker_event, max_observations),
-        )
-        cursor.execute(
-            """
-            DELETE FROM agent_observations
-            WHERE correlation_id = ? AND event_type = ?
-              AND id NOT IN (
-                  SELECT id FROM agent_observations
-                  WHERE correlation_id = ? AND event_type = ?
-                  ORDER BY created_at DESC, id DESC LIMIT ?
-              )
-            """,
-            (scope, marker_event, scope, marker_event, max_markers),
+        from djobs.storage.artifacts import prune_observations
+
+        prune_observations(
+            cursor,
+            True,
+            scope=scope,
+            marker_event=marker_event,
+            max_observations=max_observations,
+            max_markers=max_markers,
         )
 
     def insert_observation(
@@ -452,16 +438,25 @@ class SQLiteMemoryRepository:
         return [dict(row) for row in rows]
 
     def forget(self, *, memory_id: str, scopes: tuple[str, ...]) -> bool:
+        from djobs.storage.artifacts import forget_source_dependents
+
         self.ensure_schema()
         placeholders = self._placeholders(scopes)
-        return (
-            self.repo.execute_write(
-                f"DELETE FROM agent_observations "
-                f"WHERE id = ? AND correlation_id IN ({placeholders})",
+        with self.repo.transaction(immediate=True) as transaction:
+            exists = transaction.execute(
+                "SELECT id FROM agent_observations WHERE id=? "
+                f"AND correlation_id IN ({placeholders})",
                 (memory_id, *scopes),
+            ).fetchone()
+            if exists is None:
+                return False
+            forget_source_dependents(transaction, True, [memory_id])
+            return (
+                transaction.execute(
+                    "DELETE FROM agent_observations WHERE id=?", (memory_id,)
+                ).rowcount
+                == 1
             )
-            == 1
-        )
 
     def clear(self, *, scopes: tuple[str, ...], checkout_id: str) -> int:
         self.ensure_schema()
@@ -545,7 +540,7 @@ class SQLiteMemoryRepository:
         scopes: tuple[str, ...],
         keep_recent: int,
         dry_run: bool,
-    ) -> dict[str, int]:
+    ) -> dict[str, Any]:
         if not dry_run:
             self.ensure_schema()
         placeholders = self._placeholders(scopes)
@@ -585,8 +580,13 @@ class SQLiteMemoryRepository:
             ).fetchall()
             duplicate_ids = {str(row["id"]) for row in duplicate_rows}
             inactive_ids = {str(row["id"]) for row in superseded_rows}
-            selected = sorted(duplicate_ids | inactive_ids)
+            from djobs.storage.artifacts import forget_source_dependents, protected_observations
+
+            protected = protected_observations(transaction, True, scopes)
+            requested = duplicate_ids | inactive_ids
+            selected = sorted(requested - protected)
             if selected and not dry_run:
+                forget_source_dependents(transaction, True, selected)
                 delete_ph = ",".join("?" for _ in selected)
                 transaction.execute(
                     f"DELETE FROM agent_observations WHERE id IN ({delete_ph})", selected
@@ -595,6 +595,8 @@ class SQLiteMemoryRepository:
             "duplicates": len(duplicate_ids),
             "inactive": len(inactive_ids),
             "total": len(selected),
+            "protected_sources": len(requested & protected),
+            "observation_ids": selected,
         }
 
 
@@ -645,25 +647,15 @@ class PostgresMemoryRepository:
         max_observations: int,
         max_markers: int,
     ) -> None:
-        cur.execute(
-            """
-            DELETE FROM agent_observations WHERE id IN (
-                SELECT id FROM agent_observations
-                WHERE correlation_id = %s AND event_type != %s
-                ORDER BY created_at DESC, id DESC OFFSET %s
-            )
-            """,
-            (scope, marker_event, max_observations),
-        )
-        cur.execute(
-            """
-            DELETE FROM agent_observations WHERE id IN (
-                SELECT id FROM agent_observations
-                WHERE correlation_id = %s AND event_type = %s
-                ORDER BY created_at DESC, id DESC OFFSET %s
-            )
-            """,
-            (scope, marker_event, max_markers),
+        from djobs.storage.artifacts import prune_observations
+
+        prune_observations(
+            cur,
+            False,
+            scope=scope,
+            marker_event=marker_event,
+            max_observations=max_observations,
+            max_markers=max_markers,
         )
 
     def insert_observation(
@@ -755,7 +747,7 @@ class PostgresMemoryRepository:
         self, *, scopes: tuple[str, ...], marker_event: str, limit: int
     ) -> list[dict[str, Any]]:
         ph = self._placeholders(scopes)
-        with self.repo._conn.cursor() as cur:
+        with self.repo._conn.transaction(), self.repo._conn.cursor() as cur:
             cur.execute(
                 f"""
                 SELECT id, correlation_id, session_id_hash, agent_type,
@@ -782,7 +774,7 @@ class PostgresMemoryRepository:
 
     def observation_metadata(self, *, memory_id: str, scopes: tuple[str, ...]) -> str | None:
         ph = self._placeholders(scopes)
-        with self.repo._conn.cursor() as cur:
+        with self.repo._conn.transaction(), self.repo._conn.cursor() as cur:
             cur.execute(
                 f"""
                 SELECT metadata_json FROM agent_observations
@@ -807,7 +799,7 @@ class PostgresMemoryRepository:
         self, *, scopes: tuple[str, ...], session_hash: str, limit: int
     ) -> list[dict[str, Any]]:
         ph = self._placeholders(scopes)
-        with self.repo._conn.cursor() as cur:
+        with self.repo._conn.transaction(), self.repo._conn.cursor() as cur:
             cur.execute(
                 f"""
                 SELECT created_at FROM agent_observations
@@ -837,16 +829,21 @@ class PostgresMemoryRepository:
             return [dict(row) for row in cur.fetchall()]
 
     def forget(self, *, memory_id: str, scopes: tuple[str, ...]) -> bool:
+        from djobs.storage.artifacts import forget_source_dependents
+
         self.ensure_schema()
         ph = self._placeholders(scopes)
-        with self.repo._conn.cursor() as cur:
+        with self.repo._conn.transaction(), self.repo._conn.cursor() as cur:
             cur.execute(
-                f"DELETE FROM agent_observations WHERE id = %s AND correlation_id IN ({ph})",
+                "SELECT id FROM agent_observations WHERE id=%s "
+                f"AND correlation_id IN ({ph}) FOR UPDATE",
                 (memory_id, *scopes),
             )
-            changed = cur.rowcount == 1
-        self.repo._conn.commit()
-        return changed
+            if cur.fetchone() is None:
+                return False
+            forget_source_dependents(cur, False, [memory_id])
+            cur.execute("DELETE FROM agent_observations WHERE id=%s", (memory_id,))
+            return cur.rowcount == 1
 
     def clear(self, *, scopes: tuple[str, ...], checkout_id: str) -> int:
         self.ensure_schema()
@@ -904,7 +901,7 @@ class PostgresMemoryRepository:
 
     def stats(self, *, scopes: tuple[str, ...]) -> dict[str, Any]:
         ph = self._placeholders(scopes)
-        with self.repo._conn.cursor() as cur:
+        with self.repo._conn.transaction(), self.repo._conn.cursor() as cur:
             cur.execute(
                 f"""
                 SELECT event_type, metadata_json, COUNT(*) AS count
@@ -924,12 +921,12 @@ class PostgresMemoryRepository:
 
     def compact(
         self, *, scopes: tuple[str, ...], keep_recent: int, dry_run: bool
-    ) -> dict[str, int]:
+    ) -> dict[str, Any]:
         if not dry_run:
             self.ensure_schema()
         ph = self._placeholders(scopes)
         keep = max(1, int(keep_recent))
-        with self.repo._conn.cursor() as cur:
+        with self.repo._conn.transaction(), self.repo._conn.cursor() as cur:
             cur.execute(
                 f"""
                 WITH ranked AS (
@@ -962,18 +959,23 @@ class PostgresMemoryRepository:
                 (*scopes, keep),
             )
             inactive_ids = {str(row["id"]) for row in cur.fetchall()}
-            ids = sorted(duplicate_ids | inactive_ids)
+            from djobs.storage.artifacts import forget_source_dependents, protected_observations
+
+            protected = protected_observations(cur, False, scopes)
+            requested = duplicate_ids | inactive_ids
+            ids = sorted(requested - protected)
             if ids and not dry_run:
+                forget_source_dependents(cur, False, ids)
                 delete_ph = self._placeholders(tuple(ids))
                 cur.execute(
                     f"DELETE FROM agent_observations WHERE id IN ({delete_ph})", tuple(ids)
                 )
-        if ids and not dry_run:
-            self.repo._conn.commit()
         return {
             "duplicates": len(duplicate_ids),
             "inactive": len(inactive_ids),
             "total": len(ids),
+            "protected_sources": len(requested & protected),
+            "observation_ids": ids,
         }
 
 

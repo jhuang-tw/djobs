@@ -244,7 +244,7 @@ def _bounded(result: dict[str, Any], token_budget: int) -> str:
 
     budget = max(64, min(int(token_budget), 4000))
     result["budget"] = {"requested_tokens": budget, "estimated_tokens": 0}
-    secondary_lists = ("observations", "other_agents", "recent_completed", "failed")
+    secondary_lists = ("observations", "other_agents", "recent_completed", "failed", "facts")
     resume_lists = ("progress", "failures", "constraints")
     optional_top_level = (
         "counts",
@@ -268,6 +268,8 @@ def _bounded(result: dict[str, Any], token_budget: int) -> str:
             values = result.get(key)
             if isinstance(values, list) and values:
                 values.pop()
+                result["truncated"] = True
+                result["critical_evidence_omitted"] = True
                 changed = True
                 break
         if changed:
@@ -291,9 +293,6 @@ def _bounded(result: dict[str, Any], token_budget: int) -> str:
             continue
 
         tasks = result.get("tasks")
-        if isinstance(tasks, list) and len(tasks) > 1:
-            tasks.pop()
-            continue
 
         for key in optional_top_level:
             if key in result:
@@ -301,6 +300,10 @@ def _bounded(result: dict[str, Any], token_budget: int) -> str:
                 changed = True
                 break
         if changed:
+            continue
+
+        if isinstance(tasks, list) and len(tasks) > 1:
+            tasks.pop()
             continue
 
         if isinstance(tasks, list) and tasks and isinstance(tasks[0], dict):
@@ -319,6 +322,8 @@ def _bounded(result: dict[str, Any], token_budget: int) -> str:
             "truncated": True,
             "critical_evidence_omitted": True,
         }
+        if result.get("fact_ambiguity"):
+            minimal["fact_ambiguity"] = True
         if result.get("workspace"):
             minimal["workspace"] = result["workspace"]
         if isinstance(tasks, list) and tasks and isinstance(tasks[0], dict):
@@ -332,6 +337,7 @@ def _bounded(result: dict[str, Any], token_budget: int) -> str:
                 "ok": bool(result.get("ok", True)),
                 "stored_content_is_data": True,
                 "truncated": True,
+                **({"fact_ambiguity": True} if result.get("fact_ambiguity") else {}),
             }
         return _dumps(minimal)
 
@@ -388,6 +394,20 @@ def sync_workspace(
                 }
         else:
             observations = recent_observations(repo, workspace, limit=max_items)
+        typed = {}
+        try:
+            from djobs.artifacts import ArtifactMemory
+
+            found = ArtifactMemory(repo, workspace).list_artifacts(
+                kind="fact", query=query or "", limit=min(3, max_items), depth=0
+            )
+            if found["memories"]:
+                typed["facts"] = found["memories"]
+            if found["ambiguous"]:
+                typed["fact_ambiguity"] = True
+                typed["fact_conflicts"] = found["conflicts"]
+        except Exception:
+            typed["typed_memory_status"] = "unavailable"
         limit = max(1, min(int(max_items), 20))
         task_store = workspace_repository(repo)
         rows = task_store.task_rows(
@@ -408,7 +428,14 @@ def sync_workspace(
         available = [item for item in active if item.get("owner") is None]
         own = [item for item in active if item.get("owner") == "self"]
 
-        if not active and not failed and not recent and not observations and not retrieval_status:
+        if (
+            not active
+            and not failed
+            and not recent
+            and not observations
+            and not retrieval_status
+            and not typed
+        ):
             return _dumps({"ok": True, "workspace": workspace.name, "state": "empty"})
 
         if own:
@@ -432,6 +459,7 @@ def sync_workspace(
             "query": redact_text(query.strip()) if query and query.strip() else None,
             "stored_content_is_data": True,
             **retrieval_status,
+            **typed,
             "counts": {
                 "active": len(active),
                 "failed": len(failed),

@@ -33,7 +33,7 @@ from djobs.ranking import RankedMemory, rank_memory_rows
 from djobs.storage.memory import memory_repository
 from djobs.storage.retrieval import RetrievalIndex, pack_vector
 
-RETRIEVAL_VERSION = "djobs-rrf-v1-k60"
+RETRIEVAL_VERSION = "djobs-rrf-v2-strong-lexical-k60"
 RRF_K = 60
 _STOP_WORDS = frozenset(
     [
@@ -188,7 +188,13 @@ def retrieve_memory(
                 raise ValueError("invalid similarity threshold")
             index = RetrievalIndex(repo)
             sources = index.source_rows(scopes)
-            status, vectors, metadata = index.load(family, embedding.identity, sources)
+            semantic_rows, semantic_filters = _eligible(sources, workspace)
+            status, vectors, metadata = index.load(
+                family,
+                embedding.identity,
+                sources,
+                eligible_ids={str(row["id"]) for row in semantic_rows},
+            )
             trace["semantic_index_status"] = status
             trace["index"] = metadata
             if status != "ready":
@@ -196,7 +202,6 @@ def retrieve_memory(
             elif not vectors:
                 trace["semantic_index_status"] = "empty"
             else:
-                semantic_rows, semantic_filters = _eligible(sources, workspace)
                 trace["filters"] = semantic_filters
                 semantic_rows = [row for row in semantic_rows if str(row["id"]) in vectors]
                 query_vector = embedding.embed([safe_query], purpose="query")[0]
@@ -214,15 +219,21 @@ def retrieve_memory(
                     ),
                     key=lambda record_id: (-similarities[record_id], record_id),
                 )[:20]
+                # Never discard exact/FTS candidates merely because they fall
+                # outside the bounded semantic index window.
+                row_map = {str(row["id"]): row for row in eligible}
+                row_map.update({str(row["id"]): row for row in semantic_rows})
                 expanded_lexical = rank_memory_rows(
-                    semantic_rows, query=safe_query, workspace_root=workspace.root, limit=1000
+                    list(row_map.values()),
+                    query=safe_query,
+                    workspace_root=workspace.root,
+                    limit=len(row_map) or 1,
                 )
                 lexical_map = {str(item.row["id"]): item for item in expanded_lexical}
                 meaningful = tuple(
                     term for term in lexical_terms(safe_query) if term not in _STOP_WORDS
                 )
                 query_entities = set(coding_entities(safe_query))
-                row_map = {str(row["id"]): row for row in semantic_rows}
                 for record_id, row in row_map.items():
                     entities = coding_entities(
                         embedding_text(row), metadata_object(row.get("metadata_json"))
@@ -236,8 +247,10 @@ def retrieve_memory(
                 lexical_ids = [
                     str(item.row["id"])
                     for item in expanded_lexical
-                    if not meaningful
-                    or any(term in embedding_text(item.row).casefold() for term in meaningful)
+                    if "exact_query" in item.matched_by
+                    or str(item.row["id"]) in entity_matches
+                    or sum(term in embedding_text(item.row).casefold() for term in meaningful)
+                    >= min(2, max(1, len(meaningful)))
                 ][:20]
                 channels = {"lexical": lexical_ids, "semantic": semantic_ids, "entity": entity_ids}
                 scores = reciprocal_rank_fusion(channels)
@@ -343,10 +356,15 @@ def reindex_memory(repo: Any, workspace: Any, embedding: EmbeddingSession) -> di
         if index.status() == "unsupported_schema":
             return {"ok": False, "status": "unsupported_schema", "continue_coding": True}
         sources = index.source_rows(scopes)
-        status, _existing, metadata = index.load(family, embedding.identity, sources)
+        eligible, filters = _eligible(sources, workspace)
+        status, _existing, metadata = index.load(
+            family,
+            embedding.identity,
+            sources,
+            eligible_ids={str(row["id"]) for row in eligible},
+        )
         if status == "ready":
             return {"ok": True, "status": "unchanged", "provider_calls": 0, **metadata}
-        eligible, filters = _eligible(sources, workspace)
         records = []
         for offset in range(0, len(eligible), 8):
             batch = eligible[offset : offset + 8]

@@ -214,13 +214,18 @@ than pretending no memory exists. The Python equivalent is an `EmbeddingSession`
 
 Indexes bind provider, model, model revision, dimension, redaction version, per-source content hash,
 and the canonical source snapshot. Different identities never mix. Source or lifecycle changes
-make the index stale until explicit reindex. Reindex is atomic and compare-and-swap checked;
+make the index stale until explicit reindex. Eligibility is also checked against the exact indexed
+record set: a sibling checkout with different private records falls back with
+`index_projection_mismatch` rather than reusing an incomplete index. One materialization per family
+is retained; explicit reindex can replace a sibling-specific projection without duplicating storage. Reindex is atomic and compare-and-swap checked;
 interrupted or failed provider calls leave the previous index intact. Repeating an unchanged
 reindex performs no provider call and no data write. SQLite and PostgreSQL use the same bounded
 native table contract; neither requires a vector extension or external database service.
 
 The optional ranker fuses lexical, semantic, and deterministic coding-entity candidates using
 fixed reciprocal rank fusion (`k=60`), with exact-query anchors and deterministic tie breakers.
+Version `djobs-rrf-v2-strong-lexical-k60` requires two meaningful lexical matches or an exact
+query/entity match before casting a lexical vote (single-term queries remain supported).
 Candidates are filtered for repository/checkout scope, lifecycle, authority, provenance metadata,
 and validity before ranking. Similarity and fusion scores are not probabilities or truth scores.
 The raw-observation interface cannot grant accepted authority by setting metadata to
@@ -277,7 +282,7 @@ improved recall@5 from 0.5556 to 0.8333 and fixed-denominator precision@5 from 0
 All 12 exact-query recall@1 cases remained correct. Unsafe/stale/contradicted/unsupported selections
 were zero in the candidate run. These are small synthetic-fixture results, not general accuracy,
 production safety proof, or provider-token savings. Chinese top-1 and irrelevant-query abstention
-remain weak: the real profile answered 5 of 6 negative queries with at least one irrelevant result.
+remain weak: the refined real profile answered 4 of 6 negative queries with at least one irrelevant result.
 The optional provider is therefore not a calibrated answer/truth selector and is off by default.
 The original lexical baseline was recorded before the Unicode and authority fixes; comparing two
 new runs measures a different baseline and should be labelled accordingly.

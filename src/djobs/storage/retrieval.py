@@ -118,7 +118,12 @@ class RetrievalIndex:
             return [dict(row) for row in cursor.fetchall()]
 
     def load(
-        self, family: str, identity: EmbeddingIdentity, sources: list[dict[str, Any]]
+        self,
+        family: str,
+        identity: EmbeddingIdentity,
+        sources: list[dict[str, Any]],
+        *,
+        eligible_ids: set[str] | None = None,
     ) -> tuple[str, dict[str, tuple[float, ...]], dict[str, Any]]:
         with self._read_cursor() as cursor:
             version = self._version(cursor)
@@ -148,6 +153,10 @@ class RetrievalIndex:
             rows = [dict(row) for row in cursor.fetchall()]
         if len(rows) != metadata["record_count"] or len(rows) > CANDIDATE_BOUND:
             return "incomplete", {}, {}
+        # A family-wide source digest does not identify the caller's eligible
+        # projection: sibling checkouts can see different private records.
+        if eligible_ids is not None and {str(row["record_id"]) for row in rows} != eligible_ids:
+            return "projection_mismatch", {}, {}
         from djobs.memory_policy import content_hash
 
         source_map = {str(row["id"]): row for row in sources}

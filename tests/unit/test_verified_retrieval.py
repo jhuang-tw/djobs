@@ -710,3 +710,76 @@ def test_scope_restrictions_apply_to_audit_without_hiding_legitimate_history(mem
     assert scope_exclusion(private, workspace) == "private_or_unknown_scope"
     assert scope_exclusion(private, workspace, session_id_hash="two") == "private_or_unknown_scope"
     assert scope_exclusion(private, workspace, session_id_hash="one") is None
+
+
+def test_sibling_reindex_cannot_reuse_another_checkout_projection(memory):
+    repo, a, agent = memory
+    b = replace(
+        a, workspace_id="repo:other", checkout_id="repo:other", correlation_ids=("repo:other",)
+    )
+    record_observation(
+        repo,
+        a,
+        agent,
+        "tool_result",
+        "private alpha parser",
+        metadata={"scope": "checkout", "checkout_id": a.checkout_id},
+    )
+    record_observation(
+        repo,
+        b,
+        agent,
+        "tool_result",
+        "private beta parser",
+        metadata={"scope": "checkout", "checkout_id": b.checkout_id},
+    )
+    provider = EmbeddingStub()
+    session = EmbeddingSession(provider)
+    assert reindex_memory(repo, a, session)["status"] == "ready"
+    assert "private beta parser" not in provider.inputs
+    before = session.calls
+    fallback = retrieve_memory(repo, b, "beta", embedding=session)
+    assert fallback.trace["fallback_reason"] == "index_projection_mismatch"
+    assert fallback.items[0]["summary"] == "private beta parser"
+    assert session.calls == before
+    provider.inputs.clear()
+    assert reindex_memory(repo, b, session)["status"] == "ready"
+    assert "private beta parser" in provider.inputs
+    assert "private alpha parser" not in provider.inputs
+    assert reindex_memory(repo, b, session)["status"] == "unchanged"
+    assert (
+        retrieve_memory(repo, b, "beta", embedding=session).items[0]["summary"]
+        == "private beta parser"
+    )
+    assert (
+        retrieve_memory(repo, a, "alpha", embedding=session).trace["fallback_reason"]
+        == "index_projection_mismatch"
+    )
+
+
+def test_exact_fts_hit_outside_semantic_window_is_never_lost(memory, monkeypatch):
+    import djobs.storage.retrieval as index_storage
+
+    repo, workspace, agent = memory
+    record_observation(
+        repo, workspace, agent, "tool_result", "unique_ancient_identifier decoder rule"
+    )
+    for i in range(5):
+        record_observation(repo, workspace, agent, "tool_result", f"new unrelated noise {i}")
+    monkeypatch.setattr(index_storage, "CANDIDATE_BOUND", 3)
+    session = EmbeddingSession(EmbeddingStub())
+    assert reindex_memory(repo, workspace, session)["ok"]
+    result = retrieve_memory(repo, workspace, "unique_ancient_identifier", embedding=session)
+    assert result.trace["semantic_index_status"] == "ready"
+    assert result.items[0]["summary"] == "unique_ancient_identifier decoder rule"
+
+
+def test_declared_model_pins_match_the_provisioning_contract_without_download():
+    from scripts.prepare_local_embedding import FILES, MODEL_ID, MODEL_REVISION
+
+    assert MODEL_ID == "Xenova/multilingual-e5-small"
+    assert len(MODEL_REVISION) == 40
+    assert len(FILES) == 5
+    for size, digest in FILES.values():
+        assert size > 0 and len(digest) == 64
+        int(digest, 16)

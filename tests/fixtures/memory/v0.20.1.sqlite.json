@@ -1,0 +1,9 @@
+{
+  "package_version": "0.20.1",
+  "source_revision": "699db623da765c9db662f1cc391ffbf5348efec6",
+  "fixture_sha256": "fcac7641d2dc2f457e354c6afe6f7310b430f263c2836137667ec3b29c2e2cfe",
+  "created_by": "Unmodified archived v0.20.1 SQLiteJobRepository and record_observation APIs",
+  "synthetic_only": true,
+  "real_user_data": false,
+  "prior_index_schema": null
+}

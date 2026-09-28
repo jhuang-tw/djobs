@@ -10,7 +10,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 import stat
 import subprocess
 import tempfile
@@ -19,7 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from djobs.ranking import rank_memory_rows
+from djobs.memory_policy import observation_exclusion
+from djobs.privacy import REDACTION_VERSION, redact_text, redact_value
 from djobs.storage.maintenance import storage_maintenance
 from djobs.storage.memory import memory_repository
 
@@ -33,6 +33,20 @@ _MAX_UNTRACKED_HASH_BYTES = 1024 * 1024
 _CONTEXT_INJECTED_EVENT = "context_injected"
 _ACTIVE_MEMORY_STATES = {"active"}
 MemoryStatus = Literal["active", "resolved", "superseded", "stale", "contradicted"]
+_AUTHORITY_FIELDS = (
+    "scope",
+    "authority",
+    "repo_family_id",
+    "checkout_id",
+    "import_status",
+    "imported_unverified",
+    "valid_from",
+    "valid_to",
+    "superseded_by",
+    "contradicted_by",
+    "redaction_version",
+    "truncated_authority",
+)
 
 
 def clean(value: Any, limit: int) -> str:
@@ -118,6 +132,7 @@ def _capsule_metadata_json(metadata: dict[str, Any], limit: int) -> str:
             "next": provenance_item(provenance.get("next")),
         },
     }
+    capsule.update({key: metadata[key] for key in _AUTHORITY_FIELDS if key in metadata})
     truncated_fields: set[str] = set()
 
     def render() -> str:
@@ -175,31 +190,51 @@ def _capsule_metadata_json(metadata: dict[str, Any], limit: int) -> str:
             {"constraints", "progress", "failures", "source_event_ids", "provenance"}
         )
         raw = render()
+    if len(raw) > limit:
+        return json.dumps(
+            {
+                "capsule_schema": 2,
+                "truncated_authority": True,
+                "memory_status": "unverified",
+                "stored_as_data": True,
+            }
+        )
     return raw
 
 
 def _metadata_json(metadata: dict[str, Any] | None, *, limit: int | None = None) -> str:
     # Serialize bounded metadata without ever producing invalid JSON.
     resolved_limit = _MAX_METADATA if limit is None else max(200, int(limit))
-    normalized = dict(metadata or {})
+    normalized = redact_value(dict(metadata or {}))
+    normalized["redaction_version"] = REDACTION_VERSION
     normalized.setdefault("memory_status", "active")
-    normalized.setdefault("stored_as_data", True)
+    normalized["stored_as_data"] = True
     if normalized.get("capsule_schema") in {1, 2}:
         return _capsule_metadata_json(normalized, resolved_limit)
     raw = json.dumps(normalized, ensure_ascii=False, separators=(",", ":"), default=str)
     if len(raw) <= resolved_limit:
         return raw
-    preview_limit = max(80, resolved_limit - 120)
-    return json.dumps(
-        {
-            "truncated": True,
-            "preview": clean(raw, preview_limit),
-            "memory_status": normalized.get("memory_status", "active"),
-            "stored_as_data": True,
-        },
-        ensure_ascii=False,
-        separators=(",", ":"),
+    protected = {key: normalized[key] for key in _AUTHORITY_FIELDS if key in normalized}
+    protected.update(
+        {"truncated": True, "memory_status": normalized["memory_status"], "stored_as_data": True}
     )
+    encoded = json.dumps(protected, ensure_ascii=False, separators=(",", ":"), default=str)
+    if len(encoded) > resolved_limit - 30:
+        return json.dumps(
+            {
+                "truncated": True,
+                "truncated_authority": True,
+                "memory_status": "unverified",
+                "stored_as_data": True,
+            }
+        )
+    remaining = resolved_limit - len(encoded) - 20
+    protected["preview"] = clean(raw, max(1, remaining))
+    encoded = json.dumps(protected, ensure_ascii=False, separators=(",", ":"), default=str)
+    while len(encoded) > resolved_limit and protected["preview"]:
+        protected["preview"] = protected["preview"][:-16]
+        encoded = json.dumps(protected, ensure_ascii=False, separators=(",", ":"), default=str)
+    return encoded
 
 
 def _memory_status(raw: Any) -> str:
@@ -207,7 +242,7 @@ def _memory_status(raw: Any) -> str:
     return (
         status
         if status in {"active", "resolved", "superseded", "stale", "contradicted"}
-        else "active"
+        else "unverified"
     )
 
 
@@ -240,7 +275,7 @@ def _observation_record(
         "session_id_hash": _session_hash(agent),
         "event_type": clean(event_type, 80),
         "tool_name": clean(tool_name, 80) or None,
-        "summary": clean(summary, _MAX_SUMMARY),
+        "summary": clean(redact_text(summary), _MAX_SUMMARY),
         "metadata_json": _metadata_json(normalized_metadata, limit=metadata_limit),
         "created_at": created_at or datetime.now(timezone.utc).isoformat(),
     }
@@ -373,13 +408,13 @@ def _row_to_observation(
     score: float | None = None,
     matched_by: tuple[str, ...] | list[str] | None = None,
 ) -> dict[str, Any]:
-    metadata = _metadata_dict(row["metadata_json"])
+    metadata = redact_value(_metadata_dict(row["metadata_json"]))
     item: dict[str, Any] = {
         "id": row["id"],
         "agent": row["agent_type"],
         "event": row["event_type"],
         "tool": row["tool_name"],
-        "summary": row["summary"],
+        "summary": redact_text(row["summary"]),
         "created_at": row["created_at"],
         "status": _memory_status(metadata),
     }
@@ -406,34 +441,6 @@ def _row_to_observation(
     return item
 
 
-def _valid_rows(repo: Any, rows: list[Any], *, component: str) -> list[Any]:
-    valid: list[Any] = []
-    for row in rows:
-        raw = row["metadata_json"]
-        if isinstance(raw, dict):
-            valid.append(row)
-            continue
-        try:
-            decoded = json.loads(str(raw or "{}"))
-        except (TypeError, json.JSONDecodeError):
-            decoded = None
-        if isinstance(decoded, dict):
-            valid.append(row)
-            continue
-        from djobs.diagnostics import record_failure
-
-        record_failure(
-            repo,
-            component,
-            ValueError("invalid passive-memory metadata JSON"),
-            context={
-                "memory_id": str(row["id"]),
-                "event_type": str(row["event_type"]),
-            },
-        )
-    return valid
-
-
 def _active_rows(rows: list[Any]) -> list[Any]:
     return [row for row in rows if _memory_status(row["metadata_json"]) in _ACTIVE_MEMORY_STATES]
 
@@ -445,18 +452,8 @@ def recent_observations(repo: Any, workspace: Any, limit: int = 6) -> list[dict[
         marker_event=_CONTEXT_INJECTED_EVENT,
         limit=capped * 5,
     )
-    valid = _valid_rows(repo, rows, component="memory.recent.corrupt_row")
-    return [_row_to_observation(row) for row in _active_rows(valid)[:capped]]
-
-
-def _search_terms(query: str) -> list[str]:
-    terms = [item.strip("._-/") for item in re.findall(r"[\w./-]+", query, re.UNICODE)]
-    return [item for item in terms if len(item) >= 2][:16]
-
-
-def _fts_query(query: str) -> str:
-    terms = _search_terms(query)
-    return " OR ".join(f'"{term.replace(chr(34), "")}"' for term in terms)
+    eligible = [row for row in rows if observation_exclusion(row, workspace) is None]
+    return [_row_to_observation(row) for row in eligible[:capped]]
 
 
 def search_observations(
@@ -464,51 +461,19 @@ def search_observations(
     workspace: Any,
     query: str,
     limit: int = 6,
+    *,
+    embedding: Any = None,
+    explain: bool = False,
 ) -> list[dict[str, Any]]:
-    """Return active repository memories with deterministic explanations."""
+    """Search through the one native retrieval service; default remains offline."""
 
-    cleaned_query = clean(query, 500)
-    if not cleaned_query:
+    from djobs.retrieval import retrieve_memory
+
+    if not clean(query, 500):
         return recent_observations(repo, workspace, limit=limit)
-    capped = max(1, min(limit, 20))
-    adapter = memory_repository(repo)
-    scopes = _memory_ids(workspace)
-    candidates: dict[str, dict[str, Any]] = {}
-    fts = _fts_query(cleaned_query)
-    if fts:
-        for row in adapter.fts_rows(
-            scopes=scopes,
-            query=fts,
-            marker_event=_CONTEXT_INJECTED_EVENT,
-            limit=max(40, capped * 8),
-        ):
-            candidates[str(row["id"])] = row
-    for row in adapter.scan_rows(
-        scopes=scopes,
-        marker_event=_CONTEXT_INJECTED_EVENT,
-        limit=300,
-    ):
-        candidates.setdefault(str(row["id"]), row)
-
-    valid_candidates = _valid_rows(
-        repo,
-        list(candidates.values()),
-        component="memory.search.corrupt_row",
-    )
-    ranked = rank_memory_rows(
-        valid_candidates,
-        query=cleaned_query,
-        workspace_root=workspace.root,
-        limit=capped,
-    )
-    return [
-        _row_to_observation(
-            item.row,
-            score=item.score,
-            matched_by=item.matched_by,
-        )
-        for item in ranked
-    ]
+    return retrieve_memory(
+        repo, workspace, query, limit=limit, embedding=embedding, explain=explain
+    ).items
 
 
 def memory_context_hash(memory: Any) -> str:
@@ -575,11 +540,12 @@ def update_observation_status(
 
 
 def session_observations(repo: Any, workspace: Any, agent: Any, limit: int = 40) -> list[Any]:
-    return memory_repository(repo).session_rows(
+    rows = memory_repository(repo).session_rows(
         scopes=_memory_ids(workspace),
         session_hash=_session_hash(agent),
         limit=max(1, min(limit, 100)),
     )
+    return [row for row in rows if observation_exclusion(row, workspace) is None]
 
 
 def record_session_capsule(
@@ -670,6 +636,9 @@ def forget_observation(repo: Any, workspace: Any, memory_id: str) -> bool:
 
 
 def clear_workspace_memory(repo: Any, workspace: Any) -> int:
+    from djobs.storage.retrieval import RetrievalIndex
+
+    RetrievalIndex(repo).clear(_memory_scope(workspace))
     return memory_repository(repo).clear(
         scopes=_memory_ids(workspace),
         checkout_id=_checkout_scope(workspace),

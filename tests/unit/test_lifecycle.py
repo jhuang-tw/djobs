@@ -491,3 +491,49 @@ def test_large_session_capsule_keeps_structured_fields(
     assert metadata["provenance"]["goal"]["source"] == "user_intent"
     assert metadata["provenance"]["next"]["advisory"] is True
     assert metadata["truncated_fields"]
+
+
+def test_passive_hooks_and_sync_do_not_renew_or_expire_an_explicit_lease(tmp_path, monkeypatch):
+    root = _git_repo(tmp_path / "lease-boundary")
+    database = tmp_path / "lease-boundary.db"
+    repository, queue = _queue(database)
+    monkeypatch.setattr(handoff, "configure", lambda _path: queue)
+    monkeypatch.setenv("DJOBS_DB", str(database))
+    created = json.loads(
+        handoff.checkpoint(
+            "Keep ownership explicit", cwd=str(root), agent_type="codex", session_id="owner"
+        )
+    )
+    task_id = created["task_id"]
+    before = dict(
+        repository._connection.execute("SELECT * FROM jobs WHERE id=?", (task_id,)).fetchone()
+    )
+    lifecycle.post_tool_use(
+        {
+            "cwd": str(root),
+            "session_id": "owner",
+            "tool_name": "test",
+            "tool_response": {"exit_code": 0},
+        },
+        agent_type="codex",
+    )
+    after = dict(
+        repository._connection.execute("SELECT * FROM jobs WHERE id=?", (task_id,)).fetchone()
+    )
+    assert after == before
+    repository.execute_write(
+        "UPDATE jobs SET lease_expires_at=? WHERE id=?", ("2020-01-01T00:00:00+00:00", task_id)
+    )
+    expired = dict(
+        repository._connection.execute("SELECT * FROM jobs WHERE id=?", (task_id,)).fetchone()
+    )
+    result = json.loads(
+        handoff.sync_workspace(cwd=str(root), agent_type="claude", session_id="reader")
+    )
+    assert result["ok"]
+    assert (
+        dict(
+            repository._connection.execute("SELECT * FROM jobs WHERE id=?", (task_id,)).fetchone()
+        )
+        == expired
+    )

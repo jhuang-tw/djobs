@@ -336,12 +336,12 @@ class SQLiteMemoryRepository:
         marker_event: str,
         limit: int,
     ) -> list[dict[str, Any]]:
-        self.ensure_schema()
         placeholders = self._placeholders(scopes)
         with self.repo._lock:
             rows = self.repo._connection.execute(
                 f"""
-                SELECT id, agent_type, event_type, tool_name, summary,
+                SELECT id, correlation_id, session_id_hash, agent_type,
+                       event_type, tool_name, summary,
                        metadata_json, created_at
                 FROM agent_observations
                 WHERE correlation_id IN ({placeholders}) AND event_type != ?
@@ -359,13 +359,13 @@ class SQLiteMemoryRepository:
         marker_event: str,
         limit: int,
     ) -> list[dict[str, Any]]:
-        self.ensure_schema()
         placeholders = self._placeholders(scopes)
         try:
             with self.repo._lock:
                 rows = self.repo._connection.execute(
                     f"""
-                    SELECT o.id, o.agent_type, o.event_type, o.tool_name, o.summary,
+                    SELECT o.id, o.correlation_id, o.session_id_hash,
+                           o.agent_type, o.event_type, o.tool_name, o.summary,
                            o.metadata_json, o.created_at,
                            bm25(agent_observations_fts, 0.0, 0.0, 1.0, 1.0, 2.5)
                              + CASE o.event_type
@@ -396,7 +396,6 @@ class SQLiteMemoryRepository:
         return self.recent_rows(scopes=scopes, marker_event=marker_event, limit=limit)
 
     def observation_metadata(self, *, memory_id: str, scopes: tuple[str, ...]) -> str | None:
-        self.ensure_schema()
         placeholders = self._placeholders(scopes)
         with self.repo._lock:
             row = self.repo._connection.execute(
@@ -423,7 +422,6 @@ class SQLiteMemoryRepository:
         session_hash: str,
         limit: int,
     ) -> list[dict[str, Any]]:
-        self.ensure_schema()
         placeholders = self._placeholders(scopes)
         with self.repo._lock:
             capsule = self.repo._connection.execute(
@@ -438,7 +436,8 @@ class SQLiteMemoryRepository:
             after = str(capsule["created_at"]) if capsule is not None else ""
             rows = self.repo._connection.execute(
                 f"""
-                SELECT id, agent_type, event_type, tool_name, summary,
+                SELECT id, correlation_id, session_id_hash, agent_type,
+                       event_type, tool_name, summary,
                        metadata_json, created_at
                 FROM agent_observations
                 WHERE correlation_id IN ({placeholders}) AND session_id_hash = ?
@@ -522,7 +521,6 @@ class SQLiteMemoryRepository:
             return should_record
 
     def stats(self, *, scopes: tuple[str, ...]) -> dict[str, Any]:
-        self.ensure_schema()
         placeholders = self._placeholders(scopes)
         with self.repo._lock:
             rows = self.repo._connection.execute(
@@ -548,7 +546,8 @@ class SQLiteMemoryRepository:
         keep_recent: int,
         dry_run: bool,
     ) -> dict[str, int]:
-        self.ensure_schema()
+        if not dry_run:
+            self.ensure_schema()
         placeholders = self._placeholders(scopes)
         keep = max(1, int(keep_recent))
         with self.repo.transaction(immediate=not dry_run) as transaction:
@@ -755,12 +754,12 @@ class PostgresMemoryRepository:
     def recent_rows(
         self, *, scopes: tuple[str, ...], marker_event: str, limit: int
     ) -> list[dict[str, Any]]:
-        self.ensure_schema()
         ph = self._placeholders(scopes)
         with self.repo._conn.cursor() as cur:
             cur.execute(
                 f"""
-                SELECT id, agent_type, event_type, tool_name, summary,
+                SELECT id, correlation_id, session_id_hash, agent_type,
+                       event_type, tool_name, summary,
                        metadata_json, created_at
                 FROM agent_observations
                 WHERE correlation_id IN ({ph}) AND event_type != %s
@@ -782,7 +781,6 @@ class PostgresMemoryRepository:
         return self.recent_rows(scopes=scopes, marker_event=marker_event, limit=limit)
 
     def observation_metadata(self, *, memory_id: str, scopes: tuple[str, ...]) -> str | None:
-        self.ensure_schema()
         ph = self._placeholders(scopes)
         with self.repo._conn.cursor() as cur:
             cur.execute(
@@ -808,7 +806,6 @@ class PostgresMemoryRepository:
     def session_rows(
         self, *, scopes: tuple[str, ...], session_hash: str, limit: int
     ) -> list[dict[str, Any]]:
-        self.ensure_schema()
         ph = self._placeholders(scopes)
         with self.repo._conn.cursor() as cur:
             cur.execute(
@@ -824,7 +821,8 @@ class PostgresMemoryRepository:
             after = capsule["created_at"] if capsule else datetime.min.replace(tzinfo=timezone.utc)
             cur.execute(
                 f"""
-                SELECT id, agent_type, event_type, tool_name, summary,
+                SELECT id, correlation_id, session_id_hash, agent_type,
+                       event_type, tool_name, summary,
                        metadata_json, created_at
                 FROM agent_observations
                 WHERE correlation_id IN ({ph}) AND session_id_hash = %s
@@ -905,7 +903,6 @@ class PostgresMemoryRepository:
         return should_record
 
     def stats(self, *, scopes: tuple[str, ...]) -> dict[str, Any]:
-        self.ensure_schema()
         ph = self._placeholders(scopes)
         with self.repo._conn.cursor() as cur:
             cur.execute(
@@ -928,7 +925,8 @@ class PostgresMemoryRepository:
     def compact(
         self, *, scopes: tuple[str, ...], keep_recent: int, dry_run: bool
     ) -> dict[str, int]:
-        self.ensure_schema()
+        if not dry_run:
+            self.ensure_schema()
         ph = self._placeholders(scopes)
         keep = max(1, int(keep_recent))
         with self.repo._conn.cursor() as cur:

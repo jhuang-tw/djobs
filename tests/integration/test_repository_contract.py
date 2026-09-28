@@ -454,3 +454,102 @@ def test_workspace_adapter_explicit_claim_contract(repo) -> None:
         agent_id="agent-contract",
     )
     assert [str(row["id"]) for row in owned] == [task.id]
+
+
+# Native memory indexes share the repository contract. These tests exercise the
+# same SQL and lifecycle boundaries against SQLite and an isolated PG fixture.
+def _memory_scope():
+    from djobs.workspace import Workspace
+
+    return Workspace(
+        root=".",
+        workspace_id="repo:memory-contract",
+        checkout_id="repo:memory-contract",
+        repo_family_id="family:memory-contract",
+        correlation_ids=("repo:memory-contract",),
+        memory_correlation_ids=("family:memory-contract", "repo:memory-contract"),
+        source="fixture",
+    )
+
+
+class _MemoryEmbeddingStub:
+    from djobs.embedding import EmbeddingIdentity
+
+    identity = EmbeddingIdentity("contract-stub", "constant", "1", 2)
+
+    def embed(self, texts, *, purpose):
+        return [[1.0, 0.0] for _ in texts]
+
+
+def test_memory_hybrid_index_contract(repo):
+    from types import SimpleNamespace
+
+    from djobs.embedding import EmbeddingSession
+    from djobs.observations import record_observation
+    from djobs.retrieval import reindex_memory, retrieve_memory
+    from djobs.storage.retrieval import RetrievalIndex
+
+    workspace = _memory_scope()
+    agent = SimpleNamespace(agent_type="contract", session_id="memory-contract")
+    record_observation(repo, workspace, agent, "tool_result", "src/parser.py preserves plus signs")
+    record_observation(
+        repo,
+        workspace,
+        agent,
+        "tool_result",
+        "quarantined parser claims",
+        metadata={"memory_status": "imported_unverified"},
+    )
+    before = RetrievalIndex(repo).source_rows(workspace.memory_correlation_ids)
+    session = EmbeddingSession(_MemoryEmbeddingStub())
+    assert reindex_memory(repo, workspace, session)["status"] == "ready"
+    assert reindex_memory(repo, workspace, session)["status"] == "unchanged"
+    selected = retrieve_memory(repo, workspace, "parser", embedding=session, explain=True)
+    assert selected.trace["semantic_index_status"] == "ready"
+    assert len(selected.items) == 1
+    assert selected.items[0]["summary"] == "src/parser.py preserves plus signs"
+    assert RetrievalIndex(repo).source_rows(workspace.memory_correlation_ids) == before
+
+
+def test_memory_forget_and_scope_contract(repo):
+    from types import SimpleNamespace
+
+    from djobs.embedding import EmbeddingSession
+    from djobs.observations import clear_workspace_memory, forget_observation, record_observation
+    from djobs.retrieval import reindex_memory, retrieve_memory
+    from djobs.storage.retrieval import RetrievalIndex
+
+    workspace = _memory_scope()
+    agent = SimpleNamespace(agent_type="contract", session_id="forget-contract")
+    record_observation(repo, workspace, agent, "tool_result", "src/parser.py shared rule")
+    record_observation(
+        repo,
+        workspace,
+        agent,
+        "tool_result",
+        "src/parser.py private rule",
+        metadata={"scope": "checkout", "checkout_id": "repo:another"},
+    )
+    session = EmbeddingSession(_MemoryEmbeddingStub())
+    assert reindex_memory(repo, workspace, session)["ok"]
+    result = retrieve_memory(repo, workspace, "parser", embedding=session)
+    assert len(result.items) == 1
+    memory_id = result.items[0]["id"]
+    assert forget_observation(repo, workspace, memory_id)
+    index = RetrievalIndex(repo)
+    with index._read_cursor() as cursor:
+        cursor.execute(
+            index._sql("SELECT COUNT(*) AS n FROM memory_embeddings WHERE record_id=?"),
+            (memory_id,),
+        )
+        assert cursor.fetchone()["n"] == 0
+    assert not retrieve_memory(repo, workspace, "parser", embedding=session).items
+    clear_workspace_memory(repo, workspace)
+    with index._read_cursor() as cursor:
+        cursor.execute(
+            index._sql(
+                "SELECT COUNT(*) AS n FROM memory_embedding_indexes WHERE repo_family_id=?"
+            ),
+            (workspace.repo_family_id,),
+        )
+        assert cursor.fetchone()["n"] == 0

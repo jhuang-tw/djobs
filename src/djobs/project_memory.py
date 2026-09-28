@@ -6,9 +6,10 @@ existing fail-open JSON APIs. Explicit checkpoint ownership remains opt-in.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
+from djobs.embedding import EmbeddingSession
 from djobs.handoff import checkpoint as _checkpoint
 from djobs.handoff import handoff as _handoff
 from djobs.handoff import sync_workspace as _sync_workspace
@@ -30,6 +31,7 @@ class ProjectMemory:
     roots: tuple[Any, ...] | None = None
     agent_type: str | None = None
     session_id: str | None = None
+    embedding: EmbeddingSession | None = field(default=None, repr=False, compare=False)
 
     @classmethod
     def open(
@@ -39,6 +41,7 @@ class ProjectMemory:
         roots: list[Any] | tuple[Any, ...] | None = None,
         agent_type: str | None = None,
         session_id: str | None = None,
+        embedding: EmbeddingSession | None = None,
     ) -> ProjectMemory:
         """Create a facade without touching storage or claiming work."""
 
@@ -46,6 +49,7 @@ class ProjectMemory:
         return cls(
             cwd=cwd,
             roots=normalized_roots,
+            embedding=embedding,
             agent_type=agent_type,
             session_id=session_id,
         )
@@ -69,6 +73,7 @@ class ProjectMemory:
             max_items=max_items,
             token_budget=token_budget,
             context_tier=context_tier,
+            **({"embedding": self.embedding} if self.embedding is not None else {}),
         )
 
     def list_memory(self, *, max_items: int = 8, token_budget: int = 700) -> str:
@@ -82,6 +87,7 @@ class ProjectMemory:
         *,
         max_items: int = 8,
         token_budget: int = 700,
+        explain: bool = False,
     ) -> str:
         """Search passive memory using deterministic local ranking."""
 
@@ -90,7 +96,16 @@ class ProjectMemory:
             query=query,
             max_items=max_items,
             token_budget=token_budget,
+            **({"explain": True} if explain else {}),
         )
+
+    def trace_memory(self, query: str, *, token_budget: int = 2000) -> str:
+        """Read an explained retrieval trace without persisting query text."""
+        return self._memory("trace", query=query, token_budget=token_budget)
+
+    def reindex_memory(self, *, confirm: bool = False) -> str:
+        """Explicitly rebuild the configured derived index; never activate memory."""
+        return self._memory("reindex", confirm=confirm)
 
     def update_memory_status(
         self,
@@ -176,6 +191,8 @@ class ProjectMemory:
         )
 
     def _memory(self, action: MemoryAction, **kwargs: Any) -> str:
+        if self.embedding is not None:
+            kwargs["embedding"] = self.embedding
         return _memory_action(
             action,
             roots=self.roots,

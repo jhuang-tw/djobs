@@ -15,6 +15,8 @@ RUFF_TARGETS = (
     "scripts/prepare_auto_release.py",
     "scripts/extract_release_notes.py",
     "scripts/preflight.py",
+    "scripts/benchmark_memory.py",
+    "scripts/prepare_local_embedding.py",
 )
 DOC_TESTS = (
     "tests/unit/test_release_surfaces.py",
@@ -106,6 +108,12 @@ def _run(
     cwd: Path = ROOT,
     env: dict[str, str] | None = None,
 ) -> None:
+    # Windows does not resolve a bare npm command to its .cmd shim here.
+    # Resolve the executable without constructing a shell command string.
+    if command and not Path(command[0]).is_absolute():
+        executable = shutil.which(command[0])
+        if executable:
+            command = [executable, *command[1:]]
     rendered = " ".join(command)
     print(f"\n==> {rendered}", flush=True)
     subprocess.run(command, cwd=cwd, env=env, check=True)

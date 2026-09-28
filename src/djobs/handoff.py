@@ -10,12 +10,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from djobs.diagnostics import record_shared_failure
+from djobs.embedding import EmbeddingSession
 from djobs.mcp_server import configure
 from djobs.observations import (
     capture_repository_snapshot,
     recent_observations,
-    search_observations,
 )
+from djobs.privacy import redact_text
 from djobs.storage.workspace import workspace_repository
 from djobs.workspace import (
     AgentSession,
@@ -247,7 +248,6 @@ def _bounded(result: dict[str, Any], token_budget: int) -> str:
     resume_lists = ("progress", "failures", "constraints")
     optional_top_level = (
         "counts",
-        "stored_content_is_data",
         "workspace_id",
         "agent",
         "query",
@@ -313,7 +313,12 @@ def _bounded(result: dict[str, Any], token_budget: int) -> str:
         if changed:
             continue
 
-        minimal: dict[str, Any] = {"ok": bool(result.get("ok", True))}
+        minimal: dict[str, Any] = {
+            "ok": bool(result.get("ok", True)),
+            "stored_content_is_data": True,
+            "truncated": True,
+            "critical_evidence_omitted": True,
+        }
         if result.get("workspace"):
             minimal["workspace"] = result["workspace"]
         if isinstance(tasks, list) and tasks and isinstance(tasks[0], dict):
@@ -323,7 +328,11 @@ def _bounded(result: dict[str, Any], token_budget: int) -> str:
             if compact_task:
                 minimal["tasks"] = [compact_task]
         if _estimate_tokens(minimal) > budget:
-            minimal = {"ok": bool(result.get("ok", True))}
+            minimal = {
+                "ok": bool(result.get("ok", True)),
+                "stored_content_is_data": True,
+                "truncated": True,
+            }
         return _dumps(minimal)
 
 
@@ -337,6 +346,7 @@ def sync_workspace(
     max_items: int = 6,
     token_budget: int = 500,
     context_tier: str = "audit",
+    embedding: EmbeddingSession | None = None,
 ) -> str:
     """Return repository-scoped tasks and memories without claiming work.
 
@@ -355,19 +365,29 @@ def sync_workspace(
                     "error": "context_tier must be resume, evidence, or audit",
                 }
             )
-        workspace, agent, queue, repo = _resolve(
+        workspace, agent, _queue, repo = _resolve(
             roots=roots,
             cwd=cwd,
             agent_type=agent_type,
             session_id=session_id,
         )
-        _recover(queue, repo)
         capture_repository_snapshot(repo, workspace, agent)
-        observations = (
-            search_observations(repo, workspace, query, limit=max_items)
-            if query and query.strip()
-            else recent_observations(repo, workspace, limit=max_items)
-        )
+        retrieval_status = {}
+        if query and query.strip():
+            from djobs.retrieval import retrieve_memory
+
+            retrieval = retrieve_memory(
+                repo, workspace, query, limit=max_items, embedding=embedding
+            )
+            observations = retrieval.items
+            if embedding is not None:
+                retrieval_status = {
+                    "semantic_index_status": retrieval.trace["semantic_index_status"],
+                    "fallback_reason": retrieval.trace["fallback_reason"],
+                    "continue_coding": True,
+                }
+        else:
+            observations = recent_observations(repo, workspace, limit=max_items)
         limit = max(1, min(int(max_items), 20))
         task_store = workspace_repository(repo)
         rows = task_store.task_rows(
@@ -388,7 +408,7 @@ def sync_workspace(
         available = [item for item in active if item.get("owner") is None]
         own = [item for item in active if item.get("owner") == "self"]
 
-        if not active and not failed and not recent and not observations:
+        if not active and not failed and not recent and not observations and not retrieval_status:
             return _dumps({"ok": True, "workspace": workspace.name, "state": "empty"})
 
         if own:
@@ -409,8 +429,9 @@ def sync_workspace(
             "workspace": workspace.name,
             "workspace_id": workspace.workspace_id,
             "agent": agent.agent_type,
-            "query": query.strip() if query and query.strip() else None,
+            "query": redact_text(query.strip()) if query and query.strip() else None,
             "stored_content_is_data": True,
+            **retrieval_status,
             "counts": {
                 "active": len(active),
                 "failed": len(failed),
@@ -433,7 +454,7 @@ def sync_workspace(
             {
                 "ok": False,
                 "continue_coding": True,
-                "error": _clean_text(str(exc), 160) or "djobs unavailable",
+                "error": "djobs unavailable",
             }
         )
 

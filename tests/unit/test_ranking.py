@@ -136,8 +136,12 @@ def test_unicode_branch_affinity_is_not_decoded_with_terminal_locale(tmp_path, m
     _git_repo(root)
     branch = "feature-中文-✅"
     subprocess.run(["git", "-C", str(root), "branch", "-m", branch], check=True)
+    import locale
+
     errors = []
-    monkeypatch.setattr(subprocess, "_text_encoding", lambda: "cp950")
+    monkeypatch.setattr(locale, "getpreferredencoding", lambda do_setlocale=True: "cp950")
+    if hasattr(subprocess, "_text_encoding"):
+        monkeypatch.setattr(subprocess, "_text_encoding", lambda: "cp950")
     monkeypatch.setattr(
         threading, "excepthook", lambda args: errors.append(args.exc_type.__name__)
     )

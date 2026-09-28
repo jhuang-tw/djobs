@@ -97,8 +97,12 @@ def test_unicode_git_workspace_preserves_identity_under_cp950_locale(tmp_path, m
     from djobs.workspace import _git_output
 
     root = _git_repo(tmp_path / "中文-✅")
+    import locale
+
     errors = []
-    monkeypatch.setattr(subprocess, "_text_encoding", lambda: "cp950")
+    monkeypatch.setattr(locale, "getpreferredencoding", lambda do_setlocale=True: "cp950")
+    if hasattr(subprocess, "_text_encoding"):
+        monkeypatch.setattr(subprocess, "_text_encoding", lambda: "cp950")
     monkeypatch.setattr(
         threading, "excepthook", lambda args: errors.append(args.exc_type.__name__)
     )

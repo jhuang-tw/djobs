@@ -25,13 +25,16 @@ def test_installed_smoke_expects_memory_first_top_level_help() -> None:
 
 
 def test_smoke_runner_captures_utf8_without_locale_reader_failures(tmp_path, monkeypatch):
+    import locale
     import os
     import subprocess
     import sys
     import threading
 
     errors = []
-    monkeypatch.setattr(subprocess, "_text_encoding", lambda: "cp950")
+    monkeypatch.setattr(locale, "getpreferredencoding", lambda do_setlocale=True: "cp950")
+    if hasattr(subprocess, "_text_encoding"):
+        monkeypatch.setattr(subprocess, "_text_encoding", lambda: "cp950")
     monkeypatch.setattr(
         threading, "excepthook", lambda args: errors.append(args.exc_type.__name__)
     )

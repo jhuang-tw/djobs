@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from dataclasses import asdict
 from typing import Any
 
 from djobs.memory_artifacts import (
@@ -24,6 +25,7 @@ from djobs.memory_artifacts import (
     safe_text,
     timestamp,
 )
+from djobs.memory_learning import effective_type, learning_source_checks, skill_markdown
 from djobs.memory_policy import lexical_terms, metadata_object, observation_exclusion
 from djobs.memory_review import ReviewGate, ReviewRequest
 from djobs.privacy import redact_value
@@ -188,7 +190,8 @@ class ArtifactView:
         reason = self.provenance_reason(artifact_id, at=at)
         item = {
             "id": artifact_id,
-            "type": row["kind"],
+            "type": effective_type(row),
+            "record_type": row["kind"],
             "status": row["status"],
             "authority": row["authority"],
             "stored_content_is_data": True,
@@ -242,6 +245,10 @@ class ArtifactView:
                     ],
                 }
             )
+        if row["kind"] == "experience":
+            item["verification"] = "explicit_human_product_review"
+        if row["kind"] == "skill_candidate" and depth >= 2:
+            item["markdown"] = skill_markdown(item)
         return redact_value(item)
 
 
@@ -272,10 +279,10 @@ class ArtifactMemory:
         )
 
     def _sources(
-        self, cursor: Any, draft: ArtifactDraft, view: ArtifactView
+        self, cursor: Any, draft: ArtifactDraft, view: ArtifactView, *, lock: bool = True
     ) -> list[dict[str, Any]]:
         ids = [source.id for source in draft.sources if source.kind == "observation"]
-        view.data["observations"].update(self.store.observations(cursor, ids, lock=True))
+        view.data["observations"].update(self.store.observations(cursor, ids, lock=lock))
         records = []
         for source in draft.sources:
             raw = source.kind == "observation"
@@ -309,7 +316,7 @@ class ArtifactMemory:
 
     def propose(self, payload: dict[str, Any]) -> dict[str, Any]:
         draft = ArtifactDraft.parse(payload)
-        if draft.kind != "fact":
+        if draft.kind not in {"fact", "lesson", "skill_candidate"}:
             raise ArtifactError("use_verified_type_constructor")
         return self._create(draft, deterministic=False)
 
@@ -332,7 +339,13 @@ class ArtifactMemory:
         )
         return self._create(draft, deterministic=True)
 
-    def _create(self, draft: ArtifactDraft, *, deterministic: bool) -> dict[str, Any]:
+    def _create(
+        self,
+        draft: ArtifactDraft,
+        *,
+        deterministic: bool,
+        reviewed: tuple[ReviewGate, Any] | None = None,
+    ) -> dict[str, Any]:
         if draft.scope in {"agent", "session"} and not self.private:
             raise ArtifactError("explicit_private_scope_required")
         key = _scope_key(self.workspace, draft.scope, self.agent, self.session)
@@ -340,6 +353,15 @@ class ArtifactMemory:
             self.store.ensure_schema(cursor)
             view = self._view(cursor, lock=True)
             sources = self._sources(cursor, draft, view)
+            learning_source_checks(draft, view.data)
+            if draft.kind == "experience" and reviewed is None:
+                raise ArtifactError("trusted_experience_verification_required")
+            review_binding = None
+            if reviewed is not None:
+                gate, approval = reviewed
+                review_binding = digest({"draft": asdict(draft), "sources": view.data})
+                if gate.consume(approval, review_binding) != "accept":
+                    return {"ok": True, "verified": False, "changed": False}
             proposal = digest(
                 {
                     "family": self.family,
@@ -363,6 +385,7 @@ class ArtifactMemory:
                     return {
                         "ok": True,
                         "duplicate": True,
+                        **({"verified": True} if reviewed is not None else {}),
                         "artifact": view.project(existing["id"]),
                     }
             if len(view.data["artifacts"]) >= MAX_ARTIFACTS:
@@ -374,8 +397,10 @@ class ArtifactMemory:
                 "scope": draft.scope,
                 "scope_key": key,
                 "kind": draft.kind,
-                "authority": "deterministic_derived" if deterministic else "agent_proposed",
-                "status": "active" if deterministic else "candidate",
+                "authority": "human_accepted"
+                if reviewed
+                else ("deterministic_derived" if deterministic else "agent_proposed"),
+                "status": "active" if (deterministic or reviewed) else "candidate",
                 "title": draft.title,
                 "abstract": draft.abstract,
                 "overview": draft.overview,
@@ -404,10 +429,126 @@ class ArtifactMemory:
                     return {
                         "ok": True,
                         "duplicate": True,
+                        **({"verified": True} if reviewed is not None else {}),
                         "artifact": view.project(existing["id"]),
                     }
             self.store.insert(cursor, row, sources)
-            return {"ok": True, "duplicate": False, "artifact": view.project(row["id"])}
+            receipt = None
+            if reviewed is not None:
+                assert review_binding is not None
+                receipt = self._receipt(
+                    cursor, reviewed[0], row["id"], "accept", review_binding, row["content_hash"]
+                )
+            return {
+                "ok": True,
+                "duplicate": False,
+                "artifact": view.project(row["id"]),
+                **({"verified": True, "receipt": receipt} if reviewed else {}),
+            }
+
+    def experience(
+        self, payload: dict[str, Any], gate: ReviewGate | None = None
+    ) -> dict[str, Any]:
+        """Only materialize verified experience after a trusted content-bound review.
+
+        There is no stored experience before acceptance. A receipt or success
+        string in caller data never impersonates this product/human review.
+        """
+        draft = ArtifactDraft.parse(payload)
+        if draft.kind != "experience":
+            raise ArtifactError("experience_type_required")
+        with self.store.transaction() as cursor:
+            view = self._view(cursor)
+            self._sources(cursor, draft, view, lock=False)
+            learning_source_checks(draft, view.data)
+            binding = digest({"draft": asdict(draft), "sources": view.data})
+            preview = canonical_json(
+                {
+                    "draft": asdict(draft),
+                    "source_evidence": [
+                        {
+                            "episode": view.project(source.id, depth=2),
+                            "observations": [
+                                redact_value(view.data["observations"][member["source_id"]])
+                                for member in view.data["sources"][source.id]
+                                if member["source_kind"] == "observation"
+                            ],
+                        }
+                        for source in draft.sources
+                    ],
+                    "verification_method": "explicit_human_product_review",
+                    "notice": "Check descriptions are quoted claims, not authenticated receipts.",
+                    "stored_content_is_data": True,
+                    "execution_authority": False,
+                }
+            )
+        if gate is None:
+            return {
+                "ok": True,
+                "requires_human_review": True,
+                "verified": False,
+                "changed": False,
+                "binding_hash": binding,
+                "preview": json.loads(preview),
+            }
+        if not isinstance(gate, ReviewGate):
+            raise ArtifactError("trusted_review_gate_required")
+        approval = gate.request(
+            ReviewRequest("verify_experience", "draft:" + binding, binding, preview)
+        )
+        return self._create(draft, deterministic=False, reviewed=(gate, approval))
+
+    def export_skill(
+        self, artifact_id: str, destination: str, gate: ReviewGate | None = None
+    ) -> dict[str, Any]:
+        """Preview or explicitly export a reviewed skill, never install an active prompt."""
+        from djobs.memory_export import export_target, preview_diff, write_new_export
+
+        def capture(view):
+            binding, _ = self._review_state(view, [artifact_id], "export:" + destination)
+            item = view.project(artifact_id, depth=2)
+            if item["type"] != "skill" or item["status"] != "active":
+                raise ArtifactError("accepted_skill_required_for_export")
+            target = export_target(self.workspace.root, destination)
+            text = item["markdown"]
+            preview = {
+                "artifact": item,
+                "destination": destination,
+                "diff": preview_diff(destination, text),
+                "stored_content_is_data": True,
+                "execution_authority": False,
+            }
+            return binding, preview, target, text
+
+        with self.store.transaction() as cursor:
+            binding, preview, _target, _text = capture(self._view(cursor))
+        if gate is None:
+            return {
+                "ok": True,
+                "exported": False,
+                "requires_human_review": True,
+                "binding_hash": binding,
+                "preview": preview,
+            }
+        if not isinstance(gate, ReviewGate):
+            raise ArtifactError("trusted_review_gate_required")
+        approval = gate.request(
+            ReviewRequest("export_skill", artifact_id, binding, canonical_json(preview))
+        )
+        with self.store.transaction() as cursor:
+            current, _preview, target, text = capture(self._view(cursor))
+            if gate.consume(approval, current) != "accept":
+                return {"ok": True, "exported": False}
+            size = write_new_export(target, text)
+        return {
+            "ok": True,
+            "exported": True,
+            "destination": destination,
+            "bytes": size,
+            "file_sha256": hashlib.sha256(text.encode()).hexdigest(),
+            "execution_authority": False,
+            "canonical_memory_unchanged": True,
+        }
 
     def get(self, artifact_id: str, *, depth: int = 1) -> dict[str, Any]:
         if depth not in (0, 1, 2):
@@ -434,7 +575,7 @@ class ArtifactMemory:
             view = self._view(cursor)
             eligible = []
             for row in view.data["artifacts"].values():
-                if not view.visible(row) or (kind and row["kind"] != kind):
+                if not view.visible(row) or (kind and effective_type(row) != kind):
                     continue
                 reason = view.provenance_reason(
                     row["id"], at=instant if exposure == "resume" else None

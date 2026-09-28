@@ -189,6 +189,43 @@ class ProjectMemory:
     def record_episode(self, sources: list[str], *, title: str = "Observed coding episode") -> str:
         return self._memory("episode", document={"sources": sources, "title": title})
 
+    def verify_experience(
+        self,
+        document: dict[str, Any],
+        *,
+        gate: ReviewGate | None = None,
+        token_budget: int = 3000,
+    ) -> str:
+        """Preview only unless the trusted product obtains explicit outcome verification."""
+        return self._memory(
+            "experience", document=document, review_gate=gate, token_budget=token_budget
+        )
+
+    def propose_lesson(self, document: dict[str, Any]) -> str:
+        return self._memory("propose", document={**document, "kind": "lesson"})
+
+    def propose_skill(self, document: dict[str, Any]) -> str:
+        return self._memory("propose", document={**document, "kind": "skill_candidate"})
+
+    def active_skills(self, *, token_budget: int = 1000) -> str:
+        return self._memory("facts", document={"kind": "skill"}, token_budget=token_budget)
+
+    def export_skill(
+        self,
+        memory_id: str,
+        destination: str,
+        *,
+        gate: ReviewGate | None = None,
+        token_budget: int = 3000,
+    ) -> str:
+        return self._memory(
+            "export",
+            memory_id=memory_id,
+            document={"destination": destination},
+            review_gate=gate,
+            token_budget=token_budget,
+        )
+
     def update_memory_status(
         self,
         memory_id: str,

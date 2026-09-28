@@ -683,3 +683,13 @@ def test_passive_pg_read_does_not_leak_or_commit_outer_transaction(repo):
         repo._conn.execute("SELECT to_regclass('caller_transaction') AS t").fetchone()["t"] is None
     )
     repo._conn.rollback()
+
+
+def test_verified_learning_workflow_contract(repo):
+    from scripts.benchmark_verified_learning import run
+
+    result = run(repo)
+    assert result["pass"]
+    assert result["before"]["active_skills"] == 0
+    assert result["after"]["active_skills"] == 1
+    assert result["model_calls"] == 0

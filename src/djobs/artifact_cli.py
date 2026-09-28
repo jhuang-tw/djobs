@@ -11,7 +11,19 @@ from pathlib import Path
 from djobs.memory_artifacts import ArtifactError
 from djobs.memory_review import ReviewGate, ReviewRequest
 
-ACTIONS = frozenset({"facts", "show", "candidates", "propose", "review", "relate", "episode"})
+ACTIONS = frozenset(
+    {
+        "facts",
+        "show",
+        "candidates",
+        "propose",
+        "review",
+        "relate",
+        "episode",
+        "experience",
+        "export",
+    }
+)
 
 
 def terminal_review_gate() -> ReviewGate:
@@ -56,6 +68,13 @@ def main(argv: list[str]) -> int:
     sub.add_parser("candidates", help="Reviewable candidates, never active by proposal alone")
     propose = sub.add_parser("propose", help="Store a candidate fact from a bounded JSON document")
     propose.add_argument("--file", type=Path, required=True)
+    experience = sub.add_parser("experience", help="Preview outcome evidence for explicit review")
+    experience.add_argument("--file", type=Path, required=True)
+    experience.add_argument("--apply", action="store_true")
+    export = sub.add_parser("export", help="Preview a new-file-only reviewed skill export")
+    export.add_argument("memory_id")
+    export.add_argument("destination")
+    export.add_argument("--apply", action="store_true")
     review = sub.add_parser(
         "review", help="Preview a candidate; --apply requests interactive human review"
     )
@@ -83,7 +102,9 @@ def main(argv: list[str]) -> int:
             }
         elif args.action == "show":
             document = {"depth": args.depth}
-        elif args.action == "propose":
+        elif args.action == "export":
+            document = {"destination": args.destination}
+        elif args.action in {"propose", "experience"}:
             path = args.file
             if (
                 path.is_symlink()

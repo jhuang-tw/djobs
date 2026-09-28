@@ -365,3 +365,43 @@ per artifact and 16 provenance levels. Unsupported future schemas fail closed fo
 while raw recall remains available. See the canonical preflight in CONTRIBUTING.md; the original
 `python scripts/benchmark_temporal_memory.py` adds an offline before/after temporal workflow fixture,
 not a model-accuracy, generation-quality or production acceptance claim.
+
+
+## Verified experiences, lessons and reviewed skills
+
+`memory experience --file experience.json` previews a source-bound outcome. The document contains
+kind=experience, title, abstract, source episode IDs, and details: objective, method, context,
+outcome (success/failure), failure_reason, changed_paths, checks, terminal_effect. Each check names
+source_id, check and evidence; that source must be a member of a selected episode. No experience
+is stored until `--apply` obtains explicit interactive human verification or a trusted product
+ReviewGate accepts the exact preview and source state. A supplied exit-code, success text, model
+vote, session stop, or transcript never grants verification. This version supports the explicit
+human/product acceptance route, not authenticated external check-receipt verification.
+
+A verified failure is retained as failure, never silently promoted to success. Lessons require
+verified experiences and conditions, proposed generalization, uncertainty and boundaries. Skill
+candidates require verified experience sources and at least one verified success; their details
+include name, description, semantic version, when_to_use, when_not_to_use, preconditions, steps,
+verification, failure_modes, rollback and boundaries. Propose stores candidates only. Two successful
+experiences do not activate a lesson or skill. Every activation requires another explicit review.
+
+The stored record type remains immutable `skill_candidate`. After human acceptance its public
+effective type is `skill`, with record_type retained for audit. IDs, source links and content hashes
+are not rewritten on promotion. `memory show ID --depth 2` includes the human-readable Markdown.
+The Python facade offers verify_experience, propose_lesson, propose_skill, active_skills and
+export_skill. MCP adds only actions to the existing memory tool. Experience/review/export actions
+through MCP are previews; JSON confirm flags cannot impersonate the trusted human review gate.
+
+`djobs memory export SKILL_ID exports/skill.md` previews a new-file Git diff. `--apply` requires exact
+interactive review and rechecks sources and destination. Only an active accepted skill can export,
+only to a new Markdown file in an existing real directory inside the chosen Git worktree. Existing
+files, traversal, symlink/reparse parents, reserved Windows names, alternate streams, active agent
+prompt directories and AGENTS.md/CLAUDE.md are refused. Export does not stage, commit, install,
+execute, autosync or change canonical memory. An explicitly exported file is a user-owned copy;
+forgetting canonical memory does not silently delete that external copy. This API is not an OS
+sandbox against privileged concurrent directory changes.
+
+The original `scripts/benchmark_verified_learning.py` exercises preview/reject/verify, two-experience
+candidate lessons, candidate-versus-accepted skill state, preserved content identity and source
+forgetting. Its synthetic review callbacks validate plumbing, not actual user acceptance or model
+accuracy. SQLite and PostgreSQL run the same workflow in repository contract tests.

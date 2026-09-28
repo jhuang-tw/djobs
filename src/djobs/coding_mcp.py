@@ -300,6 +300,8 @@ async def memory(
         "review",
         "relate",
         "episode",
+        "experience",
+        "export",
     ] = "list",
     query: str | None = None,
     summary: str | None = None,
@@ -320,6 +322,9 @@ async def memory(
     document.depth (0/1/2). review and relate only preview through MCP.
     Neither confirm nor document fields authorize acceptance.
     A trusted human-facing product review is required separately.
+    experience only previews outcome verification through MCP, never verifies by itself.
+    export only previews a reviewed skill destination through MCP, never writes a file.
+    propose also accepts lesson or skill_candidate documents sourced from verified experiences.
     propose document: kind=fact, title, abstract, sources; optional
     overview/details/scope/valid_from.
     episode document: sources and optional title. relate document: source_id,target_id,kind,at.

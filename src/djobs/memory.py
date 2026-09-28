@@ -43,6 +43,8 @@ MemoryAction = Literal[
     "review",
     "relate",
     "episode",
+    "experience",
+    "export",
 ]
 
 
@@ -149,6 +151,8 @@ def memory_action(
             "review",
             "relate",
             "episode",
+            "experience",
+            "export",
         }:
             return _dumps({"ok": False, "error": "unsupported memory action"})
         if action == "reindex" and (not confirm or embedding is None):
@@ -173,7 +177,7 @@ def memory_action(
         path = shared_db_path()
         if (
             action in {"list", "search", "trace", "stats", "facts", "get", "candidates"}
-            or (action in {"review", "relate"} and review_gate is None)
+            or (action in {"review", "relate", "experience", "export"} and review_gate is None)
             or (action == "compact" and dry_run)
         ):
             connection = _connect(path)
@@ -191,7 +195,17 @@ def memory_action(
             repo = SQLiteJobRepository(connection)
         else:
             repo = SQLiteJobRepository.from_path(path)
-        if action in {"facts", "get", "candidates", "propose", "review", "relate", "episode"}:
+        if action in {
+            "facts",
+            "get",
+            "candidates",
+            "propose",
+            "review",
+            "relate",
+            "episode",
+            "experience",
+            "export",
+        }:
             from djobs.artifacts import ArtifactMemory
 
             data = document if document is not None else {}
@@ -227,6 +241,12 @@ def memory_action(
                 }
             elif action == "propose":
                 result = service.propose(data)
+            elif action == "experience":
+                result = service.experience(data, review_gate)
+            elif action == "export":
+                if set(data) != {"destination"} or not memory_id:
+                    raise ArtifactError("explicit_export_destination_required")
+                result = service.export_skill(memory_id, data["destination"], review_gate)
             elif action == "episode":
                 if set(data) - {"sources", "title", "scope"}:
                     raise ArtifactError("unknown_episode_fields")

@@ -304,8 +304,12 @@ def _atomic_write_text(path: Path, content: str) -> None:
     temporary = Path(temporary_name)
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="") as stream:
-            with suppress(OSError, AttributeError):
-                os.fchmod(stream.fileno(), mode)
+            # ``os.fchmod`` is absent on Windows. Resolve it dynamically so
+            # the portable path is both runtime-safe and type-checkable.
+            fchmod = getattr(os, "fchmod", None)
+            if fchmod is not None:
+                with suppress(OSError):
+                    fchmod(stream.fileno(), mode)
             stream.write(content)
             stream.flush()
             os.fsync(stream.fileno())

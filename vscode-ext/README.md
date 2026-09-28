@@ -28,8 +28,8 @@ The extension is the one-click VS Code route for djobs. It:
 - pauses and resumes djobs without deleting local state;
 - keeps repository memory on the user's machine.
 
-It does **not** add a permanent sidebar, dashboard, polling loop, remote service, or cloud database.
-The UI stays out of the way after setup.
+The optional **djobs Memory** section in Explorer reads native memory on demand. It adds no
+polling loop, webview, remote service, cloud database, or independent lifecycle store.
 
 ## What djobs remembers
 
@@ -58,7 +58,7 @@ next equivalent recovery without hiding current task state.
 2. Open a Git repository.
 3. Start using Copilot normally.
 
-The first djobs MCP call may create `~/.djobs/global.db` and install the passive Copilot
+The first synchronizing djobs MCP call may create `~/.djobs/global.db` and install the passive Copilot
 lifecycle adapter. That is a local user-level configuration change, not a read-only probe. No
 per-project command is required, but **djobs: Diagnose Setup** shows what was configured and
 **djobs: Set up / Repair djobs** performs the same work explicitly when Python or an old launch path
@@ -76,6 +76,30 @@ needs attention.
 
 Passive memory never silently creates or claims tasks. Lower-level queue and administration tools
 remain available through `djobs-mcp-full` rather than occupying every ordinary Agent context.
+
+## Memory Explorer
+
+Expand a trusted workspace under **djobs Memory** to inspect Episodes, Facts, Verified Experiences,
+Lessons, Skills and Candidates, and Imported Sessions. Each root uses that workspace folder's
+Python/database configuration; a refresh or configuration change invalidates old nodes and pending
+responses rather than showing one repository's memory under another.
+
+The default tree uses L0 abstracts and `resume` exposure. Click an item for L1, or choose
+**Choose Content Depth** for explicit L2 sources, relations, and evidence. **Choose Memory Exposure**
+selects `resume`, `evidence`, `audit` (including history), or `candidates`. These are backend filters,
+not UI decisions about truth. Unresolved conflicts and truncated lists are explicitly disclosed;
+use **Search Memory Abstracts** to narrow a bounded result. Imported sessions never enter resume.
+
+Details are read-only JSON virtual documents, not rendered Markdown or executable command links.
+No memory file is generated in the repository. Displayed snapshots expire on refresh and close;
+previously delivered text cannot be retroactively removed from an agent's context.
+
+**Review Memory with Human Confirmation** first opens the backend's preview. A separate explicit
+confirmation starts the existing interactive CLI in a process-task terminal. The user must enter
+its freshly computed exact `ACCEPT <hash>` or `REJECT <hash>`; the extension never supplies that
+input. **Forget Memory with Confirmation** calls the same native application after a modal
+confirmation, invalidates cached views, and preserves explicit tasks. The UI has no accept-token,
+role flag, shell command interpolation, or independent lifecycle transition.
 
 ## Commands
 

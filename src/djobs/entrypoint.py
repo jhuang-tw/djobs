@@ -244,6 +244,45 @@ def _cmd_init_passive(
     )
 
 
+def _sqlite_wal_runtime_check(version: tuple[int, ...] | None = None) -> dict[str, Any]:
+    """Offline advisory for the specific upstream WAL-reset fix, not a safety certificate.
+
+    Upstream: https://www.sqlite.org/wal.html#walreset (checked 2026-09-28).
+    Vendor builds may backport fixes without changing their advertised version.
+    """
+    import sqlite3
+
+    current = version if version is not None else sqlite3.sqlite_version_info
+    known_fix = (
+        current >= (3, 51, 3)
+        or ((3, 50, 7) <= current < (3, 51, 0))
+        or ((3, 44, 6) <= current < (3, 45, 0))
+    )
+    display = ".".join(str(part) for part in current)
+    return {
+        "name": "SQLite WAL-reset runtime fix",
+        "ok": known_fix,
+        "level": "info" if known_fix else "warning",
+        "detail": (
+            f"SQLite {display}: "
+            + (
+                "version includes the upstream WAL-reset fix; other risks are not assessed."
+                if known_fix
+                else (
+                    "WAL-reset fix is unconfirmed for this version; "
+                    "concurrent writers/checkpoints may be affected."
+                )
+            )
+        ),
+        "next_step": None
+        if known_fix
+        else (
+            "Use a runtime with SQLite 3.51.3+ or a patched 3.50.7/3.44.6 release branch, "
+            "or verify a vendor backport. No runtime or journal-mode change was made."
+        ),
+    }
+
+
 def _doctor_payload() -> dict[str, Any]:
     """Return memory-first diagnostics without requiring project-local MCP wiring."""
 
@@ -253,7 +292,7 @@ def _doctor_payload() -> dict[str, Any]:
     from djobs.setup_cli import doctor_results
     from djobs.workspace import shared_db_path
 
-    checks: list[dict[str, Any]] = []
+    checks: list[dict[str, Any]] = [_sqlite_wal_runtime_check()]
 
     checks.append(
         {

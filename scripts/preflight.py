@@ -212,6 +212,7 @@ def run_extension() -> None:
     _run(["npm", "ci"], cwd=ROOT / "vscode-ext")
     _run(["npx", "tsc", "-p", "./", "--noEmit"], cwd=ROOT / "vscode-ext")
     _run(["npm", "run", "compile"], cwd=ROOT / "vscode-ext")
+    _run(["npm", "test"], cwd=ROOT / "vscode-ext")
 
 
 def run_package_checks() -> None:

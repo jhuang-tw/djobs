@@ -94,3 +94,41 @@ def test_storage_command_routes_from_public_entrypoint(monkeypatch) -> None:
         assert exc.code == 0
 
     assert observed == [["check"]]
+
+
+def test_sqlite_runtime_notice_is_specific_and_not_a_coding_blocker() -> None:
+    cases = {
+        (3, 40, 1): False,
+        (3, 44, 5): False,
+        (3, 44, 6): True,
+        (3, 45, 1): False,
+        (3, 49, 1): False,
+        (3, 50, 4): False,
+        (3, 50, 7): True,
+        (3, 51, 0): False,
+        (3, 51, 2): False,
+        (3, 51, 3): True,
+        (3, 52, 0): True,
+    }
+    for version, patched in cases.items():
+        check = entrypoint._sqlite_wal_runtime_check(version)
+        assert check["ok"] is patched
+        assert check["level"] == ("info" if patched else "warning")
+        assert check["level"] != "check"  # Doctor warnings do not fail normal coding.
+        if not patched:
+            assert "No runtime or journal-mode change" in check["next_step"]
+        else:
+            assert "other risks are not assessed" in check["detail"]
+
+
+def test_sqlite_runtime_notice_reads_only_runtime_version(monkeypatch) -> None:
+    import socket
+    import sqlite3
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("runtime warning must not connect to DB or network")
+
+    monkeypatch.setattr(sqlite3, "connect", forbidden)
+    monkeypatch.setattr(socket, "create_connection", forbidden)
+    monkeypatch.setattr(sqlite3, "sqlite_version_info", (3, 50, 4))
+    assert entrypoint._sqlite_wal_runtime_check()["ok"] is False

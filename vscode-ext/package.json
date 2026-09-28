@@ -1,6 +1,6 @@
 {
   "name": "djobs",
-  "displayName": "djobs \u2014 Local Agent Memory",
+  "displayName": "djobs — Local Agent Memory",
   "description": "Shared local project memory and explicit coordination for AI coding agents across sessions and tools.",
   "version": "0.22.0",
   "publisher": "jhuang-tw",
@@ -32,7 +32,8 @@
     "Claude Code",
     "Codex",
     "Gemini",
-    "Kimi Code"
+    "Kimi Code",
+    "passive hooks"
   ],
   "activationEvents": [
     "onStartupFinished"
@@ -86,6 +87,49 @@
         "command": "djobs.unpause",
         "title": "Resume djobs",
         "category": "djobs"
+      },
+      {
+        "command": "djobs.memoryRefresh",
+        "title": "Refresh Memory Explorer",
+        "category": "djobs",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "djobs.memoryExposure",
+        "title": "Choose Memory Exposure",
+        "category": "djobs",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "djobs.memorySearch",
+        "title": "Search Memory Abstracts",
+        "category": "djobs",
+        "icon": "$(search)"
+      },
+      {
+        "command": "djobs.memoryOpen",
+        "title": "Inspect Memory",
+        "category": "djobs"
+      },
+      {
+        "command": "djobs.memoryDepth",
+        "title": "Choose Content Depth",
+        "category": "djobs"
+      },
+      {
+        "command": "djobs.memoryReview",
+        "title": "Review Memory with Human Confirmation",
+        "category": "djobs"
+      },
+      {
+        "command": "djobs.memoryForget",
+        "title": "Forget Memory with Confirmation",
+        "category": "djobs"
+      },
+      {
+        "command": "djobs.memoryTrace",
+        "title": "Explain Memory Retrieval",
+        "category": "djobs"
       }
     ],
     "configuration": {
@@ -120,6 +164,62 @@
           "description": "Optional absolute path for shared local memory. Leave empty for ~/.djobs/global.db."
         }
       }
+    },
+    "views": {
+      "explorer": [
+        {
+          "id": "djobsMemoryExplorer",
+          "name": "djobs Memory",
+          "when": "isWorkspaceTrusted"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "djobsMemoryExplorer",
+        "contents": "Open a trusted workspace to inspect local memory. Reads do not claim tasks or accept candidates."
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "djobs.memoryRefresh",
+          "when": "view == djobsMemoryExplorer",
+          "group": "navigation"
+        },
+        {
+          "command": "djobs.memorySearch",
+          "when": "view == djobsMemoryExplorer",
+          "group": "navigation"
+        },
+        {
+          "command": "djobs.memoryExposure",
+          "when": "view == djobsMemoryExplorer",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "djobs.memoryDepth",
+          "when": "view == djobsMemoryExplorer && viewItem == djobsMemoryItem",
+          "group": "inspect"
+        },
+        {
+          "command": "djobs.memoryReview",
+          "when": "view == djobsMemoryExplorer && viewItem == djobsMemoryItem",
+          "group": "review"
+        },
+        {
+          "command": "djobs.memoryForget",
+          "when": "view == djobsMemoryExplorer && viewItem == djobsMemoryItem",
+          "group": "maintenance"
+        },
+        {
+          "command": "djobs.memoryTrace",
+          "when": "view == djobsMemoryExplorer",
+          "group": "inspect"
+        }
+      ]
     }
   },
   "scripts": {
@@ -127,7 +227,8 @@
     "vscode:prepublish": "npm run sync-version && npm run compile",
     "compile": "npm run sync-version && tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "package": "vsce package"
+    "package": "vsce package",
+    "test": "node --test tests/*.test.cjs"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

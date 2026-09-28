@@ -327,11 +327,13 @@ def test_corrupted_memory_row_is_skipped_and_diagnosable(memory_env) -> None:
     results = search_observations(repository, workspace, "parser", limit=5)
 
     assert results == []
-    from djobs.diagnostics import list_diagnostics
+    from djobs.retrieval import retrieve_memory
 
-    diagnostics = list_diagnostics(repository)
-    assert any(item["component"] == "memory.search.corrupt_row" for item in diagnostics)
-    assert "broken-json" not in json.dumps(diagnostics)
+    before = repository._connection.total_changes
+    trace = retrieve_memory(repository, workspace, "parser").trace
+    assert trace["filters"]["corrupt_metadata"] == 1
+    assert "broken-json" not in json.dumps(trace)
+    assert repository._connection.total_changes == before
 
 
 def test_duplicate_prompt_is_stored_once_per_session(memory_env) -> None:

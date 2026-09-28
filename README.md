@@ -230,11 +230,34 @@ djobs remove claude
 
 See [docs/USER_GUIDE.md](docs/USER_GUIDE.md) for troubleshooting, field meanings, and cleanup examples.
 
+## Native verified retrieval
+
+Default memory reads remain local and lexical, with deterministic Chinese character matching.
+Optional CPU embeddings add an explainable bounded hybrid index without becoming a second memory
+store. Index creation is an explicit `memory reindex` operation; reads never build or repair it.
+A missing, stale, corrupt, mismatched, or unavailable semantic index falls back to lexical recall.
+
+```bash
+djobs memory search "OAuth callback" --explain
+djobs memory trace "OAuth callback"
+```
+
+The five compact MCP tools are unchanged. `memory` adds `trace` and explicitly confirmed `reindex`
+actions. See [the user guide](docs/USER_GUIDE.md#optional-local-semantic-retrieval) for model setup,
+provider failure behavior, index identity, and benchmark limitations. No model downloads, model
+libraries, provider accounts, or network requests are required by the default installation.
+
+Raw observations remain evidence, not reviewed facts. Proposed/imported/private/out-of-scope,
+corrupt, inactive, and unresolved contradicted records cannot enter ordinary family recovery.
+Passive tool observations do not renew leases, and `sync_workspace` does not reclaim expired tasks.
+Explicit task operations retain their existing ownership rules.
+
 ## Benchmarks
 
 ```bash
 python scripts/benchmark_project_memory.py
 python scripts/benchmark_resume_quality.py
+python scripts/benchmark_memory.py
 ```
 
 | Fixture path | Simple serialized-text estimate | Minimum calls |

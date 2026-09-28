@@ -16,7 +16,7 @@ The equivalent standalone executables are `djobs-contract` and `djobs-contract-m
 ## Authority boundary
 
 The advisory surface exposes only `capabilities`, `observation`, and receipt verification. It
-never registers an agent, recovers a lease, captures a snapshot, creates or claims a task,
+never registers an agent, recovers a lease, captures a Git/workflow observation, creates or claims a task,
 changes task status, schedules work, creates a worktree, or writes the djobs database.
 
 `checkpoint` and `handoff` remain available in the established coding surface for djobs-native
@@ -57,3 +57,17 @@ identity. A valid result means that the response and receipt are internally cons
 not prove that an external host consumed or accepted the evidence. The host must keep its own
 audit record of accepted and rejected observation IDs and must fail open when verification is
 unavailable.
+
+
+## Strict SQLite reads
+
+Advisory reads do not change the source DB bytes/mtime or create source WAL/SHM files. To avoid
+SQLite read-only WAL side effects, the implementation captures a bounded private temporary DB/WAL
+view, verifies source generations and hashes, and reads that view in query-only mode. It removes
+the temporary copy on close/failure. This is temporary filesystem I/O, not another persistent memory
+authority. The source is never declared immutable and live WAL content is retained.
+
+Capture limits are 64 MiB and a 0.5-second copy/verification deadline. Source churn, over-limit files,
+and errors return the existing fail-open contract instead of reporting a false empty database.
+Receipt integrity still describes the returned capture and requested repository identity; it does
+not assert that the live source stayed unchanged after capture. No query triggers lazy indexing.

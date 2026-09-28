@@ -10,11 +10,13 @@ import subprocess
 from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
-from urllib.parse import quote
 
 from djobs import __version__
+from djobs.memory_policy import scope_exclusion
 from djobs.privacy import redact_text
+from djobs.storage.read_only import connect_read_only
 from djobs.workspace import (
     _family_id,
     _normalize_remote,
@@ -98,18 +100,7 @@ def repository_state(cwd: str | None) -> dict[str, Any]:
 
 
 def _connect(path: Path) -> sqlite3.Connection | None:
-    if not path.exists() or not path.is_file():
-        return None
-    encoded = quote(path.expanduser().resolve().as_posix(), safe="/:")
-    connection = sqlite3.connect(
-        f"file:{encoded}?mode=ro",
-        uri=True,
-        timeout=1,
-        check_same_thread=False,
-    )
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA query_only = ON")
-    return connection
+    return connect_read_only(path)
 
 
 def parse_time(value: str, field: str) -> datetime:
@@ -135,9 +126,11 @@ def _metadata(raw: Any) -> dict[str, Any]:
 
 
 def _query_rows(connection, repository, request, now) -> list[dict[str, Any]]:
-    where = ["event_type != ?"]
+    where = ["event_type != ?", "json_valid(metadata_json)"]
     values: list[Any] = ["context_injected"]
     if request.correlation_id:
+        if request.correlation_id not in repository["_scopes"]:
+            raise ValueError("correlation scope does not belong to the requested repository")
         where.append("correlation_id = ?")
         values.append(request.correlation_id)
     else:
@@ -306,7 +299,20 @@ def collect_observations(repository, request, now, hash_value, db_path: Path | N
         finally:
             connection.close()
     ranked = []
+    scope = SimpleNamespace(
+        repo_family_id=repository["fingerprint"],
+        workspace_id=repository["checkout_id"],
+        checkout_id=repository["checkout_id"],
+        memory_correlation_ids=tuple(repository["_scopes"]),
+    )
+    session_hash = (
+        hashlib.sha256(request.session_id.encode()).hexdigest()[:16]
+        if request.session_id
+        else None
+    )
     for row in rows:
+        if scope_exclusion(row, scope, session_id_hash=session_hash) is not None:
+            continue
         meta = _metadata(row.get("metadata_json"))
         score, signals = _rank(row, meta, repository, request.query, now)
         ranked.append((score, str(row.get("created_at") or ""), row, meta, signals))

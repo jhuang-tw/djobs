@@ -247,6 +247,21 @@ def run(
                 "repeats": repeats,
                 "deterministic_replay": replay_ok,
                 "unsafe_injection_rate": unsafe / max(1, total_selected),
+                "stale_injection_rate": sum(
+                    len(set(case["selected_ids"]) & {"old-persistence", "stale-oauth"})
+                    for case in results
+                )
+                / max(1, total_selected),
+                "contradicted_injection_rate": sum(
+                    len(set(case["selected_ids"]) & {"contradiction-a", "contradiction-b"})
+                    for case in results
+                )
+                / max(1, total_selected),
+                "unsupported_derived_memory_rate": sum(
+                    len(set(case["selected_ids"]) & {"proposed", "quarantined"})
+                    for case in results
+                )
+                / max(1, total_selected),
                 "irrelevant_context_rate": irrelevant / max(1, total_selected),
                 "negative_query_false_positive_rate": statistics.mean(
                     bool(case["selected_ids"]) for case in results if not case["answerable"]
@@ -296,14 +311,82 @@ def compare(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict[str, An
     }
 
 
+def run_local_profile(
+    model_directory: Path, *, corpus_path: Path = CORPUS, repeats: int = 2
+) -> dict[str, Any]:
+    """Explicit pinned local-model profile. The entire inference run is network-blocked."""
+
+    from unittest.mock import patch
+
+    from djobs.embedding import EmbeddingSession
+    from djobs.local_embedding import LocalE5Provider
+    from djobs.retrieval import reindex_memory, retrieve_memory
+
+    network_attempts = 0
+    traces = []
+
+    def forbidden_connect(*args, **kwargs):
+        nonlocal network_attempts
+        network_attempts += 1
+        raise RuntimeError("network is disabled in the local embedding benchmark")
+
+    with (
+        patch("socket.socket.connect", forbidden_connect),
+        patch("socket.create_connection", forbidden_connect),
+    ):
+        started = time.perf_counter()
+        provider = LocalE5Provider(model_directory)
+        initialization_ms = (time.perf_counter() - started) * 1000
+        session = EmbeddingSession(provider)
+
+        def prepare(repo, workspace):
+            result = reindex_memory(repo, workspace, session)
+            if not result["ok"]:
+                raise RuntimeError("local benchmark index preparation failed")
+            return result
+
+        def retrieve(repo, workspace, query, k):
+            result = retrieve_memory(repo, workspace, query, limit=k, embedding=session)
+            traces.append(result.trace)
+            return result.items
+
+        result = run(
+            corpus_path=corpus_path,
+            repeats=repeats,
+            retriever=retrieve,
+            prepare=prepare,
+            profile="local-e5-onnx-cpu-rrf-v1",
+        )
+    result.update(
+        {
+            "model_identity": json.loads(provider.identity.to_json()),
+            "runtime_versions": provider.runtime_versions,
+            "provider_initialization_ms": initialization_ms,
+            "provider_calls": session.calls,
+            "provider_failures": session.failures,
+            "external_network_calls": network_attempts,
+            "network_policy": "socket connections blocked during initialization and inference",
+            "retrieval_traces": traces,
+            "cache_hit_rate": 0.0,
+            "index_size_bytes": result["preparation"].get("vector_bytes", 0),
+        }
+    )
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corpus", type=Path, default=CORPUS)
     parser.add_argument("--repeats", type=int, default=2)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--baseline", type=Path)
+    parser.add_argument("--local-model-dir", type=Path, help="Explicit local pinned E5 files")
     args = parser.parse_args()
-    result = run(corpus_path=args.corpus, repeats=args.repeats)
+    result = (
+        run_local_profile(args.local_model_dir, corpus_path=args.corpus, repeats=args.repeats)
+        if args.local_model_dir
+        else run(corpus_path=args.corpus, repeats=args.repeats)
+    )
     if args.baseline:
         result["comparison"] = compare(
             json.loads(args.baseline.read_text(encoding="utf-8-sig")), result
@@ -313,7 +396,11 @@ def main() -> int:
         args.output.write_text(encoded + "\n", encoding="utf-8")
         print(
             json.dumps(
-                {key: value for key, value in result.items() if key != "cases"},
+                {
+                    key: value
+                    for key, value in result.items()
+                    if key not in {"cases", "retrieval_traces"}
+                },
                 ensure_ascii=True,
                 indent=2,
             )

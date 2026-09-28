@@ -15,6 +15,8 @@ RUFF_TARGETS = (
     "scripts/prepare_auto_release.py",
     "scripts/extract_release_notes.py",
     "scripts/preflight.py",
+    "scripts/benchmark_memory.py",
+    "scripts/prepare_local_embedding.py",
 )
 DOC_TESTS = (
     "tests/unit/test_release_surfaces.py",

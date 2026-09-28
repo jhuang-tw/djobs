@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import math
 from collections import Counter
@@ -10,6 +11,8 @@ from typing import Any, Literal, cast
 from mcp.server.fastmcp import Context, FastMCP
 
 from djobs.delta_mcp import resume_delta as _resume_delta
+from djobs.embedding import EmbeddingSession, UnavailableEmbeddingProvider
+from djobs.handoff import _bounded as _bounded_sync
 from djobs.handoff import checkpoint as _checkpoint
 from djobs.handoff import ensure_shared_queue
 from djobs.handoff import handoff as _handoff
@@ -19,6 +22,8 @@ from djobs.mcp_adoption import remember_agent_memory, remember_current_request
 from djobs.memory import memory_action as _memory_action
 from djobs.observations import memory_context_hash
 from djobs.zero_touch import bootstrap_first_call
+
+_embedding_session: EmbeddingSession | None = None
 
 _server = FastMCP(
     "djobs",
@@ -179,6 +184,13 @@ def _with_context_hash(
             counts["observations"] = 0
         result["next_step"] = result.get("next_step") or "Continue with current repository state."
     _refresh_budget_estimate(result)
+    budget = result.get("budget")
+    if isinstance(budget, dict) and _estimate_tokens(result) > int(
+        budget.get("requested_tokens", 4000)
+    ):
+        result["truncated"] = True
+        result["critical_evidence_omitted"] = True
+        return _bounded_sync(result, int(budget.get("requested_tokens", 4000)))
     return json.dumps(result, ensure_ascii=False, separators=(",", ":"), default=str)
 
 
@@ -246,6 +258,10 @@ async def sync_workspace(
         token_budget=token_budget,
         max_items=max_items,
         context_tier=internal_tier,
+        **cast(
+            dict[str, Any],
+            {"embedding": _embedding_session} if _embedding_session is not None else {},
+        ),
     )
     # Read before write: current intent becomes future memory only after retrieval is complete.
     remember_current_request(
@@ -260,7 +276,9 @@ async def sync_workspace(
 @_server.tool()
 async def memory(
     context: Context,
-    action: Literal["list", "search", "remember", "status", "forget", "clear"] = "list",
+    action: Literal[
+        "list", "search", "remember", "status", "forget", "clear", "trace", "reindex"
+    ] = "list",
     query: str | None = None,
     summary: str | None = None,
     kind: Literal["progress", "failure", "decision", "constraint", "note"] = "note",
@@ -274,6 +292,8 @@ async def memory(
 ) -> str:
     """Inspect or explicitly change passive memory for the current repository.
 
+    ``trace`` explains retrieval without storing the query. ``reindex`` requires confirm=true
+    and a provider explicitly configured at server startup; it never changes lifecycle.
     Use ``list`` to show recent active memory and ``search`` to find a prior goal, failure,
     decision, or result. On a generic MCP client without djobs lifecycle hooks, use ``remember``
     only for a significant cross-session fact: set ``kind`` to progress, failure, decision,
@@ -289,10 +309,10 @@ async def memory(
     block the user's coding request.
     """
 
-    bootstrap = bootstrap_first_call(context)
     roots = await _roots(context)
     cwd = _cwd(context)
     if action == "remember":
+        bootstrap = bootstrap_first_call(context)
         if not summary or not summary.strip():
             return json.dumps(
                 {
@@ -321,6 +341,8 @@ async def memory(
             result["continue_coding"] = True
         return json.dumps(result, ensure_ascii=False, separators=(",", ":"))
 
+    # A read does not bootstrap or modify host hooks/configuration.
+    host = "mcp" if action in {"list", "search", "trace"} else bootstrap_first_call(context).host
     return _memory_action(
         action,
         query=query,
@@ -331,7 +353,11 @@ async def memory(
         confirm=confirm,
         roots=roots,
         cwd=cwd,
-        agent_type=bootstrap.host,
+        agent_type=host,
+        **cast(
+            dict[str, Any],
+            {"embedding": _embedding_session} if _embedding_session is not None else {},
+        ),
         token_budget=token_budget,
         max_items=max_items,
     )
@@ -422,8 +448,20 @@ def resume_delta(
 
 
 def main() -> None:
-    """Run the zero-configuration coding MCP server over stdio."""
+    """Run the compact MCP server; a local model is an explicit startup opt-in."""
 
+    global _embedding_session
+    parser = argparse.ArgumentParser(prog="djobs-mcp")
+    parser.add_argument("--embedding-model-dir", help="Local pinned E5 files; never downloaded")
+    args = parser.parse_args()
+    if args.embedding_model_dir:
+        try:
+            from djobs.local_embedding import LocalE5Provider
+
+            _embedding_session = EmbeddingSession(LocalE5Provider(args.embedding_model_dir))
+        except Exception:
+            # Do not print to stdio or expose provider exception bodies.
+            _embedding_session = EmbeddingSession(UnavailableEmbeddingProvider())
     ensure_shared_queue()
     _server.run(transport="stdio")
 

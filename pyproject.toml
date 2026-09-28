@@ -61,6 +61,13 @@ pg = [
     "psycopg[binary]>=3.1",
 ]
 
+# CPU embeddings are opt-in. No model files are bundled or downloaded on import.
+semantic = [
+    "onnxruntime>=1.22,<2",
+    "tokenizers>=0.21,<1",
+    "numpy>=1.26,<3",
+]
+
 [project.scripts]
 djobs = "djobs.public_cli:main"
 djobs-contract = "djobs.contract_cli:main"

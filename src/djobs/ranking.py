@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import json
-import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-_TOKEN_RE = re.compile(r"[A-Za-z0-9_./:+-]{2,}")
+from djobs.memory_policy import lexical_terms
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,7 +62,7 @@ def _is_ancestor(root: str, commit: str) -> bool | None:
 
 
 def _terms(value: str) -> tuple[str, ...]:
-    return tuple(dict.fromkeys(match.casefold() for match in _TOKEN_RE.findall(value)))
+    return lexical_terms(value)
 
 
 def rank_memory_rows(
@@ -81,8 +80,17 @@ def rank_memory_rows(
 
     query_text = " ".join(query.split()).casefold()
     query_terms = _terms(query_text)
-    branch = _git_value(workspace_root, "branch", "--show-current")
-    head = _git_value(workspace_root, "rev-parse", "HEAD")
+    metadata_rows = [_metadata(row.get("metadata_json")) for row in rows]
+    branch = (
+        _git_value(workspace_root, "branch", "--show-current")
+        if any(item.get("branch") for item in metadata_rows)
+        else ""
+    )
+    head = (
+        _git_value(workspace_root, "rev-parse", "HEAD")
+        if any(item.get("commit_sha") for item in metadata_rows)
+        else ""
+    )
     ancestor_cache: dict[str, bool | None] = {}
     ordered = sorted(
         rows,

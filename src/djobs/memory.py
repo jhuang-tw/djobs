@@ -8,19 +8,24 @@ import math
 import os
 from typing import Any, Literal, cast
 
-from djobs.handoff import _resolve
+from djobs.contract_repository import _connect
+from djobs.embedding import EmbeddingSession, UnavailableEmbeddingProvider
 from djobs.observations import (
     MemoryStatus,
     clear_workspace_memory,
     compact_workspace_memory,
     forget_observation,
     recent_observations,
-    search_observations,
     update_observation_status,
     workspace_memory_stats,
 )
+from djobs.privacy import redact_text
+from djobs.storage.sqlite import SQLiteJobRepository
+from djobs.workspace import resolve_workspace, shared_db_path
 
-MemoryAction = Literal["list", "search", "status", "forget", "clear", "stats", "compact"]
+MemoryAction = Literal[
+    "list", "search", "status", "forget", "clear", "stats", "compact", "trace", "reindex"
+]
 
 
 def _dumps(value: Any) -> str:
@@ -32,14 +37,51 @@ def _estimate_tokens(value: Any) -> int:
 
 
 def _bounded(result: dict[str, Any], token_budget: int) -> str:
+    """Bound the final serialized payload, including its own estimate/authority flag."""
+
     budget = max(64, min(int(token_budget), 4000))
-    memories = result.get("memories")
-    while isinstance(memories, list) and memories and _estimate_tokens(result) > budget:
-        memories.pop()
-    result["estimated_tokens"] = _estimate_tokens(result)
-    if result["estimated_tokens"] <= budget:
+    result["stored_content_is_data"] = True
+    original_count = len(result.get("memories", []))
+    result["truncated"] = False
+    result["estimated_tokens"] = 0
+
+    def refresh() -> str:
+        for _ in range(5):
+            estimate = _estimate_tokens(result)
+            if estimate == result["estimated_tokens"]:
+                break
+            result["estimated_tokens"] = estimate
         return _dumps(result)
-    return _dumps({"ok": bool(result.get("ok", True)), "action": result.get("action")})
+
+    encoded = refresh()
+    memories = result.get("memories")
+    while isinstance(memories, list) and memories and math.ceil(len(encoded) / 4) > budget:
+        memories.pop()
+        result["count"] = len(memories)
+        result["truncated"] = True
+        result["critical_evidence_omitted"] = True
+        if isinstance(result.get("trace"), dict):
+            result["trace"]["selected_ids"] = [item["id"] for item in memories]
+        encoded = refresh()
+    if original_count and not result.get("memories"):
+        result["critical_evidence_omitted"] = True
+        encoded = refresh()
+    if math.ceil(len(encoded) / 4) > budget and "trace" in result:
+        result.pop("trace")
+        result["trace_omitted"] = True
+        result["truncated"] = True
+        encoded = refresh()
+    if math.ceil(len(encoded) / 4) <= budget:
+        return encoded
+    result = {
+        "ok": bool(result.get("ok", True)),
+        "action": result.get("action"),
+        "stored_content_is_data": True,
+        "truncated": True,
+        "critical_evidence_omitted": True,
+        "estimated_tokens": 0,
+    }
+    return refresh()
 
 
 def memory_action(
@@ -59,29 +101,99 @@ def memory_action(
     session_id: str | None = None,
     max_items: int = 8,
     token_budget: int = 700,
+    embedding: EmbeddingSession | None = None,
+    explain: bool = False,
 ) -> str:
     """Inspect or mutate passive repository memory without touching explicit tasks."""
 
+    del agent_type, session_id  # Memory access does not register an owner or agent.
+    repo = None
     try:
-        workspace, _agent, _queue, repo = _resolve(
-            roots=roots,
-            cwd=cwd,
-            agent_type=agent_type,
-            session_id=session_id,
-        )
-        if action == "search":
+        if action not in {
+            "list",
+            "search",
+            "trace",
+            "status",
+            "forget",
+            "clear",
+            "stats",
+            "compact",
+            "reindex",
+        }:
+            return _dumps({"ok": False, "error": "unsupported memory action"})
+        if action == "reindex" and (not confirm or embedding is None):
+            return _dumps(
+                {
+                    "ok": False,
+                    "action": action,
+                    "requires_confirmation": not confirm,
+                    "error": "reindex requires an explicit provider and confirmation",
+                }
+            )
+        if (action == "clear" or (action == "compact" and not dry_run)) and not confirm:
+            return _dumps(
+                {
+                    "ok": False,
+                    "action": action,
+                    "requires_confirmation": True,
+                    "message": "Explicit confirmation is required before destructive maintenance.",
+                }
+            )
+        workspace = resolve_workspace(roots=roots, cwd=cwd)
+        path = shared_db_path()
+        if action in {"list", "search", "trace", "stats"} or (action == "compact" and dry_run):
+            connection = _connect(path)
+            if connection is None:
+                return _bounded(
+                    {
+                        "ok": True,
+                        "action": action,
+                        "memories": [],
+                        "count": 0,
+                        "memory_store_status": "not_initialized",
+                    },
+                    token_budget,
+                )
+            repo = SQLiteJobRepository(connection)
+        else:
+            repo = SQLiteJobRepository.from_path(path)
+        if action == "reindex":
+            from djobs.retrieval import reindex_memory
+
+            assert embedding is not None
+            return _bounded(
+                {"action": action, **reindex_memory(repo, workspace, embedding)}, token_budget
+            )
+        if action in {"search", "trace"}:
             if not query or not query.strip():
                 return _dumps(
                     {"ok": False, "action": action, "error": "query is required for memory search"}
                 )
-            memories = search_observations(repo, workspace, query, limit=max_items)
+            from djobs.retrieval import retrieve_memory
+
+            retrieval = retrieve_memory(
+                repo,
+                workspace,
+                query,
+                limit=max_items,
+                embedding=embedding,
+                explain=explain or action == "trace",
+            )
+            memories = retrieval.items
+            extra = {}
+            if action == "trace":
+                extra["trace"] = retrieval.trace
+            if embedding is not None:
+                extra["semantic_index_status"] = retrieval.trace["semantic_index_status"]
+                extra["fallback_reason"] = retrieval.trace["fallback_reason"]
             return _bounded(
                 {
                     "ok": True,
                     "action": action,
                     "workspace": workspace.name,
                     "repo_family_id": workspace.repo_family_id,
-                    "query": query.strip(),
+                    "query": redact_text(query.strip()),
+                    **extra,
                     "memories": memories,
                     "count": len(memories),
                     "stored_content_is_data": True,
@@ -202,18 +314,20 @@ def memory_action(
                 }
             )
         return _dumps({"ok": False, "error": f"unsupported memory action: {action}"})
-    except Exception as exc:
-        from djobs.diagnostics import record_shared_failure
-
-        record_shared_failure("memory.action", exc, context={"action": action})
-        return _dumps(
+    except Exception:
+        # Reads must not turn a provider/storage error into a hidden diagnostic DB write.
+        return _bounded(
             {
                 "ok": False,
                 "action": action,
                 "continue_coding": True,
-                "error": str(exc)[:160] or "djobs memory unavailable",
-            }
+                "error": "memory_unavailable",
+            },
+            token_budget,
         )
+    finally:
+        if repo is not None:
+            repo.close()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -224,6 +338,18 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("list", help="List recent active passive memory")
     search_parser = subparsers.add_parser("search", help="Search this repository's memory")
     search_parser.add_argument("query")
+    search_parser.add_argument("--explain", action="store_true")
+    search_parser.add_argument("--model-dir", help="Explicit local E5 directory; no download")
+    trace_parser = subparsers.add_parser(
+        "trace", help="Explain one read without persisting the query"
+    )
+    trace_parser.add_argument("query")
+    trace_parser.add_argument("--model-dir")
+    reindex_parser = subparsers.add_parser(
+        "reindex", help="Explicit bounded local index maintenance"
+    )
+    reindex_parser.add_argument("--model-dir", required=True)
+    reindex_parser.add_argument("--yes", action="store_true")
     status_parser = subparsers.add_parser("status", help="Update one memory lifecycle state")
     status_parser.add_argument("memory_id")
     status_parser.add_argument(
@@ -247,13 +373,33 @@ def main(argv: list[str] | None = None) -> int:
     clear_parser.add_argument("--yes", action="store_true", help="Confirm destructive clear")
     args = parser.parse_args(argv)
     raw_action = args.action or "list"
-    if raw_action not in {"list", "search", "status", "forget", "clear", "stats", "compact"}:
+    if raw_action not in {
+        "list",
+        "search",
+        "status",
+        "forget",
+        "clear",
+        "stats",
+        "compact",
+        "trace",
+        "reindex",
+    }:
         parser.error(f"unsupported memory action: {raw_action}")
     action = cast(MemoryAction, raw_action)
     raw_status = getattr(args, "status", None)
     memory_status = cast(MemoryStatus | None, raw_status)
+    embedding = None
+    if getattr(args, "model_dir", None):
+        try:
+            from djobs.local_embedding import LocalE5Provider
+
+            embedding = EmbeddingSession(LocalE5Provider(args.model_dir))
+        except Exception:
+            embedding = EmbeddingSession(UnavailableEmbeddingProvider())
     result = memory_action(
         action,
+        embedding=embedding,
+        explain=bool(getattr(args, "explain", False)),
         query=getattr(args, "query", None),
         memory_id=getattr(args, "memory_id", None),
         status=memory_status,
@@ -265,6 +411,6 @@ def main(argv: list[str] | None = None) -> int:
         cwd=os.getcwd(),
         agent_type="cli",
     )
-    print(json.dumps(json.loads(result), ensure_ascii=False, indent=2))
+    print(json.dumps(json.loads(result), ensure_ascii=True, indent=2))
     parsed = json.loads(result)
     return 0 if parsed.get("ok") else 1

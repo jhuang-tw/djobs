@@ -7,13 +7,26 @@ and human review are decided by the application service, never by this store.
 from __future__ import annotations
 
 import hashlib
+import json
+import uuid
 from contextlib import contextmanager
 from typing import Any
 
-from djobs.memory_artifacts import MAX_ARTIFACTS, MAX_SOURCES, ArtifactError
+from djobs.memory_artifacts import (
+    MAX_ARTIFACTS,
+    MAX_SOURCES,
+    ArtifactError,
+    canonical_json,
+    digest,
+    timestamp,
+)
 from djobs.storage.schema import MEMORY_ARTIFACT_SCHEMA_SQL
 
 ARTIFACT_SCHEMA_VERSION = 1
+CAPSULE_SCAN_ROWS = 1024
+CAPSULE_METADATA_CHARS = 16000
+CAPSULE_SCAN_BYTES = 4 * 1024 * 1024
+CAPSULE_SCAN_NODES = 65536
 
 
 def table_exists(cursor: Any, sqlite: bool, table: str) -> bool:
@@ -139,6 +152,173 @@ def prune_observations(
     )
 
 
+def delete_artifacts(cursor: Any, sqlite: bool, artifact_ids: list[str]) -> int:
+    """Delete content without interpreting erased contrary evidence as a resolution.
+
+    Surviving disputed records and their dependents retain their own content but
+    require fresh review. The invalidation receipt names no forgotten endpoint.
+    """
+    if not artifact_ids:
+        return 0
+    placeholder = "?" if sqlite else "%s"
+    marks = ",".join(placeholder for _ in artifact_ids)
+    instant = timestamp()
+    conflict_rows = cursor.execute(
+        "SELECT source_id,target_id FROM memory_relations WHERE kind='contradicts' "
+        f"AND (source_id IN ({marks}) OR target_id IN ({marks})) "
+        f"AND (resolved_at IS NULL OR resolved_at>{placeholder})",
+        (*artifact_ids, *artifact_ids, instant),
+    ).fetchall()
+    doomed = set(artifact_ids)
+    survivors = {
+        str(row[key]) for row in conflict_rows for key in ("source_id", "target_id")
+    } - doomed
+    if survivors:
+        survivor_marks = ",".join(placeholder for _ in survivors)
+        affected = cursor.execute(
+            "WITH RECURSIVE disputed(id) AS ("
+            f"SELECT id FROM memory_artifacts WHERE id IN ({survivor_marks}) "
+            "UNION SELECT s.artifact_id FROM memory_artifact_sources s "
+            "JOIN disputed d ON s.source_artifact_id=d.id) "
+            "SELECT a.id,a.content_hash FROM memory_artifacts a JOIN disputed d ON a.id=d.id "
+            "WHERE a.status='active'",
+            tuple(sorted(survivors)),
+        ).fetchall()
+        for row in affected:
+            artifact_id = str(row["id"])
+            if artifact_id in doomed:
+                continue
+            cursor.execute(
+                "UPDATE memory_artifacts SET status='candidate',"
+                f"revision=revision+1 WHERE id={placeholder}",
+                (artifact_id,),
+            )
+            receipt = {
+                "id": "review_" + uuid.uuid4().hex,
+                "artifact_id": artifact_id,
+                "decision": "invalidate:conflict_source_removed",
+                "reviewer": "djobs-maintenance",
+                "policy": "source-removal-requires-review-v1",
+                "content_hash": row["content_hash"],
+                "created_at": instant,
+                "requires_human_review": True,
+                "execution_authority": False,
+                "integrity_is_authentication": False,
+            }
+            receipt["binding_hash"] = digest(receipt)
+            receipt["receipt_hash"] = digest(receipt)
+            cursor.execute(
+                "INSERT INTO memory_reviews(id,artifact_id,decision,reviewer,policy,"
+                "binding_hash,receipt_json,created_at) VALUES ("
+                + ",".join(placeholder for _ in range(8))
+                + ")",
+                (
+                    receipt["id"],
+                    artifact_id,
+                    receipt["decision"],
+                    receipt["reviewer"],
+                    receipt["policy"],
+                    receipt["binding_hash"],
+                    canonical_json(receipt),
+                    instant,
+                ),
+            )
+    cursor.execute(f"DELETE FROM memory_artifacts WHERE id IN ({marks})", tuple(artifact_ids))
+    return len(artifact_ids)
+
+
+def forget_capsule_copies(
+    cursor: Any, sqlite: bool, memory_id: str, scopes: tuple[str, ...]
+) -> None:
+    """Explicit bounded erasure of copied context, never partial-success cleanup.
+
+    Parse each capsule once and walk reverse source-ID links. Legacy capsules
+    also use conservative same-agent/session invalidation. Limits fail within
+    the caller's transaction, preserving the source and all copies on refusal.
+    """
+    placeholder = "?" if sqlite else "%s"
+    source = cursor.execute(
+        "SELECT id,session_id_hash,agent_type,created_at "
+        f"FROM agent_observations WHERE id={placeholder}",
+        (memory_id,),
+    ).fetchone()
+    if source is None:
+        return
+    marks = ",".join(placeholder for _ in scopes)
+    query = (
+        "SELECT id,session_id_hash,agent_type,created_at,"
+        f"CASE WHEN length(metadata_json)<={placeholder} THEN metadata_json "
+        "ELSE NULL END AS metadata_json "
+        f"FROM agent_observations WHERE correlation_id IN ({marks}) "
+        f"AND event_type='session_capsule' LIMIT {placeholder}"
+    )
+    capsules: list[dict[str, Any]] = []
+    encoded_bytes = 0
+    for item in cursor.execute(query, (CAPSULE_METADATA_CHARS, *scopes, CAPSULE_SCAN_ROWS + 1)):
+        row = dict(item)
+        raw = row["metadata_json"]
+        if not isinstance(raw, str) or len(capsules) >= CAPSULE_SCAN_ROWS:
+            raise ArtifactError("capsule_forget_scan_bound")
+        encoded_bytes += len(raw.encode("utf-8"))
+        if encoded_bytes > CAPSULE_SCAN_BYTES:
+            raise ArtifactError("capsule_forget_scan_bound")
+        capsules.append(row)
+    doomed = {memory_id}
+    reverse: dict[str, set[str]] = {}
+    nodes = 0
+    for capsule in capsules:
+        identity = str(capsule["id"])
+        if (
+            capsule["session_id_hash"] == source["session_id_hash"]
+            and capsule["agent_type"] == source["agent_type"]
+            and timestamp(capsule["created_at"]) >= timestamp(source["created_at"])
+        ):
+            doomed.add(identity)
+        try:
+            metadata = json.loads(capsule["metadata_json"])
+        except (ValueError, TypeError):
+            raise ArtifactError("capsule_forget_provenance_invalid") from None
+        except RecursionError:
+            raise ArtifactError("capsule_forget_scan_bound") from None
+        if not isinstance(metadata, dict):
+            raise ArtifactError("capsule_forget_provenance_invalid")
+        pending: list[Any] = [metadata]
+        linked: set[str] = set()
+        while pending:
+            nodes += 1
+            if nodes > CAPSULE_SCAN_NODES:
+                raise ArtifactError("capsule_forget_scan_bound")
+            value = pending.pop()
+            if isinstance(value, dict):
+                evidence_id = value.get("evidence_id")
+                if isinstance(evidence_id, str):
+                    linked.add(evidence_id)
+                if isinstance(value.get("source_event_ids"), list):
+                    linked.update(
+                        item for item in value["source_event_ids"] if isinstance(item, str)
+                    )
+                pending.extend(item for item in value.values() if isinstance(item, (dict, list)))
+            elif isinstance(value, list):
+                pending.extend(item for item in value if isinstance(item, (dict, list)))
+        for identity_source in linked:
+            reverse.setdefault(identity_source, set()).add(identity)
+    pending_ids = list(doomed)
+    while pending_ids:
+        fresh = reverse.get(pending_ids.pop(), set()) - doomed
+        doomed.update(fresh)
+        pending_ids.extend(fresh)
+    copies = sorted(doomed - {memory_id})
+    for offset in range(0, len(copies), 128):
+        batch = copies[offset : offset + 128]
+        forget_source_dependents(cursor, sqlite, batch)
+        cursor.execute(
+            "DELETE FROM agent_observations WHERE id IN ("
+            + ",".join(placeholder for _ in batch)
+            + ")",
+            tuple(batch),
+        )
+
+
 def forget_source_dependents(cursor: Any, sqlite: bool, observation_ids: list[str]) -> int:
     """Delete derived content, including transitive children, before its source."""
     if not observation_ids or not _artifact_schema_available(cursor, sqlite):
@@ -155,14 +335,7 @@ def forget_source_dependents(cursor: Any, sqlite: bool, observation_ids: list[st
         tuple(observation_ids),
     )
     ids = [str(row["id"]) for row in result.fetchall()]
-    if ids:
-        cursor.execute(
-            "DELETE FROM memory_artifacts WHERE id IN ("
-            + ",".join(placeholder for _ in ids)
-            + ")",
-            tuple(ids),
-        )
-    return len(ids)
+    return delete_artifacts(cursor, sqlite, ids)
 
 
 class ArtifactStore:

@@ -438,7 +438,7 @@ class SQLiteMemoryRepository:
         return [dict(row) for row in rows]
 
     def forget(self, *, memory_id: str, scopes: tuple[str, ...]) -> bool:
-        from djobs.storage.artifacts import forget_source_dependents
+        from djobs.storage.artifacts import forget_capsule_copies, forget_source_dependents
 
         self.ensure_schema()
         placeholders = self._placeholders(scopes)
@@ -450,6 +450,7 @@ class SQLiteMemoryRepository:
             ).fetchone()
             if exists is None:
                 return False
+            forget_capsule_copies(transaction, True, memory_id, scopes)
             forget_source_dependents(transaction, True, [memory_id])
             return (
                 transaction.execute(
@@ -662,7 +663,7 @@ class PostgresMemoryRepository:
         self, record: dict[str, Any], *, marker_event: str, max_observations: int, max_markers: int
     ) -> str:
         self.ensure_schema()
-        with self.repo._conn.cursor() as cur:
+        with self.repo._conn.transaction(), self.repo._conn.cursor() as cur:
             self._insert(cur, record)
             self._prune(
                 cur,
@@ -671,7 +672,6 @@ class PostgresMemoryRepository:
                 max_observations=max_observations,
                 max_markers=max_markers,
             )
-        self.repo._conn.commit()
         return str(record["id"])
 
     def insert_unique_observation(
@@ -829,7 +829,7 @@ class PostgresMemoryRepository:
             return [dict(row) for row in cur.fetchall()]
 
     def forget(self, *, memory_id: str, scopes: tuple[str, ...]) -> bool:
-        from djobs.storage.artifacts import forget_source_dependents
+        from djobs.storage.artifacts import forget_capsule_copies, forget_source_dependents
 
         self.ensure_schema()
         ph = self._placeholders(scopes)
@@ -841,6 +841,7 @@ class PostgresMemoryRepository:
             )
             if cur.fetchone() is None:
                 return False
+            forget_capsule_copies(cur, False, memory_id, scopes)
             forget_source_dependents(cur, False, [memory_id])
             cur.execute("DELETE FROM agent_observations WHERE id=%s", (memory_id,))
             return cur.rowcount == 1

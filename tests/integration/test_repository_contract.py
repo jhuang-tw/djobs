@@ -76,6 +76,13 @@ def _pg_factory(_tmp_path):
     with conn.cursor() as cur:
         cur.execute(PG_SCHEMA_SQL)
     conn.commit()
+    # Typed canonical tables do not depend on observation rows; reset this
+    # explicitly isolated contract fixture without changing runtime deletion rules.
+    with conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('memory_artifacts') AS name")
+        if cur.fetchone()["name"]:
+            cur.execute("TRUNCATE memory_artifacts CASCADE")
+    conn.commit()
     # Truncate for a clean slate
     with conn.cursor() as cur:
         cur.execute(
@@ -88,9 +95,15 @@ def _pg_factory(_tmp_path):
 
 @pytest.fixture(params=["sqlite", "pg"])
 def repo(request, tmp_path):
-    if request.param == "sqlite":
-        return _sqlite_factory(tmp_path)
-    return _pg_factory(tmp_path)
+    repository = _sqlite_factory(tmp_path) if request.param == "sqlite" else _pg_factory(tmp_path)
+    try:
+        yield repository
+    finally:
+        if hasattr(repository, "_conn"):
+            repository._conn.rollback()
+            repository._conn.close()
+        else:
+            repository.close()
 
 
 # ------------------------------------------------------------------
@@ -553,3 +566,138 @@ def test_memory_forget_and_scope_contract(repo):
             (workspace.repo_family_id,),
         )
         assert cursor.fetchone()["n"] == 0
+
+
+def test_typed_temporal_review_and_forget_contract(repo):
+    from types import SimpleNamespace
+
+    from djobs.artifacts import ArtifactMemory
+    from djobs.memory_review import ReviewGate
+    from djobs.observations import forget_observation, record_observation
+    from djobs.storage.memory import memory_repository
+
+    workspace = _memory_scope()
+    agent = SimpleNamespace(agent_type="contract", session_id="typed-memory-contract")
+    record_observation(repo, workspace, agent, "tool_result", "Persistence uses SQLite.")
+    record_observation(
+        repo, workspace, agent, "tool_result", "Persistence migrated to PostgreSQL."
+    )
+    sources = memory_repository(repo).scan_rows(
+        scopes=workspace.memory_correlation_ids, marker_event="context_injected", limit=10
+    )
+    memory = ArtifactMemory(repo, workspace)
+    accepted = []
+    gate = ReviewGate(lambda request: "accept", reviewer="synthetic-contract-reviewer")
+    for text, instant in (
+        ("Persistence uses SQLite.", "2020-01-01T00:00:00Z"),
+        ("Persistence migrated to PostgreSQL.", "2021-01-01T00:00:00Z"),
+    ):
+        source_id = next(row["id"] for row in sources if row["summary"] == text)
+        artifact = memory.propose(
+            {
+                "kind": "fact",
+                "title": "Persistence",
+                "abstract": text,
+                "sources": [source_id],
+                "valid_from": instant,
+            }
+        )["artifact"]
+        assert memory.review(artifact["id"], gate)["activated"]
+        accepted.append((artifact["id"], source_id))
+    old, new = accepted
+    assert memory.relate(new[0], old[0], "supersedes", at="2021-01-01T00:00:00Z", gate=gate)[
+        "changed"
+    ]
+    assert [item["id"] for item in memory.list_artifacts()["memories"]] == [new[0]]
+    assert [
+        item["id"] for item in memory.list_artifacts(at="2020-06-01T00:00:00Z")["memories"]
+    ] == [old[0]]
+    assert forget_observation(repo, workspace, new[1])
+    assert memory.list_artifacts()["memories"] == []
+    assert memory.get(old[0])["status"] == "superseded"
+
+
+def test_typed_contradiction_and_compaction_contract(repo):
+    from types import SimpleNamespace
+
+    from djobs.artifacts import ArtifactMemory
+    from djobs.memory_review import ReviewGate
+    from djobs.observations import record_observation
+    from djobs.storage.memory import memory_repository
+
+    workspace = _memory_scope()
+    agent = SimpleNamespace(agent_type="contract", session_id="typed-conflict-contract")
+    memory = ArtifactMemory(repo, workspace)
+    gate = ReviewGate(lambda request: "accept", reviewer="synthetic-contract-reviewer")
+    ids = []
+    adapter = memory_repository(repo)
+    for text in ("Billing owns account deletion", "Accounts owns account deletion"):
+        record_observation(repo, workspace, agent, "tool_result", text)
+        original = next(
+            row
+            for row in adapter.scan_rows(
+                scopes=workspace.memory_correlation_ids, marker_event="context_injected", limit=10
+            )
+            if row["summary"] == text
+        )
+        artifact = memory.propose(
+            {
+                "kind": "fact",
+                "title": "Ownership",
+                "abstract": text,
+                "sources": [original["id"]],
+                "valid_from": "2020-01-01T00:00:00Z",
+            }
+        )["artifact"]
+        memory.review(artifact["id"], gate)
+        ids.append(artifact["id"])
+        record_observation(repo, workspace, agent, "tool_result", text)
+    preview = adapter.compact(scopes=workspace.memory_correlation_ids, keep_recent=1, dry_run=True)
+    assert preview["protected_sources"] == 2
+    assert preview["total"] == 0
+    memory.relate(ids[0], ids[1], "contradicts", at="2021-01-01T00:00:00Z", gate=gate)
+    result = memory.list_artifacts(query="Billing")
+    assert result["ambiguous"] and not result["memories"]
+
+
+def test_passive_pg_read_does_not_leak_or_commit_outer_transaction(repo):
+    if not hasattr(repo, "_conn"):
+        return
+    from psycopg.pq import TransactionStatus
+
+    from djobs.storage.memory import memory_repository
+
+    adapter = memory_repository(repo)
+    workspace = _memory_scope()
+    assert repo._conn.info.transaction_status == TransactionStatus.IDLE
+    adapter.scan_rows(
+        scopes=workspace.memory_correlation_ids, marker_event="context_injected", limit=10
+    )
+    assert repo._conn.info.transaction_status == TransactionStatus.IDLE
+    repo._conn.execute("CREATE TEMP TABLE caller_transaction(n INTEGER)")
+    repo._conn.execute("INSERT INTO caller_transaction VALUES (7)")
+    adapter.stats(scopes=workspace.memory_correlation_ids)
+    assert repo._conn.info.transaction_status == TransactionStatus.INTRANS
+    repo._conn.rollback()
+    assert (
+        repo._conn.execute("SELECT to_regclass('caller_transaction') AS t").fetchone()["t"] is None
+    )
+    repo._conn.rollback()
+
+
+def test_verified_learning_workflow_contract(repo):
+    from scripts.benchmark_verified_learning import run
+
+    result = run(repo)
+    assert result["pass"]
+    assert result["before"]["active_skills"] == 0
+    assert result["after"]["active_skills"] == 1
+    assert result["model_calls"] == 0
+
+
+def test_context_projection_workflow_contract(repo):
+    from scripts.benchmark_temporal_memory import run_projection
+
+    result = run_projection(repo)
+    assert result["pass"]
+    assert result["after_project_selected"] == 5

@@ -291,8 +291,8 @@ The genuine v0.20.1 SQLite migration fixture was created using unmodified archiv
 synthetic content only. Forward migration, replay, interrupted schema creation, future-schema
 refusal, provenance hashes, deletion, and real PostgreSQL parity have separate tests. Component
 schema `retrieval=1` is installed only by explicit reindex (`migrations/011_memory_retrieval.sql`).
-No typed temporal fact/lesson/skill lifecycle, cross-harness session import, external memory runtime,
-or Memory Explorer is implied by this retrieval milestone.
+Typed temporal facts are described below. Verified experience/skill constructors, cross-harness
+session import, external memory runtimes and Memory Explorer are separate milestones.
 
 ### Method provenance and boundaries
 
@@ -324,3 +324,109 @@ SQLite runtime health must be assessed separately from package test success. SQL
 3.51.3, with backports including 3.50.7 and 3.44.6. The initial test interpreter's SQLite 3.50.4 is
 not that patched runtime. The candidate does not silently upgrade a user's Python/SQLite or change
 LIVE installation. Production concurrency review must include the actual bundled SQLite version.
+
+
+## Source-bound temporal facts
+
+`djobs memory propose --file candidate.json` stores a bounded candidate fact with title, abstract,
+source observation or artifact IDs, and optional observed_at/valid_from dates. It does not activate
+it. Repeating the same normalized proposal and pinned sources returns the existing record, including
+its rejected status. Explicitly different validity or source evidence creates a new candidate.
+
+`djobs memory review ID` previews exact content and sources. `--apply` requires an interactive
+terminal and an exact review hash typed by the user. The Python facade accepts a trusted product
+ReviewGate callback. Neither an agent-supplied authority label, confirm flag, nor model confidence
+can activate a candidate through MCP; MCP review and relate only return previews. The callback
+boundary is not a sandbox against arbitrary local code with access to the user's database.
+
+Accepted facts use a source-bound immutable content hash. `memory relate NEW OLD supersedes --at TIME`
+previews replacement, and interactive `--apply` records the relation without changing raw source
+text. `memory facts --at TIME` selects valid historical facts; a current query excludes superseded
+facts. `memory show ID --depth 2` inspects the retained provenance and review receipt. Content depth
+0/1/2 and resume/evidence/audit exposure are distinct choices.
+
+Unresolved contradictions exclude both claims and their dependent conclusions from normal resume,
+including when only a descendant matches the query. The response retains an ambiguity flag even
+under a very small token budget. Audit can inspect the conflicting retained evidence; it cannot
+recover deleted content. A historical descendant is eligible only when its source artifacts were
+valid at the requested instant. Raw-observation lifecycle metadata has no historical event journal,
+so a currently ineligible raw source remains conservatively excluded even from historical claims.
+
+Reads use one database snapshot across artifact, source, relation and review queries. PostgreSQL
+readers require repeatable-read or serializable isolation if the caller already owns a transaction;
+the service never silently commits or rolls back that caller's work. Legacy passive reads close
+their own transactions. Source loss suppresses the complete joint claim and dependent conclusions;
+remaining evidence requires a new proposal/review rather than silently rewriting accepted content.
+Routine compaction protects active accepted source chains. Explicit forget still removes content.
+
+The additive component schema is `artifacts=1` in `migrations/012_memory_artifacts.sql`. Reads do not
+install it. The bounded native store holds at most 256 artifacts per family, 16 source references
+per artifact and 16 provenance levels. Unsupported future schemas fail closed for typed memory
+while raw recall remains available. See the canonical preflight in CONTRIBUTING.md; the original
+`python scripts/benchmark_temporal_memory.py` adds an offline before/after temporal workflow fixture,
+not a model-accuracy, generation-quality or production acceptance claim.
+
+
+## Verified experiences, lessons and reviewed skills
+
+`memory experience --file experience.json` previews a source-bound outcome. The document contains
+kind=experience, title, abstract, source episode IDs, and details: objective, method, context,
+outcome (success/failure), failure_reason, changed_paths, checks, terminal_effect. Each check names
+source_id, check and evidence; that source must be a member of a selected episode. No experience
+is stored until `--apply` obtains explicit interactive human verification or a trusted product
+ReviewGate accepts the exact preview and source state. A supplied exit-code, success text, model
+vote, session stop, or transcript never grants verification. This version supports the explicit
+human/product acceptance route, not authenticated external check-receipt verification.
+
+A verified failure is retained as failure, never silently promoted to success. Lessons require
+verified experiences and conditions, proposed generalization, uncertainty and boundaries. Skill
+candidates require verified experience sources and at least one verified success; their details
+include name, description, semantic version, when_to_use, when_not_to_use, preconditions, steps,
+verification, failure_modes, rollback and boundaries. Propose stores candidates only. Two successful
+experiences do not activate a lesson or skill. Every activation requires another explicit review.
+
+The stored record type remains immutable `skill_candidate`. After human acceptance its public
+effective type is `skill`, with record_type retained for audit. IDs, source links and content hashes
+are not rewritten on promotion. `memory show ID --depth 2` includes the human-readable Markdown.
+The Python facade offers verify_experience, propose_lesson, propose_skill, active_skills and
+export_skill. MCP adds only actions to the existing memory tool. Experience/review/export actions
+through MCP are previews; JSON confirm flags cannot impersonate the trusted human review gate.
+
+`djobs memory export SKILL_ID exports/skill.md` previews a new-file Git diff. `--apply` requires exact
+interactive review and rechecks sources and destination. Only an active accepted skill can export,
+only to a new Markdown file in an existing real directory inside the chosen Git worktree. Existing
+files, traversal, symlink/reparse parents, reserved Windows names, alternate streams, active agent
+prompt directories and AGENTS.md/CLAUDE.md are refused. Export does not stage, commit, install,
+execute, autosync or change canonical memory. An explicitly exported file is a user-owned copy;
+forgetting canonical memory does not silently delete that external copy. This API is not an OS
+sandbox against privileged concurrent directory changes.
+
+The original `scripts/benchmark_verified_learning.py` exercises preview/reject/verify, two-experience
+candidate lessons, candidate-versus-accepted skill state, preserved content identity and source
+forgetting. Its synthetic review callbacks validate plumbing, not actual user acceptance or model
+accuracy. SQLite and PostgreSQL run the same workflow in repository contract tests.
+
+
+## Inspectable context projection
+
+`djobs memory tree` browses a virtual repository context tree without creating files. Supported
+categories are episodes, facts, experiences, lessons and skills. Candidate skills and their accepted
+effective skill type retain the same canonical URI. No unsupported resource/import folder is
+presented as indexed data. Each shown node has a repository-bound `djobs://repo/...` URI; `memory show
+URI --depth 1` loads its overview, while `--depth 2` explicitly exposes retained details, provenance,
+relations and reviews. Wrong repository/category, noncanonical escaping and traversal are rejected.
+
+L0 is a bounded abstract; L1 adds overview, validity and source counts; L2 adds detailed evidence.
+These are content depths, independent of resume/evidence/audit/candidates exposure. Normal current
+queries still exclude unreviewed or unsupported artifacts and unresolved conflicts. An old saved
+URI does not resurrect a forgotten source. Tree query document fields are uri/depth/at/exposure;
+MCP `memory(action="trace", document={"plane":"artifacts"}, query=...)` adds a non-persisted typed
+selection trace with a query hash, candidate/filter counts, selected IDs and projection count.
+No full trace is added to normal resume. The five MCP tool names remain unchanged.
+
+Only the selected bounded records are projected after L0 title/abstract matching and source checks.
+The native store still reads its bounded source-validating snapshot, including full content for hash
+validation. This milestone reduces projection work and returned bytes, not physical database I/O.
+`python scripts/benchmark_temporal_memory.py --projection` measures this distinction explicitly with
+the same five records at L0/L1/L2 and 20 candidate records. The read-through tree is not a second
+memory authority, disk mirror, graph database, or prompt installation mechanism.

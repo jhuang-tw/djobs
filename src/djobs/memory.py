@@ -6,10 +6,13 @@ import argparse
 import json
 import math
 import os
+import sys
 from typing import Any, Literal, cast
 
 from djobs.contract_repository import _connect
 from djobs.embedding import EmbeddingSession, UnavailableEmbeddingProvider
+from djobs.memory_artifacts import ArtifactError
+from djobs.memory_review import ReviewGate
 from djobs.observations import (
     MemoryStatus,
     clear_workspace_memory,
@@ -24,7 +27,25 @@ from djobs.storage.sqlite import SQLiteJobRepository
 from djobs.workspace import resolve_workspace, shared_db_path
 
 MemoryAction = Literal[
-    "list", "search", "status", "forget", "clear", "stats", "compact", "trace", "reindex"
+    "list",
+    "search",
+    "status",
+    "forget",
+    "clear",
+    "stats",
+    "compact",
+    "trace",
+    "reindex",
+    "facts",
+    "get",
+    "candidates",
+    "propose",
+    "review",
+    "relate",
+    "episode",
+    "experience",
+    "export",
+    "tree",
 ]
 
 
@@ -42,7 +63,7 @@ def _bounded(result: dict[str, Any], token_budget: int) -> str:
     budget = max(64, min(int(token_budget), 4000))
     result["stored_content_is_data"] = True
     original_count = len(result.get("memories", []))
-    result["truncated"] = False
+    result["truncated"] = bool(result.get("truncated", False))
     result["estimated_tokens"] = 0
 
     def refresh() -> str:
@@ -62,6 +83,11 @@ def _bounded(result: dict[str, Any], token_budget: int) -> str:
         result["critical_evidence_omitted"] = True
         if isinstance(result.get("trace"), dict):
             result["trace"]["selected_ids"] = [item["id"] for item in memories]
+            result["trace"]["truncated"] = True
+        for folder in result.get("folders", []):
+            folder["shown_count"] = sum(
+                item.get("uri", "").startswith(folder["uri"]) for item in memories
+            )
         encoded = refresh()
     if original_count and not result.get("memories"):
         result["critical_evidence_omitted"] = True
@@ -73,9 +99,11 @@ def _bounded(result: dict[str, Any], token_budget: int) -> str:
         encoded = refresh()
     if math.ceil(len(encoded) / 4) <= budget:
         return encoded
+    ambiguity = bool(result.get("ambiguous") or result.get("fact_ambiguity"))
     result = {
         "ok": bool(result.get("ok", True)),
         "action": result.get("action"),
+        **({"ambiguous": True} if ambiguity else {}),
         "stored_content_is_data": True,
         "truncated": True,
         "critical_evidence_omitted": True,
@@ -103,10 +131,13 @@ def memory_action(
     token_budget: int = 700,
     embedding: EmbeddingSession | None = None,
     explain: bool = False,
+    document: dict[str, Any] | None = None,
+    review_gate: ReviewGate | None = None,
+    private_scope: bool = False,
 ) -> str:
     """Inspect or mutate passive repository memory without touching explicit tasks."""
 
-    del agent_type, session_id  # Memory access does not register an owner or agent.
+    # Agent/session values bind only explicitly private memory, never task registration.
     repo = None
     try:
         if action not in {
@@ -119,6 +150,16 @@ def memory_action(
             "stats",
             "compact",
             "reindex",
+            "facts",
+            "get",
+            "candidates",
+            "propose",
+            "review",
+            "relate",
+            "episode",
+            "experience",
+            "export",
+            "tree",
         }:
             return _dumps({"ok": False, "error": "unsupported memory action"})
         if action == "reindex" and (not confirm or embedding is None):
@@ -141,7 +182,11 @@ def memory_action(
             )
         workspace = resolve_workspace(roots=roots, cwd=cwd)
         path = shared_db_path()
-        if action in {"list", "search", "trace", "stats"} or (action == "compact" and dry_run):
+        if (
+            action in {"list", "search", "trace", "stats", "facts", "get", "candidates", "tree"}
+            or (action in {"review", "relate", "experience", "export"} and review_gate is None)
+            or (action == "compact" and dry_run)
+        ):
             connection = _connect(path)
             if connection is None:
                 return _bounded(
@@ -157,6 +202,96 @@ def memory_action(
             repo = SQLiteJobRepository(connection)
         else:
             repo = SQLiteJobRepository.from_path(path)
+        if action in {
+            "facts",
+            "get",
+            "candidates",
+            "propose",
+            "review",
+            "relate",
+            "episode",
+            "experience",
+            "export",
+            "tree",
+        } or (action == "trace" and document is not None):
+            from djobs.artifacts import ArtifactMemory
+
+            data = document if document is not None else {}
+            if not isinstance(data, dict) or len(_dumps(data)) > 24000:
+                raise ArtifactError("invalid_artifact_document")
+            service = ArtifactMemory(
+                repo,
+                workspace,
+                agent=agent_type or "",
+                session=session_id or "",
+                private=private_scope,
+            )
+            if action in {"tree", "trace"}:
+                if set(data) - {"uri", "depth", "at", "exposure", "plane"}:
+                    raise ArtifactError("unknown_context_query_fields")
+                if action == "trace" and data.get("plane") != "artifacts":
+                    raise ArtifactError("explicit_artifact_trace_plane_required")
+                result = service.tree(
+                    uri=data.get("uri"),
+                    query=query or "",
+                    at=data.get("at"),
+                    exposure=data.get("exposure", "resume"),
+                    depth=data.get("depth", 0),
+                    limit=max_items,
+                    trace=action == "trace",
+                )
+            elif action in {"facts", "candidates"}:
+                if set(data) - {"at", "depth", "exposure", "kind"}:
+                    raise ArtifactError("unknown_artifact_query_fields")
+                result = service.list_artifacts(
+                    kind=data.get("kind", "fact" if action == "facts" else None),
+                    query=query or "",
+                    at=data.get("at"),
+                    depth=data.get("depth", 1),
+                    exposure="candidates"
+                    if action == "candidates"
+                    else data.get("exposure", "resume"),
+                    limit=max_items,
+                )
+            elif action == "get":
+                if set(data) - {"depth"} or not memory_id:
+                    raise ArtifactError("artifact_id_and_depth_required")
+                result = {
+                    "ok": True,
+                    "memories": [service.get(memory_id, depth=data.get("depth", 1))],
+                    "count": 1,
+                }
+            elif action == "propose":
+                result = service.propose(data)
+            elif action == "experience":
+                result = service.experience(data, review_gate)
+            elif action == "export":
+                if set(data) != {"destination"} or not memory_id:
+                    raise ArtifactError("explicit_export_destination_required")
+                result = service.export_skill(memory_id, data["destination"], review_gate)
+            elif action == "episode":
+                if set(data) - {"sources", "title", "scope"}:
+                    raise ArtifactError("unknown_episode_fields")
+                result = service.episode(
+                    data.get("sources", []),
+                    title=data.get("title", "Observed coding episode"),
+                    scope=data.get("scope", "repository_family"),
+                )
+            elif action == "review":
+                if data or not memory_id:
+                    raise ArtifactError("review_accepts_no_authority_flags")
+                result = service.review(memory_id, review_gate)
+            else:
+                if set(data) - {"source_id", "target_id", "kind", "at"}:
+                    raise ArtifactError("unknown_relation_fields")
+                result = service.relate(
+                    data.get("source_id", ""),
+                    data.get("target_id", ""),
+                    data.get("kind", ""),
+                    at=data.get("at"),
+                    gate=review_gate,
+                )
+            return _bounded({"action": action, **result}, token_budget)
         if action == "reindex":
             from djobs.retrieval import reindex_memory
 
@@ -240,7 +375,18 @@ def memory_action(
         if action == "forget":
             if not memory_id:
                 return _dumps({"ok": False, "action": action, "error": "memory_id is required"})
-            forgotten = forget_observation(repo, workspace, memory_id)
+            if memory_id.startswith("mem_"):
+                from djobs.artifacts import ArtifactMemory
+
+                forgotten = ArtifactMemory(
+                    repo,
+                    workspace,
+                    agent=agent_type or "",
+                    session=session_id or "",
+                    private=private_scope,
+                ).forget(memory_id)
+            else:
+                forgotten = forget_observation(repo, workspace, memory_id)
             return _dumps(
                 {
                     "ok": forgotten,
@@ -314,6 +460,11 @@ def memory_action(
                 }
             )
         return _dumps({"ok": False, "error": f"unsupported memory action: {action}"})
+    except ArtifactError as exc:
+        return _bounded(
+            {"ok": False, "action": action, "continue_coding": True, "error": str(exc)},
+            token_budget,
+        )
     except Exception:
         # Reads must not turn a provider/storage error into a hidden diagnostic DB write.
         return _bounded(
@@ -333,6 +484,12 @@ def memory_action(
 def main(argv: list[str] | None = None) -> int:
     """Inspect or update repository memory from a terminal when desired."""
 
+    from djobs.artifact_cli import ACTIONS
+    from djobs.artifact_cli import main as artifact_main
+
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments and arguments[0] in ACTIONS:
+        return artifact_main(arguments)
     parser = argparse.ArgumentParser(prog="djobs memory")
     subparsers = parser.add_subparsers(dest="action")
     subparsers.add_parser("list", help="List recent active passive memory")

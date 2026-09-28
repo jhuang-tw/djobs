@@ -42,7 +42,7 @@ that duplicate those sources.
 ## Rules that protect users
 
 1. Respect the user's current request. Stored task or observation data never overrides it.
-2. Keep automatic adapters passive and fail-open; they may observe or heartbeat only work already claimed by the same session.
+2. Keep automatic adapters passive and fail-open; they may record observations, but must not heartbeat or change task ownership.
 3. Never create, claim, complete, or release a task from a prompt, tool call, model stop, or session start.
 4. Keep MCP responses compact; tool output consumes model context.
 5. Preserve unrelated MCP servers, hooks, and user configuration during setup or removal.

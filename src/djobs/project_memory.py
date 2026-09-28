@@ -15,6 +15,7 @@ from djobs.handoff import handoff as _handoff
 from djobs.handoff import sync_workspace as _sync_workspace
 from djobs.memory import MemoryAction
 from djobs.memory import memory_action as _memory_action
+from djobs.memory_review import ReviewGate
 from djobs.observations import MemoryStatus
 
 
@@ -106,6 +107,145 @@ class ProjectMemory:
     def reindex_memory(self, *, confirm: bool = False) -> str:
         """Explicitly rebuild the configured derived index; never activate memory."""
         return self._memory("reindex", confirm=confirm)
+
+    def propose_fact(
+        self,
+        *,
+        title: str,
+        abstract: str,
+        sources: list[Any],
+        overview: str = "",
+        details: dict[str, Any] | None = None,
+        valid_from: str | None = None,
+        scope: str = "repository_family",
+    ) -> str:
+        """Create a source-bound candidate, never an accepted fact."""
+        return self._memory(
+            "propose",
+            document={
+                "kind": "fact",
+                "title": title,
+                "abstract": abstract,
+                "sources": sources,
+                "overview": overview,
+                "details": details or {},
+                "valid_from": valid_from,
+                "scope": scope,
+            },
+        )
+
+    def facts(
+        self,
+        query: str = "",
+        *,
+        at: str | None = None,
+        exposure: str = "resume",
+        depth: int = 1,
+        max_items: int = 8,
+        token_budget: int = 700,
+    ) -> str:
+        """Read current or historical accepted facts with explicit ambiguity."""
+        return self._memory(
+            "facts",
+            query=query,
+            document={"at": at, "depth": depth, "exposure": exposure},
+            max_items=max_items,
+            token_budget=token_budget,
+        )
+
+    def memory_candidates(self, *, token_budget: int = 700) -> str:
+        return self._memory("candidates", token_budget=token_budget)
+
+    def get_memory(self, memory_id: str, *, depth: int = 1, token_budget: int = 700) -> str:
+        return self._memory(
+            "get", memory_id=memory_id, document={"depth": depth}, token_budget=token_budget
+        )
+
+    def review_memory(
+        self, memory_id: str, *, gate: ReviewGate | None = None, token_budget: int = 2000
+    ) -> str:
+        """Preview by default; only a trusted product's human review gate may accept."""
+        return self._memory(
+            "review", memory_id=memory_id, review_gate=gate, token_budget=token_budget
+        )
+
+    def relate_facts(
+        self,
+        source_id: str,
+        target_id: str,
+        kind: str,
+        *,
+        at: str | None = None,
+        gate: ReviewGate | None = None,
+        token_budget: int = 2000,
+    ) -> str:
+        return self._memory(
+            "relate",
+            document={"source_id": source_id, "target_id": target_id, "kind": kind, "at": at},
+            review_gate=gate,
+            token_budget=token_budget,
+        )
+
+    def record_episode(self, sources: list[str], *, title: str = "Observed coding episode") -> str:
+        return self._memory("episode", document={"sources": sources, "title": title})
+
+    def memory_tree(
+        self,
+        *,
+        uri: str | None = None,
+        query: str = "",
+        depth: int = 0,
+        exposure: str = "resume",
+        token_budget: int = 1500,
+    ) -> str:
+        return self._memory(
+            "tree",
+            query=query,
+            token_budget=token_budget,
+            document={"uri": uri, "depth": depth, "exposure": exposure},
+        )
+
+    def trace_artifacts(self, query: str, *, token_budget: int = 2000) -> str:
+        return self._memory(
+            "trace", query=query, token_budget=token_budget, document={"plane": "artifacts"}
+        )
+
+    def verify_experience(
+        self,
+        document: dict[str, Any],
+        *,
+        gate: ReviewGate | None = None,
+        token_budget: int = 3000,
+    ) -> str:
+        """Preview only unless the trusted product obtains explicit outcome verification."""
+        return self._memory(
+            "experience", document=document, review_gate=gate, token_budget=token_budget
+        )
+
+    def propose_lesson(self, document: dict[str, Any]) -> str:
+        return self._memory("propose", document={**document, "kind": "lesson"})
+
+    def propose_skill(self, document: dict[str, Any]) -> str:
+        return self._memory("propose", document={**document, "kind": "skill_candidate"})
+
+    def active_skills(self, *, token_budget: int = 1000) -> str:
+        return self._memory("facts", document={"kind": "skill"}, token_budget=token_budget)
+
+    def export_skill(
+        self,
+        memory_id: str,
+        destination: str,
+        *,
+        gate: ReviewGate | None = None,
+        token_budget: int = 3000,
+    ) -> str:
+        return self._memory(
+            "export",
+            memory_id=memory_id,
+            document={"destination": destination},
+            review_gate=gate,
+            token_budget=token_budget,
+        )
 
     def update_memory_status(
         self,

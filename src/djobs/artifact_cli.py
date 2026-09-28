@@ -22,6 +22,7 @@ ACTIONS = frozenset(
         "episode",
         "experience",
         "export",
+        "tree",
     }
 )
 
@@ -62,6 +63,15 @@ def main(argv: list[str]) -> int:
     facts.add_argument("--at")
     facts.add_argument("--audit", action="store_true")
     facts.add_argument("--depth", choices=[0, 1, 2], type=int, default=1)
+    tree = sub.add_parser(
+        "tree", help="Browse repository-bound context without making a disk copy"
+    )
+    tree.add_argument("query", nargs="?", default="")
+    tree.add_argument("--uri")
+    tree.add_argument("--depth", choices=[0, 1, 2], type=int, default=0)
+    tree.add_argument(
+        "--exposure", choices=["resume", "evidence", "audit", "candidates"], default="resume"
+    )
     show = sub.add_parser("show", help="Inspect one artifact at an explicit content depth")
     show.add_argument("memory_id")
     show.add_argument("--depth", choices=[0, 1, 2], type=int, default=1)
@@ -100,6 +110,8 @@ def main(argv: list[str]) -> int:
                 "depth": args.depth,
                 "exposure": "audit" if args.audit else "resume",
             }
+        elif args.action == "tree":
+            document = {"uri": args.uri, "depth": args.depth, "exposure": args.exposure}
         elif args.action == "show":
             document = {"depth": args.depth}
         elif args.action == "export":

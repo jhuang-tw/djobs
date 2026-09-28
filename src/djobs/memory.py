@@ -45,6 +45,7 @@ MemoryAction = Literal[
     "episode",
     "experience",
     "export",
+    "tree",
 ]
 
 
@@ -82,6 +83,11 @@ def _bounded(result: dict[str, Any], token_budget: int) -> str:
         result["critical_evidence_omitted"] = True
         if isinstance(result.get("trace"), dict):
             result["trace"]["selected_ids"] = [item["id"] for item in memories]
+            result["trace"]["truncated"] = True
+        for folder in result.get("folders", []):
+            folder["shown_count"] = sum(
+                item.get("uri", "").startswith(folder["uri"]) for item in memories
+            )
         encoded = refresh()
     if original_count and not result.get("memories"):
         result["critical_evidence_omitted"] = True
@@ -153,6 +159,7 @@ def memory_action(
             "episode",
             "experience",
             "export",
+            "tree",
         }:
             return _dumps({"ok": False, "error": "unsupported memory action"})
         if action == "reindex" and (not confirm or embedding is None):
@@ -176,7 +183,7 @@ def memory_action(
         workspace = resolve_workspace(roots=roots, cwd=cwd)
         path = shared_db_path()
         if (
-            action in {"list", "search", "trace", "stats", "facts", "get", "candidates"}
+            action in {"list", "search", "trace", "stats", "facts", "get", "candidates", "tree"}
             or (action in {"review", "relate", "experience", "export"} and review_gate is None)
             or (action == "compact" and dry_run)
         ):
@@ -205,7 +212,8 @@ def memory_action(
             "episode",
             "experience",
             "export",
-        }:
+            "tree",
+        } or (action == "trace" and document is not None):
             from djobs.artifacts import ArtifactMemory
 
             data = document if document is not None else {}
@@ -218,7 +226,21 @@ def memory_action(
                 session=session_id or "",
                 private=private_scope,
             )
-            if action in {"facts", "candidates"}:
+            if action in {"tree", "trace"}:
+                if set(data) - {"uri", "depth", "at", "exposure", "plane"}:
+                    raise ArtifactError("unknown_context_query_fields")
+                if action == "trace" and data.get("plane") != "artifacts":
+                    raise ArtifactError("explicit_artifact_trace_plane_required")
+                result = service.tree(
+                    uri=data.get("uri"),
+                    query=query or "",
+                    at=data.get("at"),
+                    exposure=data.get("exposure", "resume"),
+                    depth=data.get("depth", 0),
+                    limit=max_items,
+                    trace=action == "trace",
+                )
+            elif action in {"facts", "candidates"}:
                 if set(data) - {"at", "depth", "exposure", "kind"}:
                     raise ArtifactError("unknown_artifact_query_fields")
                 result = service.list_artifacts(

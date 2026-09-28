@@ -144,11 +144,104 @@ def run() -> dict:
             repo.close()
 
 
+def run_projection(repository=None) -> dict:
+    """Measure projection work and payload depths, not avoided database reads."""
+    from unittest.mock import patch
+
+    from djobs.artifacts import ArtifactView
+    from djobs.memory_artifacts import digest
+    from djobs.storage.memory import memory_repository
+
+    with tempfile.TemporaryDirectory(prefix="djobs-projection-benchmark-") as directory:
+        root = Path(directory)
+        repo = repository or SQLiteJobRepository.from_path(root / "memory.db")
+        workspace = Workspace(
+            root=str(root),
+            workspace_id="repo:projection-benchmark",
+            checkout_id="repo:projection-benchmark",
+            repo_family_id="family:projection-benchmark",
+            correlation_ids=("repo:projection-benchmark",),
+            memory_correlation_ids=("family:projection-benchmark", "repo:projection-benchmark"),
+            source="synthetic",
+        )
+        memory = ArtifactMemory(repo, workspace)
+        gate = ReviewGate(lambda request: "accept", reviewer="synthetic-projection-fixture")
+        try:
+            record_observation(
+                repo,
+                workspace,
+                SimpleNamespace(agent_type="fixture", session_id="projection"),
+                "tool_result",
+                "Synthetic context projection evidence",
+            )
+            source = memory_repository(repo).scan_rows(
+                scopes=workspace.memory_correlation_ids, marker_event="context_injected", limit=5
+            )[0]["id"]
+            for index in range(20):
+                item = memory.propose(
+                    {
+                        "kind": "fact",
+                        "title": f"Parser rule {index}",
+                        "abstract": "Bounded parser constraint",
+                        "overview": "L1 operational context " * 20,
+                        "details": {"evidence": "L2 full source detail " * 200},
+                        "sources": [source],
+                        "valid_from": "2020-01-01T00:00:00Z",
+                    }
+                )["artifact"]["id"]
+                memory.review(item, gate)
+            with memory.store.transaction() as cursor:
+                before = digest(memory._view(cursor).data)
+            sizes = {}
+            for depth in (0, 1, 2):
+                data = memory.list_artifacts(depth=depth, limit=5)
+                sizes[str(depth)] = len(json.dumps(data["memories"], ensure_ascii=False).encode())
+            calls = []
+            original = ArtifactView.project
+
+            def project(view, artifact_id, **kwargs):
+                calls.append(artifact_id)
+                return original(view, artifact_id, **kwargs)
+
+            with patch.object(ArtifactView, "project", project):
+                selected = memory.tree(limit=5, trace=True)
+            first = selected["memories"][0]
+            same = memory.get(first["uri"], depth=2)["id"] == first["id"]
+            with memory.store.transaction() as cursor:
+                after = digest(memory._view(cursor).data)
+            checks = {
+                "only_selected_nodes_projected": len(calls) == 5,
+                "all_candidates_considered": selected["trace"]["candidate_counts"]["eligible"]
+                == 20,
+                "L0_smaller_than_half_L2": sizes["0"] < sizes["2"] * 0.5,
+                "distinct_depths": sizes["0"] < sizes["1"] < sizes["2"],
+                "uri_preserves_identity": same,
+                "read_only": before == after,
+            }
+            return {
+                "benchmark": "synthetic-context-projection-v1",
+                "checks": checks,
+                "pass": all(checks.values()),
+                "payload_bytes_by_depth": sizes,
+                "before_project_every_candidate": 20,
+                "after_project_selected": len(calls),
+                "storage_loading": "eager bounded source-validating snapshot; not lazy disk IO",
+                "model_calls": 0,
+                "external_network_calls": 0,
+                "generation": "not_run",
+                "answer_judge": "not_run",
+            }
+        finally:
+            if repository is None:
+                repo.close()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--projection", action="store_true")
     args = parser.parse_args()
-    result = run()
+    result = run_projection() if args.projection else run()
     encoded = json.dumps(result, ensure_ascii=True, indent=2)
     if args.output:
         args.output.write_text(encoded + "\n", encoding="utf-8")

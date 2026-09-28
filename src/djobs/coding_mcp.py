@@ -302,6 +302,7 @@ async def memory(
         "episode",
         "experience",
         "export",
+        "tree",
     ] = "list",
     query: str | None = None,
     summary: str | None = None,
@@ -317,6 +318,8 @@ async def memory(
 ) -> str:
     """Inspect passive observations and source-bound typed memory.
 
+    tree browses L0 context URIs; get accepts a repository-bound URI or ID at explicit depth.
+    trace with document.plane=artifacts explains typed selection without persisting the query.
     list/search return raw evidence; facts returns accepted current facts or uses document.at
     for historical validity. candidates/propose never activate content. get uses memory_id and
     document.depth (0/1/2). review and relate only preview through MCP.

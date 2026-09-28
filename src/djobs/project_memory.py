@@ -189,6 +189,27 @@ class ProjectMemory:
     def record_episode(self, sources: list[str], *, title: str = "Observed coding episode") -> str:
         return self._memory("episode", document={"sources": sources, "title": title})
 
+    def memory_tree(
+        self,
+        *,
+        uri: str | None = None,
+        query: str = "",
+        depth: int = 0,
+        exposure: str = "resume",
+        token_budget: int = 1500,
+    ) -> str:
+        return self._memory(
+            "tree",
+            query=query,
+            token_budget=token_budget,
+            document={"uri": uri, "depth": depth, "exposure": exposure},
+        )
+
+    def trace_artifacts(self, query: str, *, token_budget: int = 2000) -> str:
+        return self._memory(
+            "trace", query=query, token_budget=token_budget, document={"plane": "artifacts"}
+        )
+
     def verify_experience(
         self,
         document: dict[str, Any],

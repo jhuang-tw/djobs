@@ -27,6 +27,7 @@ from djobs.memory_artifacts import (
 )
 from djobs.memory_learning import effective_type, learning_source_checks, skill_markdown
 from djobs.memory_policy import lexical_terms, metadata_object, observation_exclusion
+from djobs.memory_projection import FOLDERS, context_uri, parse_context_uri
 from djobs.memory_review import ReviewGate, ReviewRequest
 from djobs.privacy import redact_value
 from djobs.storage.artifacts import ArtifactStore
@@ -192,6 +193,7 @@ class ArtifactView:
             "id": artifact_id,
             "type": effective_type(row),
             "record_type": row["kind"],
+            "uri": context_uri(self.family, kind=row["kind"], artifact_id=artifact_id),
             "status": row["status"],
             "authority": row["authority"],
             "stored_content_is_data": True,
@@ -201,7 +203,8 @@ class ArtifactView:
         item.update(
             {
                 "title": row["title"],
-                "abstract": row["abstract"],
+                "abstract": row["abstract"][:240] if depth == 0 else row["abstract"],
+                "abstract_truncated": depth == 0 and len(row["abstract"]) > 240,
                 "scope": row["scope"],
                 "content_hash": row["content_hash"],
                 "revision": row["revision"],
@@ -553,8 +556,68 @@ class ArtifactMemory:
     def get(self, artifact_id: str, *, depth: int = 1) -> dict[str, Any]:
         if depth not in (0, 1, 2):
             raise ArtifactError("invalid_content_depth")
+        folder = None
+        if artifact_id.startswith("djobs:"):
+            folder, resolved = parse_context_uri(artifact_id, self.family)
+            if resolved is None:
+                raise ArtifactError("context_item_required")
+            artifact_id = resolved
         with self.store.transaction() as cursor:
-            return self._view(cursor).project(artifact_id, depth=depth)
+            item = self._view(cursor).project(artifact_id, depth=depth)
+            if folder is not None and FOLDERS[item["record_type"]] != folder:
+                raise ArtifactError("context_category_mismatch")
+            return item
+
+    def tree(
+        self,
+        *,
+        uri: str | None = None,
+        query: str = "",
+        at: str | None = None,
+        exposure: str = "resume",
+        depth: int = 0,
+        limit: int = 12,
+        trace: bool = False,
+    ) -> dict[str, Any]:
+        """Read-through projection; no persistent file tree or alternate lifecycle state."""
+        folder = None
+        if uri:
+            folder, item = parse_context_uri(uri, self.family)
+            if item is not None:
+                raise ArtifactError("context_folder_required")
+        result = self.list_artifacts(
+            query=query,
+            at=at,
+            exposure=exposure,
+            depth=depth,
+            limit=limit,
+            folder=folder,
+            explain=trace,
+        )
+        seen = set()
+        folders = []
+        for kind, name in FOLDERS.items():
+            if name in seen or (folder and folder != name):
+                continue
+            seen.add(name)
+            folders.append(
+                {
+                    "name": name,
+                    "uri": context_uri(self.family, kind=kind),
+                    "shown_count": sum(
+                        FOLDERS[item["record_type"]] == name for item in result["memories"]
+                    ),
+                }
+            )
+        return {
+            **result,
+            "root_uri": context_uri(self.family),
+            "folders": folders,
+            "content_depth": depth,
+            "exposure": exposure,
+            "storage_loading": "bounded_source_validating_snapshot",
+            "persistent_projection": False,
+        }
 
     def list_artifacts(
         self,
@@ -565,22 +628,32 @@ class ArtifactMemory:
         exposure: str = "resume",
         limit: int = 8,
         depth: int = 1,
+        folder: str | None = None,
+        explain: bool = False,
     ) -> dict[str, Any]:
         if exposure not in {"resume", "evidence", "audit", "candidates"} or depth not in (0, 1, 2):
             raise ArtifactError("invalid_artifact_projection")
+        if folder is not None and folder not in FOLDERS.values():
+            raise ArtifactError("unsupported_context_category")
         instant = timestamp(at)
         query = safe_text(query, 500)
         terms = lexical_terms(query)
         with self.store.transaction() as cursor:
             view = self._view(cursor)
             eligible = []
+            filtered: dict[str, int] = {}
+            scoped_count = 0
             for row in view.data["artifacts"].values():
                 if not view.visible(row) or (kind and effective_type(row) != kind):
                     continue
+                if folder is not None and FOLDERS[row["kind"]] != folder:
+                    continue
+                scoped_count += 1
                 reason = view.provenance_reason(
                     row["id"], at=instant if exposure == "resume" else None
                 )
                 if reason:
+                    filtered[reason] = filtered.get(reason, 0) + 1
                     continue
                 if exposure == "resume":
                     if row["authority"] not in {"human_accepted", "deterministic_derived"}:
@@ -591,7 +664,7 @@ class ArtifactMemory:
                         continue
                 elif exposure == "candidates" and row["status"] != "candidate":
                     continue
-                text = (row["title"] + " " + row["abstract"] + " " + row["overview"]).casefold()
+                text = (row["title"] + " " + row["abstract"]).casefold()
                 matched = sum(term in text for term in terms)
                 if terms and not matched and query.casefold() not in text:
                     continue
@@ -631,21 +704,38 @@ class ArtifactMemory:
                     if affected & allowed_ids:
                         blocked.update(affected)
                         conflicts.append(sorted(pair))
+            cap = max(1, min(int(limit), 20))
+            selected = [row for _, row in eligible if row["id"] not in blocked]
             memories = [
                 view.project(row["id"], depth=depth, at=instant if exposure == "resume" else None)
-                for _, row in eligible
-                if row["id"] not in blocked
+                for row in selected[:cap]
             ]
-            cap = max(1, min(int(limit), 20))
+            details = {}
+            if explain:
+                details["trace"] = {
+                    "query_hash": hashlib.sha256(query.encode()).hexdigest(),
+                    "repository_scope": self.family,
+                    "retrieval_version": "typed-context-v1",
+                    "candidate_providers": ["L0_lexical", "temporal", "source_provenance"],
+                    "candidate_counts": {"scoped": scoped_count, "eligible": len(selected)},
+                    "filters": filtered,
+                    "conflict_blocked": len(blocked),
+                    "selected_ids": [row["id"] for row in selected[:cap]],
+                    "projection_count": len(memories),
+                    "content_depth": depth,
+                    "model_calls": 0,
+                    "fallback_reason": None,
+                }
             return {
                 "ok": True,
-                "memories": memories[:cap],
-                "count": min(len(memories), cap),
+                "memories": memories,
+                **details,
+                "count": len(memories),
                 "at": instant,
                 "historical": at is not None,
                 "ambiguous": bool(conflicts),
                 "conflicts": conflicts[:20],
-                "truncated": len(memories) > cap or len(conflicts) > 20,
+                "truncated": len(selected) > cap or len(conflicts) > 20,
                 "stored_content_is_data": True,
             }
 

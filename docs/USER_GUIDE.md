@@ -405,3 +405,28 @@ The original `scripts/benchmark_verified_learning.py` exercises preview/reject/v
 candidate lessons, candidate-versus-accepted skill state, preserved content identity and source
 forgetting. Its synthetic review callbacks validate plumbing, not actual user acceptance or model
 accuracy. SQLite and PostgreSQL run the same workflow in repository contract tests.
+
+
+## Inspectable context projection
+
+`djobs memory tree` browses a virtual repository context tree without creating files. Supported
+categories are episodes, facts, experiences, lessons and skills. Candidate skills and their accepted
+effective skill type retain the same canonical URI. No unsupported resource/import folder is
+presented as indexed data. Each shown node has a repository-bound `djobs://repo/...` URI; `memory show
+URI --depth 1` loads its overview, while `--depth 2` explicitly exposes retained details, provenance,
+relations and reviews. Wrong repository/category, noncanonical escaping and traversal are rejected.
+
+L0 is a bounded abstract; L1 adds overview, validity and source counts; L2 adds detailed evidence.
+These are content depths, independent of resume/evidence/audit/candidates exposure. Normal current
+queries still exclude unreviewed or unsupported artifacts and unresolved conflicts. An old saved
+URI does not resurrect a forgotten source. Tree query document fields are uri/depth/at/exposure;
+MCP `memory(action="trace", document={"plane":"artifacts"}, query=...)` adds a non-persisted typed
+selection trace with a query hash, candidate/filter counts, selected IDs and projection count.
+No full trace is added to normal resume. The five MCP tool names remain unchanged.
+
+Only the selected bounded records are projected after L0 title/abstract matching and source checks.
+The native store still reads its bounded source-validating snapshot, including full content for hash
+validation. This milestone reduces projection work and returned bytes, not physical database I/O.
+`python scripts/benchmark_temporal_memory.py --projection` measures this distinction explicitly with
+the same five records at L0/L1/L2 and 20 candidate records. The read-through tree is not a second
+memory authority, disk mirror, graph database, or prompt installation mechanism.

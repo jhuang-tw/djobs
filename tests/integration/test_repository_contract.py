@@ -693,3 +693,11 @@ def test_verified_learning_workflow_contract(repo):
     assert result["before"]["active_skills"] == 0
     assert result["after"]["active_skills"] == 1
     assert result["model_calls"] == 0
+
+
+def test_context_projection_workflow_contract(repo):
+    from scripts.benchmark_temporal_memory import run_projection
+
+    result = run_projection(repo)
+    assert result["pass"]
+    assert result["after_project_selected"] == 5

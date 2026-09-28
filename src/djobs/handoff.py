@@ -399,7 +399,10 @@ def sync_workspace(
             from djobs.artifacts import ArtifactMemory
 
             found = ArtifactMemory(repo, workspace).list_artifacts(
-                kind="fact", query=query or "", limit=min(3, max_items), depth=0
+                kind="fact",
+                query=query or "",
+                limit=min(3, max_items),
+                depth=2 if tier == "audit" else 1,
             )
             if found["memories"]:
                 typed["facts"] = found["memories"]

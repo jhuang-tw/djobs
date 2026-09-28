@@ -242,7 +242,8 @@ djobs memory search "OAuth callback" --explain
 djobs memory trace "OAuth callback"
 ```
 
-The five compact MCP tools are unchanged. `memory` adds `trace` and explicitly confirmed `reindex`
+The five compact MCP tools are unchanged. VS Code offers an on-demand, read-only Memory Explorer
+with backend-controlled exposure, explicit depth, and human-gated review. `memory` adds `trace` and explicitly confirmed `reindex`
 actions. See [the user guide](docs/USER_GUIDE.md#optional-local-semantic-retrieval) for model setup,
 provider failure behavior, index identity, and benchmark limitations. No model downloads, model
 libraries, provider accounts, or network requests are required by the default installation.

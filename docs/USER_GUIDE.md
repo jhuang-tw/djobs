@@ -540,3 +540,38 @@ to publish private scope into a shared external namespace. Returned candidate ID
 against this narrower export policy. External mutation confirmation requires literal `true`.
 An index/delete timeout reports `external_effect=unknown`, not cancellation: the external operation
 may finish later. No retry is sent automatically; adapter-specific reconciliation remains explicit.
+
+
+## VS Code memory inspection
+
+The native **djobs Memory** Explorer view is an on-demand client of the same CLI/application APIs.
+Workspace roots bind to folder-specific runtime/database settings. L0 abstracts load first; opening
+an item requests L1, while L2 requires an explicit depth selection. Exposure choices remain separate:
+resume, evidence, audit/history, and candidates. Ambiguity and truncation come from the backend and
+are not resolved or hidden by the UI. Refine the query when the bounded list is truncated.
+
+Details are bounded read-only JSON virtual documents. Refresh, configuration changes, removed
+workspaces, and closed documents invalidate their ephemeral content and discard stale pending
+responses. No polling, webview, generated repository projection, or new MCP tool is involved.
+Review opens a native preview then an explicitly requested interactive CLI; only the existing
+content-bound human review gate can accept or reject. Forget requires modal confirmation and calls
+the existing canonical deletion service. Untrusted workspace reads and all automatic acceptance
+are refused. See `vscode-ext/README.md` for the controls.
+
+The canonical full preflight now compiles the extension and runs its Node API-contract tests.
+`vscode-ext/tests/extensionHost.cjs` is an additional actual-host suite for an explicitly provisioned
+synthetic workspace/profile, not a normal startup action. It must never be run against a user's
+existing profile/database or be used to claim that synthetic review callbacks are real acceptance.
+
+
+The Explorer's read-only guarantee concerns normal editor interactions and canonical memory
+storage. It is not a sandbox against other trusted extensions: VS Code's privileged WorkspaceEdit
+API can alter a displayed buffer without writing the source DB. Such text has no memory lifecycle
+or execution authority. Fresh backend reads and review bindings, not an editor buffer, determine
+what is eligible or accepted.
+
+
+`djobs doctor` now reports an offline advisory for the known SQLite WAL-reset fix. It recognizes
+3.51.3+ and the 3.50.7/3.44.6 patched release branches; other version strings require a runtime
+upgrade or verification of the vendor's backport. It does not contact a server, block coding,
+change journal mode, install a runtime, or certify protection against all database issues.

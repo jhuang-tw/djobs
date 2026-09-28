@@ -45,7 +45,7 @@ export class DjobsClient {
 
   /** True when the user has selected the shared global queue. */
   isGlobalQueue(): boolean {
-    return (vscode.workspace.getConfiguration('djobs').get<string>('queueLocation') ?? 'global') === 'global';
+    return (vscode.workspace.getConfiguration('djobs', vscode.Uri.file(this.workspaceRoot)).get<string>('queueLocation') ?? 'global') === 'global';
   }
 
   /**
@@ -78,7 +78,7 @@ export class DjobsClient {
    * hooks and MCP reads share one database regardless of cwd.
    */
   mcpServerLaunch(): { command: string; args: string[]; env: Record<string, string>; cwd: string } {
-    const configured = vscode.workspace.getConfiguration('djobs').get<string>('pythonPath')?.trim();
+    const configured = vscode.workspace.getConfiguration('djobs', vscode.Uri.file(this.workspaceRoot)).get<string>('pythonPath')?.trim();
     let command: string;
     let args: string[];
     if (configured) {
@@ -112,7 +112,7 @@ export class DjobsClient {
 
   /** Absolute queue path used by hooks and the MCP server. */
   resolvedDbPath(): string {
-    const config = vscode.workspace.getConfiguration('djobs');
+    const config = vscode.workspace.getConfiguration('djobs', vscode.Uri.file(this.workspaceRoot));
     const queueLocation = config.get<string>('queueLocation') ?? 'global';
     if (queueLocation === 'global') {
       const configuredGlobal = config.get<string>('globalDbPath')?.trim();
@@ -436,7 +436,7 @@ export class DjobsClient {
     if (this.launcher) {
       return this.launcher;
     }
-    const configured = vscode.workspace.getConfiguration('djobs').get<string>('pythonPath')?.trim();
+    const configured = vscode.workspace.getConfiguration('djobs', vscode.Uri.file(this.workspaceRoot)).get<string>('pythonPath')?.trim();
     if (configured) {
       this.launcher = { exe: configured, prefix: ['-m', 'djobs.cli'] };
       return this.launcher;

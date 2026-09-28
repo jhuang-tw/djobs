@@ -6,3 +6,5 @@ package-lock.json
 *.vsix
 .vscode-test/
 out/**/*.map
+
+tests/

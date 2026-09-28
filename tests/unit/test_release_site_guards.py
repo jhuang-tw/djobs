@@ -103,13 +103,17 @@ def test_marketplace_metadata_matches_product_positioning() -> None:
     assert package["pricing"] == "Free"
 
 
-def test_extension_is_headless_and_coding_focused() -> None:
+def test_extension_has_only_native_readonly_memory_inspection() -> None:
     package = json.loads(_EXT_PACKAGE.read_text(encoding="utf-8"))
     contributes = package["contributes"]
 
     assert "viewsContainers" not in contributes
-    assert "views" not in contributes
-    assert "menus" not in contributes
+    assert contributes["views"] == {
+        "explorer": [
+            {"id": "djobsMemoryExplorer", "name": "djobs Memory", "when": "isWorkspaceTrusted"}
+        ]
+    }
+    assert set(contributes["menus"]) == {"view/title", "view/item/context"}
 
     commands = {item["command"] for item in contributes["commands"]}
     command_titles = {item["command"]: item["title"] for item in contributes["commands"]}
@@ -121,6 +125,14 @@ def test_extension_is_headless_and_coding_focused() -> None:
         "djobs.receipt",
         "djobs.pause",
         "djobs.unpause",
+        "djobs.memoryRefresh",
+        "djobs.memoryExposure",
+        "djobs.memorySearch",
+        "djobs.memoryOpen",
+        "djobs.memoryDepth",
+        "djobs.memoryReview",
+        "djobs.memoryForget",
+        "djobs.memoryTrace",
     }
 
     properties = contributes["configuration"]["properties"]
@@ -133,7 +145,12 @@ def test_extension_is_headless_and_coding_focused() -> None:
     assert removed_ui_settings.isdisjoint(properties)
 
     extension_text = (_REPO / "vscode-ext" / "src" / "extension.ts").read_text(encoding="utf-8")
-    assert "createTreeView" not in extension_text
+    assert "registerMemoryExplorer(context)" in extension_text
+    explorer = (_REPO / "vscode-ext/src/memoryExplorer.ts").read_text(encoding="utf-8")
+    assert "createTreeView" in explorer and "registerTextDocumentContentProvider" in explorer
+    assert "new vscode.ProcessExecution" in explorer
+    for forbidden in ("createWebviewPanel", "setInterval", "sendText(", "installPackage("):
+        assert forbidden not in explorer
     assert "createStatusBarItem" not in extension_text
     assert "setInterval" not in extension_text
     assert "tasksProvider" not in extension_text

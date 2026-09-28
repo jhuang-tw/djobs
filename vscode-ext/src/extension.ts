@@ -1,12 +1,14 @@
 import * as vscode from 'vscode';
 import { runDjobsCommand } from './commands';
 import { DjobsClient } from './djobsClient';
+import { MemoryExplorer, registerMemoryExplorer } from './memoryExplorer';
 import { DjobsDoctorReport } from './types';
 
-export async function activate(context: vscode.ExtensionContext): Promise<void> {
+export async function activate(context: vscode.ExtensionContext): Promise<{ memoryExplorer: MemoryExplorer }> {
+  const memoryExplorer = registerMemoryExplorer(context);
   const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!workspaceRoot) {
-    return;
+    return { memoryExplorer };
   }
 
   const client = new DjobsClient(workspaceRoot);
@@ -99,6 +101,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     }),
   );
+  return { memoryExplorer };
 }
 
 export function deactivate(): void {}

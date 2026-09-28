@@ -2,7 +2,7 @@
   "name": "djobs",
   "displayName": "djobs \u2014 Local Agent Memory",
   "description": "Shared local project memory and explicit coordination for AI coding agents across sessions and tools.",
-  "version": "0.21.0",
+  "version": "0.22.0",
   "publisher": "jhuang-tw",
   "license": "MIT",
   "icon": "media/icon-128.png",

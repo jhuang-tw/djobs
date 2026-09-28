@@ -14,6 +14,12 @@ public interfaces may still change between minor versions. Entries below use
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-09-28
+
+### Added
+- `[release]` Add benchmarked hybrid retrieval (#62)
+
+
 ## [0.21.0] - 2026-08-20
 
 ### Added

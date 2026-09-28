@@ -430,3 +430,55 @@ validation. This milestone reduces projection work and returned bytes, not physi
 `python scripts/benchmark_temporal_memory.py --projection` measures this distinction explicitly with
 the same five records at L0/L1/L2 and 20 candidate records. The read-through tree is not a second
 memory authority, disk mirror, graph database, or prompt installation mechanism.
+
+
+## Explicit quarantined session portability
+
+`djobs session discover ROOT` lists bounded candidate JSON/JSONL files under an explicit directory,
+without parsing their content or inspecting a home directory automatically. It skips links/reparse
+points, hidden files and known auth/config filenames. Listed files are not yet format-validated.
+`djobs session preview ROOT RELATIVE_FILE --harness claude|codex|opencode|djobs` shows selectable text
+message IDs. Repeat with one or more `--id` options to bind an exact redacted selection. It returns
+a preview hash and the current repository-family identity without writing the memory database.
+
+`djobs session import ROOT RELATIVE_FILE --harness codex --id MESSAGE_ID --expected-hash HASH
+--repo-family FAMILY --yes` rechecks the file, selection and binding before writing. Without --yes,
+or with --dry-run, it only previews. Sources are bounded to 2 MiB/4096 records and imports select at
+most 32 messages with bounded per-message text. Truncated text, skipped blocks and partial selection
+are explicit. A changed file requires a new preview. Exact repeated selections deduplicate, including
+when a rejected/reference-reviewed import already exists; no duplicate approval is implied.
+
+Each native import retains harness, inspected shape version, source session ID, source content hash,
+adapter version, import time, repository binding, redaction version and source-path fingerprint.
+No original path, credential, tool configuration, harness permissions or task ownership is restored.
+These are same-database canonical djobs import records, not an external writer. The additive
+component `session_imports=1` is installed only by explicit import (migration 013_session_imports.sql).
+
+All imported text starts as imported_unverified in session/import scope. `djobs session review ID`
+previews; interactive --apply can mark reviewed_reference or rejected, never an active fact, verified
+experience or skill. The review acknowledges inspected reference material, not every statement's
+truth. Normal sync_workspace/raw recall/typed resume continue to exclude the transcript after review.
+MCP uses the existing memory tool with document.operation; no JSON confirm can impersonate review.
+`memory tree --exposure audit` exposes the imports category, and saved repository-bound import URIs
+cannot retrieve content after forget. Clearing repository memory clears imports without changing tasks.
+
+`djobs session export ID` writes a redacted djobs.session.v1 conversation bundle to stdout. The user
+controls any shell redirection; djobs does not overwrite a destination or install a foreign session.
+The bundle can be selectively imported again. It does not transfer review status and never claims
+full native resumption. Export retains selected user/assistant text and parent references; tool calls,
+attachments, reasoning blocks, permission state and forked history are not restored. External parent
+or history_base references are disclosed as not followed, never opened automatically.
+
+The clean-room adapters use these inspected primary-source shapes, not copied implementations:
+Claude Agent SDK Python 36f95486ee9fc49d8ee1ed56811f07b5e8e23ac6 (_internal/sessions.py and its official
+tests: type/uuid/parentUuid/sessionId/message JSONL); Codex 44fe510ce3ee61c8ef623adcbf89b901c73ddd61
+(rollout tests and line parser: session_meta plus response_item/message JSONL); OpenCode
+03e67171ab2dc1e7f16e8cebfbc7f778f61b89f0 (cli/cmd/export.ts: info + messages, message info + parts).
+These date-pinned observed shapes are not promises to accept every past/future harness format.
+Unrecognized schema versions or malformed required fields fail closed; unsupported blocks are
+counted. Only original synthetic fixtures were used in validation, not personal session history.
+
+The original scripts/benchmark_session_portability.py exercises all three inputs, duplicate handling,
+redacted text roundtrip, quarantine, explicit reference review, no task change and clear. It runs
+with the same SQLite/PostgreSQL contract and no model/network dependency. Its output measures safe
+text portability, not complete conversation reconstruction, inference quality or token savings.

@@ -14,6 +14,7 @@ FOLDERS = {
     "lesson": "lessons",
     "skill_candidate": "skills",
     "skill": "skills",
+    "imported_session": "imports",
 }
 
 
@@ -29,7 +30,10 @@ def context_uri(family: str, *, kind: str | None = None, artifact_id: str | None
         raise ArtifactError("unsupported_context_category")
     root += FOLDERS[kind] + "/"
     if artifact_id is not None:
-        if not isinstance(artifact_id, str) or not re.fullmatch(r"mem_[0-9a-f]{32}", artifact_id):
+        prefix = "imp" if kind == "imported_session" else "mem"
+        if not isinstance(artifact_id, str) or not re.fullmatch(
+            prefix + r"_[0-9a-f]{32}", artifact_id
+        ):
             raise ArtifactError("invalid_context_identifier")
         root += artifact_id
     return root

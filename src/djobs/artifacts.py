@@ -562,6 +562,12 @@ class ArtifactMemory:
             if resolved is None:
                 raise ArtifactError("context_item_required")
             artifact_id = resolved
+        if artifact_id.startswith("imp_"):
+            from djobs.session_memory import SessionMemory
+
+            if folder is not None and folder != "imports":
+                raise ArtifactError("context_category_mismatch")
+            return SessionMemory(self.store.repo, self.workspace).get(artifact_id, depth=depth)
         with self.store.transaction() as cursor:
             item = self._view(cursor).project(artifact_id, depth=depth)
             if folder is not None and FOLDERS[item["record_type"]] != folder:
@@ -594,6 +600,20 @@ class ArtifactMemory:
             folder=folder,
             explain=trace,
         )
+        if exposure != "resume" and folder in {None, "imports"}:
+            from djobs.session_memory import SessionMemory
+
+            remaining = max(1, min(int(limit), 20)) - len(result["memories"])
+            if remaining > 0:
+                imported = SessionMemory(self.store.repo, self.workspace).list_imports(
+                    depth=depth, limit=remaining, query=query
+                )
+                result["memories"].extend(imported["memories"])
+                result["count"] = len(result["memories"])
+                result["truncated"] |= imported["truncated"]
+                if "trace" in result:
+                    result["trace"]["selected_ids"] = [item["id"] for item in result["memories"]]
+                    result["trace"]["projection_count"] = result["count"]
         seen = set()
         folders = []
         for kind, name in FOLDERS.items():

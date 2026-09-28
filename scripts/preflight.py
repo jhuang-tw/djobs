@@ -18,6 +18,7 @@ RUFF_TARGETS = (
     "scripts/benchmark_memory.py",
     "scripts/benchmark_temporal_memory.py",
     "scripts/benchmark_verified_learning.py",
+    "scripts/benchmark_session_portability.py",
     "scripts/prepare_local_embedding.py",
 )
 DOC_TESTS = (

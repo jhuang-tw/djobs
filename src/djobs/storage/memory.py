@@ -848,11 +848,10 @@ class PostgresMemoryRepository:
     def clear(self, *, scopes: tuple[str, ...], checkout_id: str) -> int:
         self.ensure_schema()
         ph = self._placeholders(scopes)
-        with self.repo._conn.cursor() as cur:
+        with self.repo._conn.transaction(), self.repo._conn.cursor() as cur:
             cur.execute(f"DELETE FROM agent_observations WHERE correlation_id IN ({ph})", scopes)
             count = int(cur.rowcount)
             cur.execute("DELETE FROM repository_snapshots WHERE workspace_id = %s", (checkout_id,))
-        self.repo._conn.commit()
         return count
 
     def upsert_snapshot(

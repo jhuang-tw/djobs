@@ -67,6 +67,7 @@ def test_tree_l0_and_explicit_l1_l2_keep_same_identity_and_sources(env):
         "experiences",
         "lessons",
         "skills",
+        "imports",
     }
     item = tree["memories"][0]
     assert "details" not in item and "overview" not in item

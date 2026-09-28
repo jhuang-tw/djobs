@@ -636,15 +636,18 @@ def forget_observation(repo: Any, workspace: Any, memory_id: str) -> bool:
 
 
 def clear_workspace_memory(repo: Any, workspace: Any) -> int:
+    from djobs.session_memory import SessionMemory
     from djobs.storage.artifacts import ArtifactStore
     from djobs.storage.retrieval import RetrievalIndex
 
-    ArtifactStore(repo).clear(_memory_scope(workspace))
-    RetrievalIndex(repo).clear(_memory_scope(workspace))
-    return memory_repository(repo).clear(
-        scopes=_memory_ids(workspace),
-        checkout_id=_checkout_scope(workspace),
-    )
+    adapter = memory_repository(repo)
+    adapter.ensure_schema()
+    family = _memory_scope(workspace)
+    with ArtifactStore(repo).transaction(write=True, family=family):
+        SessionMemory(repo, workspace).clear()
+        ArtifactStore(repo).clear(family)
+        RetrievalIndex(repo).clear(family)
+        return adapter.clear(scopes=_memory_ids(workspace), checkout_id=_checkout_scope(workspace))
 
 
 def workspace_memory_stats(repo: Any, workspace: Any) -> dict[str, Any]:

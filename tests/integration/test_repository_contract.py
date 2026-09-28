@@ -701,3 +701,12 @@ def test_context_projection_workflow_contract(repo):
     result = run_projection(repo)
     assert result["pass"]
     assert result["after_project_selected"] == 5
+
+
+def test_quarantined_session_portability_contract(repo):
+    from scripts.benchmark_session_portability import run
+
+    result = run(repo)
+    assert result["pass"]
+    assert result["after"]["imported_sessions"] == 3
+    assert not result["native_resumption_supported"]

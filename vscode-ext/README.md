@@ -64,6 +64,19 @@ per-project command is required, but **djobs: Diagnose Setup** shows what was co
 **djobs: Set up / Repair djobs** performs the same work explicitly when Python or an old launch path
 needs attention.
 
+## Canonical local interfaces
+
+The public command is `djobs`. Agent hosts should launch the compact stdio server with:
+
+```bash
+djobs mcp
+```
+
+The extension resolves that same public entry point for native MCP registration and for its CLI
+commands, so setup, diagnostics, memory inspection, and MCP startup stay on one supported routing
+surface. Existing `djobs-mcp` configurations remain compatible, while `djobs-mcp-full` is reserved
+for integrations that intentionally need the lower-level durable-queue MCP.
+
 ## Five compact MCP tools
 
 | Tool | Purpose |

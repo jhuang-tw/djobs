@@ -1,36 +1,14 @@
-"""Public CLI dispatcher for focused high-level djobs surfaces."""
+"""Thin executable wrapper around the one canonical djobs CLI dispatcher."""
 
 from __future__ import annotations
 
-import sys
+from collections.abc import Sequence
 
 
-def main() -> None:
-    argv = sys.argv[1:]
-    if argv and argv[0] == "session":
-        from djobs.session_cli import main as session_main
+def main(argv: Sequence[str] | None = None) -> None:
+    from djobs.entrypoint import main as run_public_cli
 
-        raise SystemExit(session_main(argv[1:]))
-    if argv and argv[0] == "contract":
-        from djobs.contract_cli import main as contract_main
-
-        raise SystemExit(contract_main(argv[1:]))
-    if argv and argv[0] == "context":
-        from djobs.context_cli import main as context_main
-
-        raise SystemExit(context_main(argv[1:]))
-    from djobs.entrypoint import main as established_main
-
-    established_main()
-    if not argv or argv[0] in {"--help", "-h", "help"}:
-        print(
-            "\nContext preview:\n"
-            "  djobs context [current request]\n\n"
-            "External host contract:\n"
-            "  djobs contract --help\n\n"
-            "Session portability:\n"
-            "  djobs session --help"
-        )
+    run_public_cli(argv)
 
 
 if __name__ == "__main__":

@@ -163,7 +163,8 @@ def test_extension_has_only_native_readonly_memory_inspection() -> None:
     assert not (_REPO / "vscode-ext" / "src" / "tasksProvider.ts").exists()
 
     client_text = (_REPO / "vscode-ext" / "src" / "djobsClient.ts").read_text(encoding="utf-8")
-    assert "djobs.coding_mcp" in client_text
+    assert "djobs.public_cli" in client_text
+    assert "['mcp']" in client_text
     assert "djobs.mcp_server" not in client_text
     for dead_method in (
         "async pause(",

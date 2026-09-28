@@ -22,6 +22,7 @@ import argparse
 import importlib
 import logging
 import os
+import shutil
 import sys
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -32,6 +33,7 @@ from djobs.commands.receipt import build_work_receipt
 from djobs.core.constants import STALE_AFTER_DAYS
 from djobs.core.correlation import correlation_id_variants
 from djobs.core.pause import is_paused, set_paused
+from djobs.mcp_launch import resolve_compact_mcp_launch
 from djobs.storage.reporting import reporting_repository
 
 Handler = Callable[[dict[str, Any]], Any]
@@ -273,13 +275,11 @@ def _cmd_serve(args: argparse.Namespace) -> None:
 
 
 def _cmd_mcp(args: argparse.Namespace) -> None:
-    """Run the djobs MCP server over stdio.
+    """Run the compatibility durable-queue MCP over stdio.
 
-    This is the same server as the ``djobs-mcp`` console script, exposed as a
-    subcommand so it can be launched as ``djobs mcp`` — which lets the MCP
-    Registry / ``uvx djobs mcp`` start the server while keeping ``djobs`` (the
-    real PyPI package) as the verifiable package identifier. The server honors
-    the ``DJOBS_DB`` environment variable; pass ``--db`` to override it.
+    The normal Agent-facing entry point is ``djobs mcp`` and exposes the compact
+    five-tool repository-memory surface. This legacy parser intentionally keeps
+    the historical queue server for existing ``djobs legacy mcp`` callers.
     """
     from djobs.mcp_server import configure
     from djobs.mcp_server import main as run_mcp_server
@@ -963,37 +963,21 @@ def _resolve_mcp_command(args: argparse.Namespace) -> tuple[str, list[str]]:
     workspace-local ``.venv``. Resolution order (first match wins):
 
     1. ``--command`` — use the given string verbatim as the launch command.
-    2. ``--python`` — launch ``<python> -m djobs.coding_mcp``.
+    2. ``--python`` — launch ``<python> -m djobs.public_cli mcp``.
     3. ``--portable`` — emit the relocatable ``${workspaceFolder}/.venv``
        interpreter hint (legacy behaviour). Useful when committing mcp.json to
        a shared repo whose collaborators each have a project-local venv with
        djobs installed.
-    4. Default — prefer the installed ``djobs-mcp`` console script if it is on
-       PATH (the case after ``pipx install djobs`` / ``pip install djobs``);
-       otherwise fall back to the *absolute* path of the current interpreter
-       (``sys.executable``), which is guaranteed to have djobs importable
-       because that is exactly what is running this command.
+    4. Default — prefer the installed public ``djobs`` command with the
+       ``mcp`` subcommand; otherwise fall back to the current interpreter and
+       the same public module dispatcher.
     """
-    import shutil
-
-    command = getattr(args, "command", None)
-    if command:
-        return command, []
-
-    python = getattr(args, "python", None)
-    if python:
-        return python, ["-m", "djobs.coding_mcp"]
-
-    if getattr(args, "portable", False):
-        if os.name == "nt":
-            return "${workspaceFolder}/.venv/Scripts/python", ["-m", "djobs.coding_mcp"]
-        return "${workspaceFolder}/.venv/bin/python", ["-m", "djobs.coding_mcp"]
-
-    console = shutil.which("djobs-mcp")
-    if console:
-        return console, []
-
-    return sys.executable, ["-m", "djobs.coding_mcp"]
+    launch = resolve_compact_mcp_launch(
+        command=getattr(args, "command", None),
+        python=getattr(args, "python", None),
+        portable=bool(getattr(args, "portable", False)),
+    )
+    return launch.command, list(launch.args)
 
 
 def _cmd_install_mcp(args: argparse.Namespace) -> None:
@@ -1056,7 +1040,6 @@ def _cmd_install_mcp(args: argparse.Namespace) -> None:
 
 def _probe_command(cmd: str) -> tuple[bool, str]:
     """Check whether an mcp.json launch command can actually be resolved."""
-    import shutil
     from pathlib import Path
 
     if not cmd:
@@ -1086,7 +1069,6 @@ def _cmd_doctor(args: argparse.Namespace) -> None:
     ``--json`` always exits 0 so callers can inspect the per-check flags.
     """
     import json
-    import shutil
     from pathlib import Path
 
     checks: list[tuple[str, bool, str]] = []
@@ -1106,13 +1088,13 @@ def _cmd_doctor(args: argparse.Namespace) -> None:
         pkg_ok = False
         checks.append(("djobs package", False, f"import failed: {exc}"))
 
-    # 2. djobs-mcp console script on PATH (the global-tool wiring target)
-    mcp_script = shutil.which("djobs-mcp")
+    # 2. canonical compact MCP launch (always available through this interpreter)
+    mcp_launch = resolve_compact_mcp_launch()
     checks.append(
         (
-            "djobs-mcp on PATH",
-            mcp_script is not None,
-            mcp_script or "not found — wiring falls back to the current interpreter (still works)",
+            "compact MCP launch",
+            True,
+            f"{mcp_launch.command} {' '.join(mcp_launch.args)} ({mcp_launch.source})".strip(),
         )
     )
 
@@ -1160,10 +1142,9 @@ def _cmd_doctor(args: argparse.Namespace) -> None:
     )
 
     # Informational checks are never failures: even when False, the setup still
-    # works (e.g. no djobs-mcp on PATH just means wiring uses the interpreter
-    # directly). Showing these as FAIL after a successful `djobs init` is exactly
+    # works. Showing optional guidance as FAIL after a successful `djobs init` is exactly
     # what made the tool feel broken, so they render as INFO instead.
-    info_checks = {"djobs-mcp on PATH", "agent guidance block"}
+    info_checks = {"compact MCP launch", "agent guidance block"}
 
     if getattr(args, "as_json", False):
         print(
@@ -1669,15 +1650,16 @@ def main(argv: list[str] | None = None, *, prog: str = "djobs") -> None:
         default=None,
         help=(
             "Python interpreter the MCP server runs under "
-            "(launches '<python> -m djobs.coding_mcp'). Default: the 'djobs-mcp' "
-            "console script if on PATH, otherwise the current interpreter."
+            "(launches '<python> -m djobs.public_cli mcp'). Default: the public "
+            "'djobs mcp' command if available, otherwise the current interpreter."
         ),
     )
     mcp_parser.add_argument(
         "--command",
         default=None,
         help=(
-            "Exact launch command for the MCP server (e.g. 'djobs-mcp'). "
+            "Exact launch command for the MCP server (the historical 'djobs-mcp' "
+            "alias remains supported). "
             "Overrides --python and --portable."
         ),
     )

@@ -116,34 +116,40 @@ def test_doctor_missing_guidance_is_not_critical(
 # --- info-level (advisory) checks -----------------------------------------
 
 
-def test_doctor_mcp_on_path_is_info_level(
+def test_doctor_compact_mcp_falls_back_to_public_module(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # When djobs-mcp is not on PATH the wiring still works via the interpreter,
-    # so that check must be advisory (level=info), never a failure.
+    # A missing console script uses the current interpreter and the same public
+    # dispatcher rather than reporting a broken setup.
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("DJOBS_DB", str(tmp_path / "q.db"))
     monkeypatch.setattr("shutil.which", lambda _name: None)
+    monkeypatch.setattr(
+        "djobs.mcp_launch._current_scripts_directory",
+        lambda: tmp_path / "missing-scripts",
+    )
     _run_doctor(as_json=True)
     data = json.loads(capsys.readouterr().out)
-    mcp_check = next(c for c in data["checks"] if c["name"] == "djobs-mcp on PATH")
-    assert mcp_check["ok"] is False
+    mcp_check = next(c for c in data["checks"] if c["name"] == "compact MCP launch")
+    assert mcp_check["ok"] is True
     assert mcp_check["level"] == "info"
+    assert "djobs.public_cli" in mcp_check["detail"]
 
 
-def test_doctor_human_output_uses_info_not_fail(
+def test_doctor_human_output_shows_working_compact_launch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # A successful setup with no djobs-mcp on PATH must not print a scary [FAIL]
-    # for that advisory line — it renders as [INFO].
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("DJOBS_DB", str(tmp_path / "q.db"))
     monkeypatch.setattr("shutil.which", lambda _name: None)
+    monkeypatch.setattr(
+        "djobs.mcp_launch._current_scripts_directory",
+        lambda: tmp_path / "missing-scripts",
+    )
     _run_doctor(as_json=False)
     out = capsys.readouterr().out
-    # The djobs-mcp line is present and marked INFO, not FAIL.
-    mcp_line = next(ln for ln in out.splitlines() if "djobs-mcp on PATH" in ln)
-    assert "[INFO]" in mcp_line
+    mcp_line = next(ln for ln in out.splitlines() if "compact MCP launch" in ln)
+    assert "[OK" in mcp_line
     assert "[FAIL]" not in mcp_line
 
 

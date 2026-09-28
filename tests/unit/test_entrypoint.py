@@ -2,38 +2,56 @@
 
 from __future__ import annotations
 
-import argparse
-
 from djobs import entrypoint
 
 
-def test_legacy_main_temporarily_replaces_only_the_mcp_handler(monkeypatch):
+def test_legacy_main_keeps_legacy_mcp_and_temporarily_adapts_setup(monkeypatch):
     from djobs import cli
 
-    original = cli._cmd_mcp
+    original_mcp = cli._cmd_mcp
+    original_init = cli._cmd_init
+    original_install = cli._cmd_install_mcp
     observed = []
 
     def fake_cli_main(argv=None, *, prog="djobs") -> None:
-        observed.append((cli._cmd_mcp, list(argv or []), prog))
+        observed.append(
+            (
+                cli._cmd_mcp,
+                cli._cmd_init is not original_init,
+                cli._cmd_install_mcp is not original_install,
+                list(argv or []),
+                prog,
+            )
+        )
 
     monkeypatch.setattr(cli, "main", fake_cli_main)
     monkeypatch.setattr(entrypoint.sys, "argv", ["djobs", "legacy"])
     entrypoint.main()
 
-    assert observed == [(entrypoint._cmd_mcp_context_efficient, ["--help"], "djobs legacy")]
-    assert cli._cmd_mcp is original
+    assert observed == [(original_mcp, True, True, ["--help"], "djobs legacy")]
+    assert cli._cmd_mcp is original_mcp
+    assert cli._cmd_init is original_init
+    assert cli._cmd_install_mcp is original_install
 
 
-def test_context_efficient_mcp_handler_honors_db_override(monkeypatch):
-    from djobs import coding_mcp, mcp_server
+def test_canonical_mcp_routes_directly_without_legacy_parser(monkeypatch):
+    from djobs import coding_mcp
 
-    calls: list[tuple[str, str | None]] = []
-    monkeypatch.setattr(mcp_server, "configure", lambda db: calls.append(("configure", db)))
-    monkeypatch.setattr(coding_mcp, "main", lambda: calls.append(("run", None)))
+    calls: list[tuple[list[str], str]] = []
+    monkeypatch.setattr(
+        coding_mcp,
+        "main",
+        lambda argv=None, *, prog="djobs-mcp": calls.append((list(argv or []), prog)),
+    )
+    monkeypatch.setattr(
+        entrypoint,
+        "_run_cli",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("legacy parser used")),
+    )
 
-    entrypoint._cmd_mcp_context_efficient(argparse.Namespace(db="custom.db"))
+    entrypoint.main(["mcp", "--db", "custom.db"])
 
-    assert calls == [("configure", "custom.db"), ("run", None)]
+    assert calls == [(["--db", "custom.db"], "djobs mcp")]
 
 
 def test_version_flag_prints_package_version(monkeypatch, capsys):

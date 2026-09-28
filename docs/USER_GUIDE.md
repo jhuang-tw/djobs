@@ -21,6 +21,22 @@ database and configure the detected Copilot adapter; that is a local user-level 
 Read-only `memory list`, `search`, and `trace` do not perform this bootstrap. Use
 `djobs doctor` to inspect it and `djobs remove HOST` to remove a managed adapter.
 
+## Canonical local interfaces
+
+The normal human and automation entry point is `djobs`. The canonical Agent entry point is the
+compact stdio server:
+
+```bash
+djobs mcp
+```
+
+CLI, MCP, and the VS Code extension use the same local repository-memory implementation and storage
+rules. No background daemon, REST service, cloud account, or network connection is required.
+`djobs-mcp` remains a compatibility alias for existing host configuration, while
+`djobs-mcp-full` is the opt-in legacy durable-queue MCP. The standalone contract executables are
+also retained for integrations that already call them, but new configuration should prefer the
+subcommands under `djobs`.
+
 ## What is stored
 
 Passive memory contains bounded observations, not a replay of the entire chat:
@@ -205,7 +221,9 @@ and SHA-256 digests, refuses an existing destination, and does not read cloud cr
 startup, importing djobs, and reading memory never invoke it. Local model files are not included
 in the djobs wheel. Installing extras alone does not download or activate a model.
 
-A long-running MCP host can explicitly start `djobs-mcp --embedding-model-dir /chosen/private/models/e5`.
+A long-running MCP host can explicitly start
+`djobs mcp --embedding-model-dir /chosen/private/models/e5`.
+The historical `djobs-mcp` executable accepts the same option for compatibility.
 After that opt-in, `memory(action="reindex", confirm=true)` builds the index. Without an explicitly
 configured provider and confirmation the operation refuses. A failed configured model initializes
 an unavailable-provider state: reads still return lexical results with a fallback reason rather

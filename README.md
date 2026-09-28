@@ -164,10 +164,22 @@ The normal CLI is intentionally focused on inspectability and setup:
 | `djobs gain` | Inspect heuristic recovery and verified-task efficiency estimates |
 | `djobs pause` / `djobs unpause` | Temporarily disable or resume automatic behavior |
 | `djobs receipt` | Show an evidence-backed work summary |
+| `djobs mcp` | Run the compact local stdio MCP server for an agent host |
 
 The original durable job queue engine is retained for compatibility, but it no longer dominates the
 first-run experience. Its operational commands are available through `djobs legacy --help`.
 Direct historical invocations still work for scripts and hooks, with a compatibility notice.
+
+### Canonical local interfaces
+
+Use `djobs ...` for human, CI, setup, diagnostics, and maintenance commands. Use `djobs mcp` as the
+canonical Agent-facing stdio server. Both are thin adapters over the same local repository-memory
+core; neither starts a required daemon or contacts a hosted service.
+
+Historical executables such as `djobs-mcp`, `djobs-mcp-full`, `djobs-contract`, and
+`djobs-contract-mcp` remain available for existing configurations. New setup and generated MCP
+configuration use `djobs mcp`; `djobs-mcp-full` remains the opt-in compatibility surface for the
+lower-level durable queue tools.
 
 ## Install and host support
 

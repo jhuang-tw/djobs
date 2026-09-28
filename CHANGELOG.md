@@ -14,6 +14,11 @@ public interfaces may still change between minor versions. Entries below use
 
 ## [Unreleased]
 
+### Changed
+- `[core]` Converged human and Agent entry points on `djobs` and `djobs mcp`, with one shared compact-MCP launch resolver for CLI setup and project wiring.
+- `[ext]` Updated native VS Code MCP registration and CLI execution to use the same public dispatcher instead of private module or console-script assumptions.
+- `[core]` Retained `djobs-mcp`, `djobs-mcp-full`, and standalone contract commands as compatibility aliases without expanding the five-tool default MCP surface.
+
 ## [0.22.0] - 2026-09-28
 
 ### Added

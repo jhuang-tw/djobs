@@ -11,7 +11,9 @@ djobs contract --schema-major 1 observation --repository-head <sha> ...
 djobs contract --schema-major 1 receipt --response-file response.json
 ```
 
-The equivalent standalone executables are `djobs-contract` and `djobs-contract-mcp`.
+New integrations should use the `djobs contract ...` subcommand so the human-facing contract tools
+stay under the canonical `djobs` CLI. The standalone `djobs-contract` and
+`djobs-contract-mcp` executables remain available for compatibility with existing integrations.
 
 ## Authority boundary
 

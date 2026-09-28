@@ -23,8 +23,10 @@ export function djobsCommandLaunch(client: DjobsClient, args: string[]): {
       basename.replace(/^djobs-mcp/i, 'djobs'),
     );
     prefix = [];
+  } else if (/^djobs(?:\.(?:exe|cmd|bat))?$/i.test(basename)) {
+    prefix = [];
   } else {
-    prefix = ['-c', 'from djobs.entrypoint import main; main()'];
+    prefix = ['-m', 'djobs.public_cli'];
   }
 
   return { command, args: [...prefix, ...args], cwd: launch.cwd, env: launch.env };

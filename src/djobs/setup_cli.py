@@ -9,12 +9,12 @@ import re
 import shlex
 import shutil
 import subprocess
-import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from djobs.host_hooks import host_hook_doctor, install_host_hooks, remove_host_hooks
+from djobs.mcp_launch import resolve_compact_mcp_launch
 from djobs.workspace import shared_db_path
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
@@ -31,10 +31,7 @@ class Host:
 
 
 def _server_command() -> list[str]:
-    console = shutil.which("djobs-mcp")
-    if console:
-        return [console]
-    return [sys.executable, "-m", "djobs.coding_mcp"]
+    return resolve_compact_mcp_launch().argv()
 
 
 def _host(name: str, *, which: Which = shutil.which) -> Host | None:

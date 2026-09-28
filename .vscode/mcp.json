@@ -5,7 +5,8 @@
       "command": "${workspaceFolder}/.venv/Scripts/python.exe",
       "args": [
         "-m",
-        "djobs.coding_mcp"
+        "djobs.public_cli",
+        "mcp"
       ],
       "env": {
         "PYTHONPATH": "${workspaceFolder}/src",

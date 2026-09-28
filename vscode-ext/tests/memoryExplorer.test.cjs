@@ -212,8 +212,18 @@ test('untrusted content remains a plain label and JSON, never a Markdown command
 test('launcher passes hostile-looking argument strings as argv, not a shell expression', () => {
   const launch = djobsCommandLaunch(new FakeClient('/synthetic/a'), ['memory', 'search', 'x; touch BAD && $(whoami)']);
   assert.equal(launch.command, 'synthetic-python');
+  assert.deepEqual(launch.args.slice(0, 2), ['-m', 'djobs.public_cli']);
   assert.equal(launch.args.at(-1), 'x; touch BAD && $(whoami)');
   assert.ok(!Object.hasOwn(launch, 'shell'));
+});
+
+test('canonical djobs MCP launch becomes the same public CLI without the mcp subcommand', () => {
+  const client = { mcpServerLaunch: () => ({
+    command: '/tools/djobs', args: ['mcp'], cwd: '/synthetic/a', env: {},
+  }) };
+  const launch = djobsCommandLaunch(client, ['doctor', '--json']);
+  assert.equal(launch.command, '/tools/djobs');
+  assert.deepEqual(launch.args, ['doctor', '--json']);
 });
 
 test('registration has no polling, implicit installation or read on construction', () => {

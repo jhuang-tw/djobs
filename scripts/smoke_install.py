@@ -286,6 +286,7 @@ def smoke(wheel: Path, *, find_links: Path | None = None) -> None:
 
         python = _venv_executable(environment_root, "python")
         djobs = _venv_executable(environment_root, "djobs")
+        compatibility_mcp = _venv_executable(environment_root, "djobs-mcp")
         scripts = python.parent
         install = [str(python), "-m", "pip", "install", "--disable-pip-version-check"]
         if find_links is not None:
@@ -316,6 +317,15 @@ def smoke(wheel: Path, *, find_links: Path | None = None) -> None:
         for expected in _TOP_LEVEL_HELP_MARKERS:
             if expected not in help_text:
                 raise AssertionError(f"top-level help is missing {expected!r}")
+
+        canonical_mcp_help = _run([str(djobs), "mcp", "--help"], env=env, cwd=workspace).stdout
+        if not canonical_mcp_help.startswith("usage: djobs mcp"):
+            raise AssertionError(f"unexpected canonical MCP help:\n{canonical_mcp_help}")
+        if not compatibility_mcp.exists():
+            raise AssertionError("installed wheel is missing the djobs-mcp compatibility alias")
+        alias_help = _run([str(compatibility_mcp), "--help"], env=env, cwd=workspace).stdout
+        if not alias_help.startswith("usage: djobs-mcp"):
+            raise AssertionError(f"unexpected compatibility MCP help:\n{alias_help}")
 
         setup_help = _run([str(djobs), "setup", "--help"], env=env, cwd=workspace).stdout
         if "djobs setup setup" in setup_help or "djobs setup [-h]" not in setup_help:

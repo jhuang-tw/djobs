@@ -72,8 +72,8 @@ export class DjobsClient {
    * Resolve how to launch the djobs **MCP server** (not the CLI) for VS Code's
    * native MCP registration. Mirrors `_resolve_mcp_command` in the CLI so the
    * programmatic registration and the `install-mcp` JSON fallback start the same
-   * server: prefer an explicit interpreter, then a project `.venv`, then the
-   * `djobs-mcp` console script on PATH, then a bare `python`. `DJOBS_DB` is
+   * public server entry: prefer an explicit interpreter, then a project `.venv`,
+   * then the canonical `djobs mcp` command, then a bare `python`. `DJOBS_DB` is
    * always pinned to the absolute queue path used by hooks, so the agent's
    * hooks and MCP reads share one database regardless of cwd.
    */
@@ -83,22 +83,22 @@ export class DjobsClient {
     let args: string[];
     if (configured) {
       command = configured;
-      args = ['-m', 'djobs.coding_mcp'];
+      args = ['-m', 'djobs.public_cli', 'mcp'];
     } else {
       const venvPython = process.platform === 'win32'
         ? path.join(this.workspaceRoot, '.venv', 'Scripts', 'python.exe')
         : path.join(this.workspaceRoot, '.venv', 'bin', 'python');
       if (fs.existsSync(venvPython)) {
         command = venvPython;
-        args = ['-m', 'djobs.coding_mcp'];
+        args = ['-m', 'djobs.public_cli', 'mcp'];
       } else {
-        const consoleScript = this.which('djobs-mcp');
+        const consoleScript = this.which('djobs');
         if (consoleScript) {
           command = consoleScript;
-          args = [];
+          args = ['mcp'];
         } else {
           command = process.platform === 'win32' ? 'python' : 'python3';
-          args = ['-m', 'djobs.coding_mcp'];
+          args = ['-m', 'djobs.public_cli', 'mcp'];
         }
       }
     }

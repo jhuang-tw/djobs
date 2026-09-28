@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +42,9 @@ _PUBLIC_COMMANDS: tuple[tuple[str, str], ...] = (
     ("repair", "Repair a djobs-managed host integration without changing unrelated settings"),
     ("remove", "Remove djobs-managed host integration while preserving unrelated settings"),
     ("doctor", "Check local storage and agent integration, with actionable next steps"),
+    ("context", "Preview the bounded repository context an agent can recover"),
+    ("session", "Preview, import, inspect, and export quarantined session memory"),
+    ("contract", "Use the advisory read-only host contract"),
     ("diagnostics", "Inspect or clear bounded fail-open errors"),
     ("memory", "List, search, retire, forget, or clear repository memory"),
     ("storage", "Check integrity, create backups, or compact passive memory"),
@@ -104,32 +107,23 @@ def _print_front_help() -> None:
     _build_front_parser().print_help()
 
 
-def _cmd_mcp_context_efficient(args: argparse.Namespace) -> None:
-    """Run the normal CLI ``mcp`` command through the minimal coding server."""
-
-    from djobs.mcp_server import configure
-
-    if getattr(args, "db", None):
-        database = os.path.expanduser(str(args.db))
-        os.environ["DJOBS_DB"] = database
-        configure(database)
-
-    from djobs.coding_mcp import main as run_mcp_server
-
-    run_mcp_server()
-
-
 def _cmd_install_mcp_high_level(args: argparse.Namespace, cli: Any) -> None:
     """Write the compact coding MCP entry without deleting unrelated servers."""
 
     read_only = ["sync_workspace", "resume_delta"]
     write_tools = ["checkpoint", "handoff"]
     approve = read_only + write_tools if args.full_approve else read_only
-    command, command_args = cli._resolve_mcp_command(args)
+    from djobs.mcp_launch import resolve_compact_mcp_launch
+
+    launch = resolve_compact_mcp_launch(
+        command=getattr(args, "command", None),
+        python=getattr(args, "python", None),
+        portable=bool(getattr(args, "portable", False)),
+    )
     server: dict[str, Any] = {
         "type": "stdio",
-        "command": command,
-        "args": command_args,
+        "command": launch.command,
+        "args": list(launch.args),
         "autoApprove": approve,
     }
     database = (
@@ -286,9 +280,8 @@ def _sqlite_wal_runtime_check(version: tuple[int, ...] | None = None) -> dict[st
 def _doctor_payload() -> dict[str, Any]:
     """Return memory-first diagnostics without requiring project-local MCP wiring."""
 
-    import shutil
-
     from djobs import __version__, cli
+    from djobs.mcp_launch import resolve_compact_mcp_launch
     from djobs.setup_cli import doctor_results
     from djobs.workspace import shared_db_path
 
@@ -446,14 +439,15 @@ def _doctor_payload() -> dict[str, Any]:
             }
         )
 
-    mcp_script = shutil.which("djobs-mcp")
+    mcp_launch = resolve_compact_mcp_launch()
     checks.append(
         {
-            "name": "djobs-mcp command",
+            "name": "compact MCP launch",
             "ok": True,
             "level": "info",
-            "detail": mcp_script
-            or "not on PATH; current Python interpreter fallback is available",
+            "detail": (
+                f"{mcp_launch.command} {' '.join(mcp_launch.args)} ({mcp_launch.source})"
+            ).strip(),
             "next_step": None,
         }
     )
@@ -499,11 +493,10 @@ def _run_doctor(argv: list[str]) -> int:
 
 
 def _run_cli(argv: list[str], *, prog: str = "djobs") -> None:
-    """Run the compatibility parser with the compact MCP behavior patched in."""
+    """Run the compatibility parser with only legacy setup adapters patched in."""
 
     from djobs import cli
 
-    original_mcp = cli._cmd_mcp
     original_init = cli._cmd_init
     original_install_mcp = cli._cmd_install_mcp
     original_instructions_body = cli._DJOBS_INSTRUCTIONS_BODY
@@ -515,22 +508,20 @@ def _run_cli(argv: list[str], *, prog: str = "djobs") -> None:
         _cmd_install_mcp_high_level(args, cli)
 
     cli._DJOBS_INSTRUCTIONS_BODY = _ZERO_CONFIG_INSTRUCTIONS_BODY
-    cli._cmd_mcp = _cmd_mcp_context_efficient
     cli._cmd_init = init_passive
     cli._cmd_install_mcp = install_mcp_high_level
     try:
         cli.main(argv, prog=prog)
     finally:
-        cli._cmd_mcp = original_mcp
         cli._cmd_init = original_init
         cli._cmd_install_mcp = original_install_mcp
         cli._DJOBS_INSTRUCTIONS_BODY = original_instructions_body
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> None:
     """Run the memory-first CLI while preserving historical integration commands."""
 
-    argv = sys.argv[1:]
+    argv = list(sys.argv[1:] if argv is None else argv)
     if argv == ["--version"] or argv == ["-V"]:
         from djobs import __version__
 
@@ -550,6 +541,21 @@ def main() -> None:
 
     if command == "doctor":
         raise SystemExit(_run_doctor(rest))
+
+    if command == "context":
+        from djobs.context_cli import main as run_context_cli
+
+        raise SystemExit(run_context_cli(rest))
+
+    if command == "session":
+        from djobs.session_cli import main as run_session_cli
+
+        raise SystemExit(run_session_cli(rest))
+
+    if command == "contract":
+        from djobs.contract_cli import main as run_contract_cli
+
+        raise SystemExit(run_contract_cli(rest))
 
     if command == "diagnostics":
         raise SystemExit(_run_diagnostics(rest))
@@ -602,7 +608,13 @@ def main() -> None:
         _run_cli([command, *rest])
         return
 
-    if command in {"mcp", "receipt"}:
+    if command == "mcp":
+        from djobs.coding_mcp import main as run_mcp_server
+
+        run_mcp_server(rest, prog="djobs mcp")
+        return
+
+    if command == "receipt":
         _run_cli(argv)
         return
 

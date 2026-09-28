@@ -44,6 +44,12 @@ def test_install_mcp_preserves_other_servers(tmp_path: Path) -> None:
     data = json.loads(target.read_text(encoding="utf-8"))
     assert data["servers"]["other"]["command"] == "other-mcp"
     assert data["inputs"] == [{"id": "keep-me"}]
+    assert data["servers"]["djobs"]["command"] == "/custom/python"
+    assert data["servers"]["djobs"]["args"] == [
+        "-m",
+        "djobs.public_cli",
+        "mcp",
+    ]
     assert data["servers"]["djobs"]["autoApprove"] == [
         "sync_workspace",
         "resume_delta",
@@ -126,6 +132,10 @@ def test_top_level_help_is_memory_first() -> None:
     assert "remove" in command_lines
     assert "memory" in command_lines
     assert "gain" in command_lines
+    assert "context" in command_lines
+    assert "session" in command_lines
+    assert "contract" in command_lines
+    assert "mcp" in command_lines
     assert "legacy" in command_lines
     assert "serve" not in command_lines
     assert "dashboard" not in command_lines

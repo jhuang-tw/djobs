@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 
 from djobs import coding_mcp, delta_mcp
 
@@ -53,3 +54,23 @@ def test_default_tool_schema_payload_is_materially_smaller() -> None:
     minimal_chars = _schema_chars(coding_mcp._server)
     full_chars = _schema_chars(delta_mcp._server)
     assert minimal_chars < full_chars * 0.55
+
+
+def test_public_mcp_arguments_configure_the_same_compact_server(tmp_path, monkeypatch) -> None:
+    from djobs import mcp_server
+
+    calls = []
+    monkeypatch.setenv("DJOBS_DB", "before-test")
+    monkeypatch.setattr(mcp_server, "configure", lambda value: calls.append(("db", value)))
+    monkeypatch.setattr(coding_mcp, "ensure_shared_queue", lambda: calls.append(("queue", None)))
+    monkeypatch.setattr(
+        coding_mcp._server,
+        "run",
+        lambda *, transport: calls.append(("run", transport)),
+    )
+    database = tmp_path / "memory.db"
+
+    coding_mcp.main(["--db", str(database)], prog="djobs mcp")
+
+    assert os.environ["DJOBS_DB"] == str(database)
+    assert calls == [("db", str(database)), ("queue", None), ("run", "stdio")]

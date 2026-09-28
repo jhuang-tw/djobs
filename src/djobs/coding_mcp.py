@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 from collections import Counter
+from collections.abc import Sequence
 from typing import Any, Literal, cast
 
 from mcp.server.fastmcp import Context, FastMCP
@@ -482,13 +484,21 @@ def resume_delta(
     )
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None, *, prog: str = "djobs-mcp") -> None:
     """Run the compact MCP server; a local model is an explicit startup opt-in."""
 
     global _embedding_session
-    parser = argparse.ArgumentParser(prog="djobs-mcp")
+    parser = argparse.ArgumentParser(prog=prog)
+    parser.add_argument("--db", help="Explicit local database path")
     parser.add_argument("--embedding-model-dir", help="Local pinned E5 files; never downloaded")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    if args.db:
+        database = os.path.expanduser(str(args.db))
+        os.environ["DJOBS_DB"] = database
+        from djobs.mcp_server import configure
+
+        configure(database)
+    _embedding_session = None
     if args.embedding_model_dir:
         try:
             from djobs.local_embedding import LocalE5Provider

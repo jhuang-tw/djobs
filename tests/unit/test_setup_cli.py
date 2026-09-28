@@ -33,6 +33,19 @@ def _which(name: str) -> str:
     return f"/tools/{name}"
 
 
+def test_default_server_command_uses_canonical_public_entry(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "djobs.mcp_launch._current_scripts_directory",
+        lambda: Path("/tools"),
+    )
+    monkeypatch.setattr(
+        "djobs.mcp_launch.shutil.which",
+        lambda name: "/tools/djobs" if name == "djobs" else None,
+    )
+
+    assert setup_cli._server_command() == ["/tools/djobs", "mcp"]
+
+
 def test_codex_setup_is_idempotent_and_installs_passive_adapter(tmp_path: Path) -> None:
     runner = FakeRunner([0, 0])
     first = configure_host(
@@ -151,7 +164,7 @@ def test_kimi_setup_merges_mcp_and_toml_without_cli_mcp_subcommand(tmp_path: Pat
         "kimi",
         db=tmp_path / "shared.db",
         which=_which,
-        server=["python", "-m", "djobs.coding_mcp"],
+        server=["python", "-m", "djobs.public_cli", "mcp"],
         home=tmp_path,
     )
     assert result["status"] == "configured"
@@ -167,7 +180,7 @@ def test_unavailable_client_does_not_change_config(tmp_path: Path) -> None:
         "gemini",
         db=tmp_path / "shared.db",
         which=lambda _: None,
-        server=["python", "-m", "djobs.coding_mcp"],
+        server=["python", "-m", "djobs.public_cli", "mcp"],
         home=tmp_path,
     )
     assert result["status"] == "unavailable"

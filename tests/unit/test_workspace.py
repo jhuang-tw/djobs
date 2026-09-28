@@ -89,3 +89,28 @@ def test_workspace_keeps_legacy_subdirectory_correlation_variant(tmp_path: Path)
     workspace = resolve_workspace(cwd=str(child))
 
     assert normalize_path(child) in workspace.correlation_ids
+
+
+def test_unicode_git_workspace_preserves_identity_under_cp950_locale(tmp_path, monkeypatch):
+    import threading
+
+    from djobs.workspace import _git_output
+
+    root = _git_repo(tmp_path / "中文-✅")
+    errors = []
+    monkeypatch.setattr(subprocess, "_text_encoding", lambda: "cp950")
+    monkeypatch.setattr(
+        threading, "excepthook", lambda args: errors.append(args.exc_type.__name__)
+    )
+    value = _git_output(str(root), "rev-parse", "--show-toplevel")
+    assert value is not None and path_key(value) == path_key(root)
+    assert not errors
+
+
+def test_invalid_utf8_git_identity_does_not_produce_replacement_path(monkeypatch):
+    from djobs.workspace import _git_output
+
+    monkeypatch.setattr(
+        subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a, 0, bytes([255]), b"")
+    )
+    assert _git_output(".", "rev-parse", "--show-toplevel") is None

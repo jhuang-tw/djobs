@@ -33,13 +33,14 @@ def _git_value(root: str, *args: str) -> str:
         result = subprocess.run(
             ["git", "-C", root, *args],
             capture_output=True,
-            text=True,
             timeout=2,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError):
+        if result.returncode != 0:
+            return ""
+        return result.stdout.decode("utf-8").strip()
+    except (OSError, subprocess.SubprocessError, UnicodeDecodeError):
         return ""
-    return result.stdout.strip() if result.returncode == 0 else ""
 
 
 def _is_ancestor(root: str, commit: str) -> bool | None:

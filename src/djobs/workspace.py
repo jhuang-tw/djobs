@@ -173,13 +173,17 @@ def _git_output(path: str, *args: str, timeout: float = 2.0) -> str | None:
         result = subprocess.run(
             ["git", "-C", path, *args],
             capture_output=True,
-            text=True,
             timeout=timeout,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError):
+        if result.returncode != 0:
+            return None
+        # Git emits UTF-8; a terminal's CP950 setting must not corrupt identity.
+        # Decode in the caller, where errors can be handled, not a reader thread.
+        output = result.stdout.decode("utf-8").strip()
+    except (OSError, subprocess.SubprocessError, UnicodeDecodeError):
         return None
-    return result.stdout.strip() if result.returncode == 0 and result.stdout.strip() else None
+    return output or None
 
 
 def _git_root(path: str) -> str:

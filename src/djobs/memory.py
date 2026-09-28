@@ -46,6 +46,7 @@ MemoryAction = Literal[
     "experience",
     "export",
     "tree",
+    "session",
 ]
 
 
@@ -160,6 +161,7 @@ def memory_action(
             "experience",
             "export",
             "tree",
+            "session",
         }:
             return _dumps({"ok": False, "error": "unsupported memory action"})
         if action == "reindex" and (not confirm or embedding is None):
@@ -180,14 +182,49 @@ def memory_action(
                     "message": "Explicit confirmation is required before destructive maintenance.",
                 }
             )
+        session_operation = None
+        if action == "session":
+            if not isinstance(document, dict) or len(_dumps(document)) > 24000:
+                raise ArtifactError("explicit_session_operation_required")
+            session_operation = document.get("operation")
+            allowed_operations = {
+                "discover",
+                "preview",
+                "import",
+                "list",
+                "get",
+                "review",
+                "export",
+            }
+            if session_operation not in allowed_operations:
+                raise ArtifactError("unsupported_session_operation")
+            if session_operation == "discover":
+                from djobs.session_adapters import discover_sessions
+
+                if set(document) != {"operation", "root"}:
+                    raise ArtifactError("explicit_session_discovery_root_required")
+                return _bounded(
+                    {"action": action, **discover_sessions(document["root"])}, token_budget
+                )
         workspace = resolve_workspace(roots=roots, cwd=cwd)
         path = shared_db_path()
         if (
             action in {"list", "search", "trace", "stats", "facts", "get", "candidates", "tree"}
             or (action in {"review", "relate", "experience", "export"} and review_gate is None)
             or (action == "compact" and dry_run)
+            or (
+                action == "session"
+                and not (
+                    (session_operation == "import" and confirm)
+                    or (session_operation == "review" and review_gate is not None)
+                )
+            )
         ):
             connection = _connect(path)
+            if connection is None and action == "session":
+                import sqlite3
+
+                connection = sqlite3.connect(":memory:", check_same_thread=False)
             if connection is None:
                 return _bounded(
                     {
@@ -202,6 +239,56 @@ def memory_action(
             repo = SQLiteJobRepository(connection)
         else:
             repo = SQLiteJobRepository.from_path(path)
+        if action == "session":
+            from djobs.session_memory import SessionMemory
+
+            assert isinstance(document, dict)
+            sessions = SessionMemory(repo, workspace)
+            fields = set(document) - {"operation"}
+            if session_operation in {"preview", "import"}:
+                if fields - {
+                    "root",
+                    "path",
+                    "harness",
+                    "selected_ids",
+                    "expected_hash",
+                    "expected_family",
+                }:
+                    raise ArtifactError("unknown_session_import_fields")
+                if session_operation == "preview" or not confirm:
+                    result = sessions.preview(
+                        document["root"],
+                        document["path"],
+                        document["harness"],
+                        document.get("selected_ids"),
+                    )
+                else:
+                    result = sessions.import_session(
+                        document["root"],
+                        document["path"],
+                        document["harness"],
+                        document["selected_ids"],
+                        expected_hash=document["expected_hash"],
+                        expected_family=document["expected_family"],
+                        confirm=True,
+                    )
+            elif session_operation == "list":
+                if fields - {"depth"}:
+                    raise ArtifactError("unknown_session_list_fields")
+                result = sessions.list_imports(depth=document.get("depth", 0), limit=max_items)
+            else:
+                if fields - {"depth"} or not memory_id:
+                    raise ArtifactError("session_import_id_required")
+                if session_operation == "get":
+                    result = {
+                        "ok": True,
+                        "memories": [sessions.get(memory_id, depth=document.get("depth", 2))],
+                    }
+                elif session_operation == "review":
+                    result = sessions.review(memory_id, review_gate)
+                else:
+                    result = sessions.export(memory_id)
+            return _bounded({"action": action, **result}, token_budget)
         if action in {
             "facts",
             "get",
@@ -375,7 +462,11 @@ def memory_action(
         if action == "forget":
             if not memory_id:
                 return _dumps({"ok": False, "action": action, "error": "memory_id is required"})
-            if memory_id.startswith("mem_"):
+            if memory_id.startswith("imp_"):
+                from djobs.session_memory import SessionMemory
+
+                forgotten = SessionMemory(repo, workspace).forget(memory_id)
+            elif memory_id.startswith("mem_"):
                 from djobs.artifacts import ArtifactMemory
 
                 forgotten = ArtifactMemory(

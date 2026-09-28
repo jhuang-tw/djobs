@@ -7,6 +7,10 @@ import sys
 
 def main() -> None:
     argv = sys.argv[1:]
+    if argv and argv[0] == "session":
+        from djobs.session_cli import main as session_main
+
+        raise SystemExit(session_main(argv[1:]))
     if argv and argv[0] == "contract":
         from djobs.contract_cli import main as contract_main
 
@@ -23,7 +27,9 @@ def main() -> None:
             "\nContext preview:\n"
             "  djobs context [current request]\n\n"
             "External host contract:\n"
-            "  djobs contract --help"
+            "  djobs contract --help\n\n"
+            "Session portability:\n"
+            "  djobs session --help"
         )
 
 

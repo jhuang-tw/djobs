@@ -189,6 +189,25 @@ class ProjectMemory:
     def record_episode(self, sources: list[str], *, title: str = "Observed coding episode") -> str:
         return self._memory("episode", document={"sources": sources, "title": title})
 
+    def session_memory(
+        self,
+        document: dict[str, Any],
+        *,
+        memory_id: str | None = None,
+        confirm: bool = False,
+        gate: ReviewGate | None = None,
+        token_budget: int = 3000,
+    ) -> str:
+        """Explicit session operations; imported text never restores task ownership."""
+        return self._memory(
+            "session",
+            document=document,
+            memory_id=memory_id,
+            confirm=confirm,
+            review_gate=gate,
+            token_budget=token_budget,
+        )
+
     def memory_tree(
         self,
         *,

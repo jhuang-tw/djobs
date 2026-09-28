@@ -303,6 +303,7 @@ async def memory(
         "experience",
         "export",
         "tree",
+        "session",
     ] = "list",
     query: str | None = None,
     summary: str | None = None,
@@ -318,6 +319,8 @@ async def memory(
 ) -> str:
     """Inspect passive observations and source-bound typed memory.
 
+    session document.operation supports explicit-root preview/import/list/get/review/export.
+    Imports need selected IDs, preview hash and expected family; review remains preview-only.
     tree browses L0 context URIs; get accepts a repository-bound URI or ID at explicit depth.
     trace with document.plane=artifacts explains typed selection without persisting the query.
     list/search return raw evidence; facts returns accepted current facts or uses document.at

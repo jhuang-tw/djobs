@@ -108,6 +108,12 @@ def _run(
     cwd: Path = ROOT,
     env: dict[str, str] | None = None,
 ) -> None:
+    # Windows does not resolve a bare npm command to its .cmd shim here.
+    # Resolve the executable without constructing a shell command string.
+    if command and not Path(command[0]).is_absolute():
+        executable = shutil.which(command[0])
+        if executable:
+            command = [executable, *command[1:]]
     rendered = " ".join(command)
     print(f"\n==> {rendered}", flush=True)
     subprocess.run(command, cwd=cwd, env=env, check=True)

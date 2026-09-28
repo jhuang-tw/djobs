@@ -64,3 +64,18 @@ def test_empty_change_set_is_conservative() -> None:
     assert changes.python is True
     assert changes.extension is True
     assert changes.unknown is True
+
+
+def test_run_resolves_command_shims_without_shell_interpolation(monkeypatch) -> None:
+    calls = []
+    fake_shim = str(ROOT / "test-fixture-npm.cmd")
+    monkeypatch.setattr(
+        preflight.shutil, "which", lambda name: fake_shim if name == "npm" else None
+    )
+    monkeypatch.setattr(
+        preflight.subprocess, "run", lambda command, **kwargs: calls.append((command, kwargs))
+    )
+    preflight._run(["npm", "run", "compile"], cwd=ROOT / "vscode-ext")
+    assert calls[0][0] == [fake_shim, "run", "compile"]
+    assert calls[0][1]["check"] is True
+    assert "shell" not in calls[0][1]

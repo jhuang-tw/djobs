@@ -20,7 +20,7 @@ public interfaces may still change between minor versions. Entries below use
 - `[core]` Retained `djobs-mcp`, `djobs-mcp-full`, and standalone contract commands as compatibility aliases without expanding the five-tool default MCP surface.
 
 ### Fixed
-- `[core]` Prevented Git workspace probes from inheriting MCP stdio, avoiding tool-call stalls while repository identity is resolved.
+- `[core]` Prevented Git identity and repository-snapshot probes from inheriting MCP stdio, avoiding Windows tool-call stalls during workspace recovery.
 
 ## [0.22.0] - 2026-09-28
 

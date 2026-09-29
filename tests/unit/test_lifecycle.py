@@ -183,6 +183,46 @@ def test_first_snapshot_reports_existing_dirty_tree_from_uninstrumented_agent(
     assert "tracked.txt" in row["summary"]
 
 
+def test_snapshot_git_commands_never_inherit_mcp_stdio(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    (root / "new.txt").write_text("untracked\n", encoding="utf-8")
+    observed: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        observed.append(list(command))
+        assert kwargs.get("stdin") is subprocess.DEVNULL
+        operation = command[3]
+        if operation == "rev-parse":
+            return subprocess.CompletedProcess(command, 0, b"a" * 40 + b"\n", b"")
+        if operation == "status":
+            return subprocess.CompletedProcess(command, 0, b" M tracked.txt\n?? new.txt\n", b"")
+        if operation == "diff":
+            kwargs["stdout"].write(b"synthetic diff\n")
+            return subprocess.CompletedProcess(command, 0, b"", b"")
+        if operation == "ls-files":
+            return subprocess.CompletedProcess(command, 0, b"new.txt\x00", b"")
+        if operation == "branch":
+            return subprocess.CompletedProcess(command, 0, "main\n", "")
+        raise AssertionError(command)
+
+    monkeypatch.setattr(observations.subprocess, "run", fake_run)
+
+    state = observations._git_state(str(root))
+
+    assert state is not None
+    assert [command[3] for command in observed] == [
+        "rev-parse",
+        "status",
+        "diff",
+        "diff",
+        "ls-files",
+        "branch",
+    ]
+
+
 def test_snapshot_detects_repeated_content_changes_with_same_git_status(tmp_path: Path) -> None:
     root = _git_repo(tmp_path / "project")
     database = tmp_path / "shared.db"

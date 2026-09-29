@@ -727,6 +727,7 @@ def _hash_command(digest: Any, command: list[str]) -> bool:
         with tempfile.TemporaryFile() as output:
             result = subprocess.run(
                 command,
+                stdin=subprocess.DEVNULL,
                 stdout=output,
                 stderr=subprocess.DEVNULL,
                 timeout=10,
@@ -774,6 +775,7 @@ def _hash_untracked(digest: Any, root: str) -> bool:
     try:
         result = subprocess.run(
             ["git", "-C", root, "ls-files", "--others", "--exclude-standard", "-z"],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             timeout=5,
             check=False,
@@ -793,12 +795,14 @@ def _git_state(root: str) -> tuple[str, str, bool, str, str, list[str]] | None:
     try:
         head = subprocess.run(
             ["git", "-C", root, "rev-parse", "--verify", "HEAD"],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             timeout=3,
             check=False,
         )
         status = subprocess.run(
             ["git", "-C", root, "status", "--porcelain=v1", "--untracked-files=normal"],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             timeout=5,
             check=False,
@@ -859,6 +863,7 @@ def _git_state(root: str) -> tuple[str, str, bool, str, str, list[str]] | None:
     try:
         branch_result = subprocess.run(
             ["git", "-C", root, "branch", "--show-current"],
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=2,

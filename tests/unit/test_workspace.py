@@ -118,3 +118,18 @@ def test_invalid_utf8_git_identity_does_not_produce_replacement_path(monkeypatch
         subprocess, "run", lambda *a, **kw: subprocess.CompletedProcess(a, 0, bytes([255]), b"")
     )
     assert _git_output(".", "rev-parse", "--show-toplevel") is None
+
+
+def test_git_identity_probe_never_inherits_mcp_stdio(monkeypatch):
+    from djobs.workspace import _git_output
+
+    observed = {}
+
+    def fake_run(*args, **kwargs):
+        observed.update(kwargs)
+        return subprocess.CompletedProcess(args, 0, b"C:/repo\n", b"")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert _git_output(".", "rev-parse", "--show-toplevel") == "C:/repo"
+    assert observed["stdin"] is subprocess.DEVNULL

@@ -19,6 +19,9 @@ public interfaces may still change between minor versions. Entries below use
 - `[ext]` Updated native VS Code MCP registration and CLI execution to use the same public dispatcher instead of private module or console-script assumptions.
 - `[core]` Retained `djobs-mcp`, `djobs-mcp-full`, and standalone contract commands as compatibility aliases without expanding the five-tool default MCP surface.
 
+### Fixed
+- `[core]` Prevented Git workspace probes from inheriting MCP stdio, avoiding tool-call stalls while repository identity is resolved.
+
 ## [0.22.0] - 2026-09-28
 
 ### Added
